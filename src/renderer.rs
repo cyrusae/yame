@@ -211,8 +211,6 @@ pub struct MarkdownView<'a> {
     /// Normalised selection range from `textarea.selection_range()`.
     pub selection: Option<((usize, usize), (usize, usize))>,
     pub theme: &'a crate::config::Theme,
-    /// Whether the terminal supports italic — stored for future use (e.g. tooltips).
-    pub italic_support: bool,
     pub column_width: u16,
 }
 
@@ -417,7 +415,7 @@ pub fn render_status_bar(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
 
     let bar_bg = theme.ui_bar;
-    let text_fg = theme.text;
+    let text_fg = theme.ui_text;
     let warning_fg = theme.warning;
 
     let content: Line = match &app.status.mode {
@@ -453,7 +451,7 @@ pub fn render_status_bar(f: &mut Frame, area: Rect, app: &App) {
 fn build_normal_status_bar(app: &App, width: u16) -> Line<'static> {
     let theme = &app.theme;
     let bar_bg = theme.ui_bar;
-    let text_fg = theme.text;
+    let text_fg = theme.ui_text;
     let accent_fg = theme.accent;
     let muted_fg = theme.muted;
 

@@ -40,6 +40,7 @@ pub struct ThemeOverrides {
     pub blockquote_color: Option<String>,
     pub link_text_color: Option<String>,
     pub link_url_color: Option<String>,
+    pub todo_done: Option<String>,
     pub code_bg: Option<String>,
     pub fenced_bg: Option<String>,
     pub heading_bg: Option<String>,
@@ -47,6 +48,9 @@ pub struct ThemeOverrides {
     pub selection_fg: Option<String>,
     pub ui_bg: Option<String>,
     pub ui_bar: Option<String>,
+    pub ui_text: Option<String>,
+    /// 0.0 = full muted, 1.0 = full span color. Default 0.4.
+    pub delimiter_blend: Option<f32>,
 }
 
 /// Per-level heading color overrides (all optional).
@@ -106,6 +110,7 @@ pub struct Theme {
     pub blockquote_color: Color,
     pub link_text: Color,
     pub link_url: Color,
+    pub todo_done: Color,
     pub code_bg: Color,
     pub fenced_bg: Color,
     pub heading_bg: Color,
@@ -113,9 +118,9 @@ pub struct Theme {
     pub selection_fg: Color,
     pub ui_bg: Color,
     pub ui_bar: Color,
+    pub ui_text: Color,
     // per-level headings
     pub headings: HeadingTheme,
-    // italic support flag (stored here for convenience)
     pub delimiter_blend: f32,
 }
 
@@ -227,6 +232,7 @@ impl Theme {
             warnings,
         );
         let link_url = resolve(&overrides.link_url_color, muted, warnings);
+        let todo_done = resolve(&overrides.todo_done, muted, warnings);
         let code_bg_rgb = resolve(&overrides.code_bg, blend(code_rgb, bg, 0.15), warnings);
         let fenced_bg_rgb = resolve(&overrides.fenced_bg, blend(code_rgb, bg, 0.08), warnings);
         let heading_bg_rgb = resolve(&overrides.heading_bg, blend(accent, bg, 0.15), warnings);
@@ -234,6 +240,8 @@ impl Theme {
         let selection_fg_rgb = resolve(&overrides.selection_fg, bg, warnings);
         let ui_bg_rgb = resolve(&overrides.ui_bg, blend(muted, bg, 0.3), warnings);
         let ui_bar_rgb = resolve(&overrides.ui_bar, blend(muted, bg, 0.5), warnings);
+        let ui_text_rgb = resolve(&overrides.ui_text, text, warnings);
+        let delimiter_blend = overrides.delimiter_blend.unwrap_or(0.4).clamp(0.0, 1.0);
 
         // Per-level heading colors
         let heading_default = |blend_t: f32| blend(accent, text, blend_t);
@@ -280,6 +288,7 @@ impl Theme {
             blockquote_color: to_color(blockquote_color),
             link_text: to_color(link_text),
             link_url: to_color(link_url),
+            todo_done: to_color(todo_done),
             code_bg: to_color(code_bg_rgb),
             fenced_bg: to_color(fenced_bg_rgb),
             heading_bg: to_color(heading_bg_rgb),
@@ -287,6 +296,7 @@ impl Theme {
             selection_fg: to_color(selection_fg_rgb),
             ui_bg: to_color(ui_bg_rgb),
             ui_bar: to_color(ui_bar_rgb),
+            ui_text: to_color(ui_text_rgb),
             headings: HeadingTheme {
                 h1: to_color(h1_rgb),
                 h2: to_color(h2_rgb),
@@ -295,7 +305,7 @@ impl Theme {
                 h5: to_color(h5_rgb),
                 h6: to_color(h6_rgb),
             },
-            delimiter_blend: 0.4,
+            delimiter_blend,
         }
     }
 

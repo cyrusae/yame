@@ -55,6 +55,13 @@ fn run(file_path: PathBuf) -> io::Result<()> {
 
     let mut app = App::new(file_path, theme, italic_support, warnings)?;
 
+    // Queue italic fallback warning if the terminal doesn't support italic rendering.
+    if !italic_support {
+        app.status.set_dismissible(
+            "⚠ Terminal does not support italics — using color fallback  [any key to dismiss]",
+        );
+    }
+
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
@@ -161,7 +168,6 @@ fn event_loop<B: ratatui::backend::Backend>(
                 cursor: app.textarea.cursor(),
                 selection: app.textarea.selection_range(),
                 theme: &app.theme,
-                italic_support: app.italic_support,
                 column_width: layout.column.width,
             };
             f.render_widget(view, editor_area);
@@ -254,6 +260,14 @@ fn handle_save(app: &mut App) -> io::Result<()> {
     // trailing newline; saved_content stores the same internal representation, so
     // the dirty comparison is unaffected.
     let content = app.textarea.lines().join("\n") + "\n";
+    // Create parent directories if they don't exist (e.g. `yame notes/new.md`).
+    if let Some(parent) = app.file_path.parent()
+        && !parent.as_os_str().is_empty()
+        && let Err(e) = std::fs::create_dir_all(parent)
+    {
+        app.status.set_dismissible(format!("⚠ Save failed: {e}"));
+        return Ok(());
+    }
     match std::fs::write(&app.file_path, &content) {
         Ok(()) => {
             app.saved_content = Some(app.textarea.lines().to_vec());

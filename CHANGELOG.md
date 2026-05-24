@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- v1 polish: italic startup warning, delimiter_blend config, parent-dir creation, theme tokens (#35)
 
 ### Fixed
 

@@ -152,7 +152,6 @@ pub fn build_decoration_map(
 
     // State tracking
     let mut in_ordered_list = false;
-    let mut current_item_line: Option<usize> = None; // for TaskListMarker
 
     for (event, range) in parser {
         match event {
@@ -426,7 +425,6 @@ pub fn build_decoration_map(
             }
             Event::Start(Tag::Item) => {
                 let (item_line, item_char) = byte_to_line_char(&line_starts, text, range.start);
-                current_item_line = Some(item_line);
 
                 let bullet_style = Style::default().fg(theme.accent);
                 // Style the bullet/number: 1 char for unordered, 2 for ordered (e.g. `1.`)
@@ -456,11 +454,11 @@ pub fn build_decoration_map(
                 let (marker_line, marker_char) = byte_to_line_char(&line_starts, text, range.start);
 
                 if checked {
-                    // Apply muted colour to the entire item line.
+                    // Apply todo_done colour to the entire item line.
                     // Strikethrough is intentionally absent: real ~~strikethrough~~ syntax
                     // exists in Markdown and should remain visually distinct.
                     let line_len = line_char_len(&line_starts, text, marker_line);
-                    let style = Style::default().fg(theme.muted);
+                    let style = Style::default().fg(theme.todo_done);
                     push_span(&mut map, marker_line, make_span(0, line_len, style));
                 } else {
                     // Style [ and ] in accent, leave space between as normal
@@ -530,8 +528,6 @@ pub fn build_decoration_map(
 
             _ => {}
         }
-        // Suppress unused variable warning for current_item_line
-        let _ = current_item_line;
     }
 
     // Step 6.5 — Remove cursor line entries so raw Markdown is visible while editing
@@ -833,10 +829,10 @@ mod tests {
         let theme = make_theme();
         let map = build_decoration_map(text, &theme, true, 99);
         let spans = map.get(&0).expect("line 0 should have spans");
-        // Must be muted colour.
+        // Must be todo_done colour (defaults to muted).
         assert!(
-            spans.iter().any(|s| s.style.fg == Some(theme.muted)),
-            "checked todo must use muted colour"
+            spans.iter().any(|s| s.style.fg == Some(theme.todo_done)),
+            "checked todo must use todo_done colour"
         );
         // Must NOT have strikethrough — that is reserved for real ~~syntax~~.
         assert!(
