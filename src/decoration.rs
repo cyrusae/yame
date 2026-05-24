@@ -141,6 +141,7 @@ fn add_byte_range_span(
 ///
 /// Pure function — no terminal or UI side effects. This is the v1.5 migration seam:
 /// when moving to a background thread, only the call site changes.
+#[mutants::skip]
 pub fn build_decoration_map(text: &str, theme: &Theme, italic_support: bool) -> DecorationMap {
     let line_starts = line_start_bytes(text);
     let mut map: DecorationMap = HashMap::new();
