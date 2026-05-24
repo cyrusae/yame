@@ -37,10 +37,12 @@ impl Default for Palette {
 pub struct ThemeOverrides {
     pub bold_color: Option<String>,
     pub italic_color: Option<String>,
+    pub strikethrough_color: Option<String>,
     pub blockquote_color: Option<String>,
     pub link_text_color: Option<String>,
     pub link_url_color: Option<String>,
     pub todo_done: Option<String>,
+    pub rule_color: Option<String>,
     pub code_bg: Option<String>,
     pub fenced_bg: Option<String>,
     pub heading_bg: Option<String>,
@@ -107,10 +109,12 @@ pub struct Theme {
     // derived
     pub bold_color: Color,
     pub italic_color: Color,
+    pub strikethrough_color: Color,
     pub blockquote_color: Color,
     pub link_text: Color,
     pub link_url: Color,
     pub todo_done: Color,
+    pub rule_color: Color,
     pub code_bg: Color,
     pub fenced_bg: Color,
     pub heading_bg: Color,
@@ -221,6 +225,7 @@ impl Theme {
 
         let bold_color = resolve(&overrides.bold_color, text, warnings);
         let italic_color = resolve(&overrides.italic_color, blend(accent, text, 0.7), warnings);
+        let strikethrough_color = resolve(&overrides.strikethrough_color, muted, warnings);
         let blockquote_color = resolve(
             &overrides.blockquote_color,
             blend(muted, text, 0.5),
@@ -233,6 +238,7 @@ impl Theme {
         );
         let link_url = resolve(&overrides.link_url_color, muted, warnings);
         let todo_done = resolve(&overrides.todo_done, muted, warnings);
+        let rule_color = resolve(&overrides.rule_color, muted, warnings);
         let code_bg_rgb = resolve(&overrides.code_bg, blend(code_rgb, bg, 0.15), warnings);
         let fenced_bg_rgb = resolve(&overrides.fenced_bg, blend(code_rgb, bg, 0.08), warnings);
         let heading_bg_rgb = resolve(&overrides.heading_bg, blend(accent, bg, 0.15), warnings);
@@ -285,10 +291,12 @@ impl Theme {
             warning: to_color(warning_rgb),
             bold_color: to_color(bold_color),
             italic_color: to_color(italic_color),
+            strikethrough_color: to_color(strikethrough_color),
             blockquote_color: to_color(blockquote_color),
             link_text: to_color(link_text),
             link_url: to_color(link_url),
             todo_done: to_color(todo_done),
+            rule_color: to_color(rule_color),
             code_bg: to_color(code_bg_rgb),
             fenced_bg: to_color(fenced_bg_rgb),
             heading_bg: to_color(heading_bg_rgb),

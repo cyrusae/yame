@@ -21,6 +21,11 @@ pub struct StyledSpan {
     pub is_blockquote: bool,
     /// When set, renderer expands this span's background to fill the full column width.
     pub full_line_bg: Option<Color>,
+    /// When set, renderer draws a full-width underline in this color after the row.
+    /// Used for H1–H3 bottom borders.
+    pub border_bottom: Option<Color>,
+    /// When true, renderer replaces line content with a `─` rule pattern.
+    pub is_rule: bool,
 }
 
 /// Maps logical line index → list of styled spans on that line.
@@ -78,8 +83,7 @@ fn make_span(char_start: usize, char_end: usize, style: Style) -> StyledSpan {
         char_start,
         char_end,
         style,
-        is_blockquote: false,
-        full_line_bg: None,
+        ..Default::default()
     }
 }
 
@@ -123,6 +127,7 @@ fn add_byte_range_span(
                 style: params.style,
                 is_blockquote: params.is_blockquote,
                 full_line_bg: params.full_line_bg,
+                ..Default::default()
             },
         );
     }
@@ -166,22 +171,79 @@ pub fn build_decoration_map(
                     HeadingLevel::H6 => theme.headings.h6,
                 };
                 let bold = matches!(level, HeadingLevel::H1 | HeadingLevel::H2);
-                let mut style = Style::default().fg(heading_color);
+                let mut content_style = Style::default().fg(heading_color);
                 if bold {
-                    style = style.add_modifier(Modifier::BOLD);
+                    content_style = content_style.add_modifier(Modifier::BOLD);
                 }
-                add_byte_range_span(
-                    &mut map,
-                    &line_starts,
-                    text,
-                    range.start,
-                    range.end,
-                    SpanParams {
-                        style,
-                        full_line_bg: Some(theme.heading_bg),
-                        is_blockquote: false,
-                    },
-                );
+                // `# ` / `## ` / `### ` etc. blend toward muted like other delimiters.
+                let delim_style = Style::default().fg(blend_colors(
+                    heading_color,
+                    theme.muted,
+                    theme.delimiter_blend,
+                ));
+                // Bottom border for H1–H3 (thin underline in heading color).
+                let border_bottom = matches!(
+                    level,
+                    HeadingLevel::H1 | HeadingLevel::H2 | HeadingLevel::H3
+                )
+                .then_some(heading_color);
+
+                let (start_line, start_char) = byte_to_line_char(&line_starts, text, range.start);
+                let (end_line, end_char_excl) = byte_to_line_char(&line_starts, text, range.end);
+
+                // Number of `#` characters + the trailing space.
+                let level_num = match level {
+                    HeadingLevel::H1 => 1usize,
+                    HeadingLevel::H2 => 2,
+                    HeadingLevel::H3 => 3,
+                    HeadingLevel::H4 => 4,
+                    HeadingLevel::H5 => 5,
+                    HeadingLevel::H6 => 6,
+                };
+                let delim_chars = level_num + 1; // e.g. "# " = 2, "## " = 3
+
+                // Delimiter span (the `#`s + space).
+                let delim_end = (start_char + delim_chars).min(end_char_excl);
+                if delim_end > start_char {
+                    push_span(
+                        &mut map,
+                        start_line,
+                        StyledSpan {
+                            char_start: start_char,
+                            char_end: delim_end,
+                            style: delim_style,
+                            full_line_bg: Some(theme.heading_bg),
+                            border_bottom,
+                            ..Default::default()
+                        },
+                    );
+                }
+
+                // Content span (the heading text itself), possibly multi-line.
+                if delim_end < end_char_excl || end_line > start_line {
+                    for line in start_line..=end_line {
+                        let c_start = if line == start_line { delim_end } else { 0 };
+                        let c_end = if line == end_line {
+                            end_char_excl
+                        } else {
+                            line_char_len(&line_starts, text, line)
+                        };
+                        if c_start < c_end {
+                            push_span(
+                                &mut map,
+                                line,
+                                StyledSpan {
+                                    char_start: c_start,
+                                    char_end: c_end,
+                                    style: content_style,
+                                    full_line_bg: Some(theme.heading_bg),
+                                    border_bottom,
+                                    ..Default::default()
+                                },
+                            );
+                        }
+                    }
+                }
             }
 
             // ---- b. Bold ----
@@ -326,7 +388,7 @@ pub fn build_decoration_map(
                             char_end: 1,
                             style: indicator_style,
                             is_blockquote: true,
-                            full_line_bg: None,
+                            ..Default::default()
                         },
                     );
                     // rest of line content
@@ -339,7 +401,7 @@ pub fn build_decoration_map(
                                 char_end: line_len,
                                 style: content_style,
                                 is_blockquote: true,
-                                full_line_bg: None,
+                                ..Default::default()
                             },
                         );
                     }
@@ -522,6 +584,64 @@ pub fn build_decoration_map(
                         style,
                         full_line_bg: None,
                         is_blockquote: false,
+                    },
+                );
+            }
+
+            // ---- k. Strikethrough ----
+            Event::Start(Tag::Strikethrough) => {
+                let (start_line, start_char) = byte_to_line_char(&line_starts, text, range.start);
+                let (end_line, end_char_excl) = byte_to_line_char(&line_starts, text, range.end);
+
+                if start_line == end_line {
+                    let span_len = end_char_excl.saturating_sub(start_char);
+                    if span_len >= 4 {
+                        let delim_style = Style::default().fg(blend_colors(
+                            theme.strikethrough_color,
+                            theme.muted,
+                            theme.delimiter_blend,
+                        ));
+                        let content_style = Style::default()
+                            .fg(theme.strikethrough_color)
+                            .add_modifier(Modifier::CROSSED_OUT);
+
+                        // opening ~~
+                        push_span(
+                            &mut map,
+                            start_line,
+                            make_span(start_char, start_char + 2, delim_style),
+                        );
+                        // content
+                        if start_char + 2 < end_char_excl.saturating_sub(2) {
+                            push_span(
+                                &mut map,
+                                start_line,
+                                make_span(start_char + 2, end_char_excl - 2, content_style),
+                            );
+                        }
+                        // closing ~~
+                        push_span(
+                            &mut map,
+                            end_line,
+                            make_span(end_char_excl - 2, end_char_excl, delim_style),
+                        );
+                    }
+                }
+            }
+
+            // ---- l. Horizontal rule ----
+            Event::Rule => {
+                let (rule_line, _) = byte_to_line_char(&line_starts, text, range.start);
+                let line_len = line_char_len(&line_starts, text, rule_line).max(1);
+                push_span(
+                    &mut map,
+                    rule_line,
+                    StyledSpan {
+                        char_start: 0,
+                        char_end: line_len,
+                        style: Style::default().fg(theme.rule_color),
+                        is_rule: true,
+                        ..Default::default()
                     },
                 );
             }
@@ -944,5 +1064,91 @@ mod tests {
     fn fixture_word_count_nonzero() {
         let text = include_str!("../tests/fixtures/sample.md");
         assert!(count_words(text) > 100);
+    }
+
+    // k. Strikethrough
+    #[test]
+    fn strikethrough_has_crossed_out_modifier() {
+        let text = "normal ~~struck~~ normal";
+        let map = build_decoration_map(text, &make_theme(), true, 99);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.style.add_modifier.contains(Modifier::CROSSED_OUT)),
+            "strikethrough content must have CROSSED_OUT modifier"
+        );
+    }
+
+    #[test]
+    fn strikethrough_delimiters_are_blended() {
+        let text = "~~hi~~";
+        let map = build_decoration_map(text, &make_theme(), true, 99);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        // Should produce at least delimiter + content spans
+        assert!(
+            spans.len() >= 2,
+            "strikethrough should produce multiple spans"
+        );
+    }
+
+    // l. Horizontal rule
+    #[test]
+    fn horizontal_rule_sets_is_rule_flag() {
+        // A `---` line surrounded by blank lines is a thematic break in pulldown-cmark
+        let text = "above\n\n---\n\nbelow";
+        let map = build_decoration_map(text, &make_theme(), true, 99);
+        assert!(
+            map.values().flatten().any(|s| s.is_rule),
+            "horizontal rule must set is_rule=true on its line"
+        );
+    }
+
+    // a. Heading delimiter blending
+    #[test]
+    fn heading_h1_delimiter_is_blended() {
+        let text = "# Hello";
+        let map = build_decoration_map(text, &make_theme(), true, 99);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        // Should have both delimiter span (char 0..2) and content span (char 2..)
+        let has_delim = spans.iter().any(|s| s.char_start == 0 && s.char_end == 2);
+        let has_content = spans.iter().any(|s| s.char_start == 2);
+        assert!(has_delim, "H1 should have a delimiter span at 0..2");
+        assert!(
+            has_content,
+            "H1 should have a content span starting at char 2"
+        );
+    }
+
+    #[test]
+    fn heading_h2_delimiter_is_three_chars() {
+        let text = "## Title";
+        let map = build_decoration_map(text, &make_theme(), true, 99);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        // `## ` = 3 chars: delimiter at 0..3
+        let has_delim = spans.iter().any(|s| s.char_start == 0 && s.char_end == 3);
+        assert!(has_delim, "H2 should have delimiter span at 0..3");
+    }
+
+    #[test]
+    fn heading_h1_has_border_bottom() {
+        let text = "# Heading One";
+        let map = build_decoration_map(text, &make_theme(), true, 99);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        assert!(
+            spans.iter().any(|s| s.border_bottom.is_some()),
+            "H1 must have border_bottom set"
+        );
+    }
+
+    #[test]
+    fn heading_h4_no_border_bottom() {
+        let text = "#### Heading Four";
+        let map = build_decoration_map(text, &make_theme(), true, 99);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        assert!(
+            !spans.iter().any(|s| s.border_bottom.is_some()),
+            "H4+ must not have border_bottom"
+        );
     }
 }

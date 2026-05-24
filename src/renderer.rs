@@ -280,6 +280,8 @@ impl Widget for MarkdownView<'_> {
                                 style: s.style,
                                 is_blockquote: s.is_blockquote,
                                 full_line_bg: s.full_line_bg,
+                                border_bottom: s.border_bottom,
+                                is_rule: s.is_rule,
                             })
                             .collect()
                     })
@@ -287,6 +289,9 @@ impl Widget for MarkdownView<'_> {
 
                 // --- Full-line background (headings, fenced blocks) ---
                 let line_bg = row_spans.iter().find_map(|s| s.full_line_bg).unwrap_or(bg);
+                let border_color = row_spans.iter().find_map(|s| s.border_bottom);
+                let is_rule = row_spans.iter().any(|s| s.is_rule);
+                let is_last_wrap = wrap_idx + 1 == wrapped.len();
 
                 let y = area.y + visual_row as u16;
 
@@ -296,17 +301,47 @@ impl Widget for MarkdownView<'_> {
                 }
 
                 // --- Write character cells ---
-                let row_default = default_style.bg(line_bg);
-                let segments = split_into_spans(row_str, &row_spans, row_default);
-                let mut x = area.x + GUTTER; // start after left gutter
-                for span in &segments {
-                    for ch in span.content.chars() {
-                        if (x.saturating_sub(area.x + GUTTER)) as usize >= content_width {
-                            break;
-                        }
-                        buf[(x, y)].set_char(ch).set_style(span.style);
+                if is_rule {
+                    // Replace source text (---, ***, ___) with a ─ rule across the content width.
+                    let rule_style = row_spans
+                        .iter()
+                        .find(|s| s.is_rule)
+                        .map(|s| s.style)
+                        .unwrap_or(default_style);
+                    let mut x = area.x + GUTTER;
+                    for _ in 0..content_width {
+                        buf[(x, y)].set_char('─').set_style(rule_style);
                         x += 1;
                     }
+                } else {
+                    let row_default = default_style.bg(line_bg);
+                    let segments = split_into_spans(row_str, &row_spans, row_default);
+                    let mut x = area.x + GUTTER; // start after left gutter
+                    for span in &segments {
+                        for ch in span.content.chars() {
+                            if (x.saturating_sub(area.x + GUTTER)) as usize >= content_width {
+                                break;
+                            }
+                            buf[(x, y)].set_char(ch).set_style(span.style);
+                            x += 1;
+                        }
+                    }
+                }
+
+                // --- Bottom border (H1–H3 heading underline, last visual row only) ---
+                if let Some(bc) = border_color
+                    && is_last_wrap
+                {
+                    use ratatui::layout::Rect as R;
+                    buf.set_style(
+                        R {
+                            x: area.x,
+                            y,
+                            width: self.column_width,
+                            height: 1,
+                        },
+                        Style::default().fg(bc).add_modifier(Modifier::UNDERLINED),
+                    );
                 }
 
                 visual_row += 1;
