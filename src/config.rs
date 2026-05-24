@@ -25,7 +25,8 @@ impl Default for Palette {
             accent: "#cba6f7".into(),
             muted: "#585b70".into(),
             code: "#a6e3a1".into(),
-            bg: "#1e1e2e".into(),
+            // Catppuccin Crust — near-black main canvas
+            bg: "#11111b".into(),
             warning: "#f38ba8".into(),
         }
     }
@@ -244,8 +245,10 @@ impl Theme {
         let heading_bg_rgb = resolve(&overrides.heading_bg, blend(accent, bg, 0.15), warnings);
         let selection_bg_rgb = resolve(&overrides.selection_bg, blend(accent, bg, 0.6), warnings);
         let selection_fg_rgb = resolve(&overrides.selection_fg, bg, warnings);
-        let ui_bg_rgb = resolve(&overrides.ui_bg, blend(muted, bg, 0.3), warnings);
-        let ui_bar_rgb = resolve(&overrides.ui_bar, blend(muted, bg, 0.5), warnings);
+        // UI chrome defaults to Catppuccin Base (#1e1e2e) — slightly lighter than
+        // the Crust main canvas, so the status bar and info line sit visibly above it.
+        let ui_bg_rgb = resolve(&overrides.ui_bg, (30, 30, 46), warnings);
+        let ui_bar_rgb = resolve(&overrides.ui_bar, (30, 30, 46), warnings);
         let ui_text_rgb = resolve(&overrides.ui_text, text, warnings);
         let delimiter_blend = overrides.delimiter_blend.unwrap_or(0.4).clamp(0.0, 1.0);
 
@@ -457,13 +460,13 @@ mod tests {
     #[test]
     fn derived_heading_bg() {
         let theme = Theme::default_theme();
-        // heading_bg = blend(accent #cba6f7, bg #1e1e2e, 0.15)
-        // blend((203,166,247), (30,30,46), 0.15)
-        // r = 30 + (203-30)*0.15 = 30 + 25.95 = 55.95 → 56
-        // g = 30 + (166-30)*0.15 = 30 + 20.4  = 50.4  → 50
-        // b = 46 + (247-46)*0.15 = 46 + 30.15 = 76.15 → 76
+        // heading_bg = blend(accent #cba6f7, bg #11111b, 0.15)
+        // blend((203,166,247), (17,17,27), 0.15)
+        // r = 17 + (203-17)*0.15 = 17 + 27.9  = 44.9  → 45
+        // g = 17 + (166-17)*0.15 = 17 + 22.35 = 39.35 → 39
+        // b = 27 + (247-27)*0.15 = 27 + 33.0  = 60.0  → 60
         assert!(
-            matches!(theme.heading_bg, Color::Rgb(r, g, b) if r == 56 && g == 50 && b == 76),
+            matches!(theme.heading_bg, Color::Rgb(r, g, b) if r == 45 && g == 39 && b == 60),
             "heading_bg was {:?}",
             theme.heading_bg
         );

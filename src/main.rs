@@ -128,6 +128,21 @@ fn event_loop<B: ratatui::backend::Backend>(
         terminal.draw(|f| {
             let layout = compute_layout(f.area(), min_cols);
 
+            // Flood-fill the full content area (everything above the info/status rows)
+            // with the editor background so the gutters on either side of the centered
+            // column share the same colour — one unified canvas rather than two
+            // distinct gutter strips flanking the column.
+            let content_bg_area = Rect {
+                x: layout.full.x,
+                y: layout.full.y,
+                width: layout.full.width,
+                height: layout.column.height,
+            };
+            f.render_widget(
+                Paragraph::new("").style(Style::default().bg(app.theme.bg)),
+                content_bg_area,
+            );
+
             // Config warning banner — occupies the first row of the column when present.
             // Dismissed on any keystroke (see event handling below).
             let editor_area = if !app.config_warnings.is_empty() && layout.column.height > 0 {

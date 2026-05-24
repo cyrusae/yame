@@ -1,34 +1,59 @@
 {
+  "enableAllProjectMcpServers": true,
   "hooks": {
-    "UserPromptSubmit": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "cd /Users/watcher/GitHere/yame && chainlink session start -q 2>/dev/null; true"
-          }
-        ]
-      }
-    ],
     "PreToolUse": [
       {
-        "matcher": "Write|Edit|NotebookEdit",
+        "matcher": "WebFetch|WebSearch",
         "hooks": [
           {
             "type": "command",
-            "command": "cd /Users/watcher/GitHere/yame && ACTIVE=$(chainlink session status --json | python3 -c \"import sys,json; d=json.load(sys.stdin); print(d.get('active_issue') or '')\"); if [ -z \"$ACTIVE\" ]; then echo '{\"decision\": \"block\", \"reason\": \"No active chainlink work item. Run: chainlink session work <id> before editing files.\"}'; exit 1; fi"
+            "command": "HOOK=\"$(git rev-parse --show-toplevel 2>/dev/null)/.claude/hooks/pre-web-check.py\"; if [ -f \"$HOOK\" ]; then python \"$HOOK\"; else exit 0; fi",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "HOOK=\"$(git rev-parse --show-toplevel 2>/dev/null)/.claude/hooks/work-check.py\"; if [ -f \"$HOOK\" ]; then python \"$HOOK\"; else exit 0; fi",
+            "timeout": 3
           }
         ]
       }
     ],
-    "Stop": [
+    "UserPromptSubmit": [
       {
-        "matcher": "",
         "hooks": [
           {
             "type": "command",
-            "command": "cd /Users/watcher/GitHere/yame && STATUS=$(chainlink session status --json 2>/dev/null); if [ $? -eq 0 ]; then ACTIVE=$(echo \"$STATUS\" | python3 -c \"import sys,json; d=json.load(sys.stdin); print(d.get('active_issue') or '')\"); if [ -n \"$ACTIVE\" ]; then echo \"[chainlink] Session open on issue #$ACTIVE — remember to end with: chainlink session end --notes \\\"...\\\"\" >&2; fi; fi; true"
+            "command": "HOOK=\"$(git rev-parse --show-toplevel 2>/dev/null)/.claude/hooks/prompt-guard.py\"; if [ -f \"$HOOK\" ]; then python \"$HOOK\"; else exit 0; fi",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "HOOK=\"$(git rev-parse --show-toplevel 2>/dev/null)/.claude/hooks/post-edit-check.py\"; if [ -f \"$HOOK\" ]; then python \"$HOOK\"; else exit 0; fi",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "HOOK=\"$(git rev-parse --show-toplevel 2>/dev/null)/.claude/hooks/session-start.py\"; if [ -f \"$HOOK\" ]; then python \"$HOOK\"; else exit 0; fi",
+            "timeout": 10
           }
         ]
       }
