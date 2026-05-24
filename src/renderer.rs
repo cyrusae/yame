@@ -580,6 +580,7 @@ mod tests {
             theme: Theme::default_theme(),
             italic_support: false,
             last_keystroke: None,
+            force_redecorate: false,
             decoration_map: DecorationMap::default(),
             word_count: 0,
             status: StatusLine::default(),

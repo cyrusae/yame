@@ -164,11 +164,12 @@ fn event_loop<B: ratatui::backend::Backend>(
         // Fire decoration pass if debounce has elapsed.
         // TODO(v1.5): move to background thread — build_decoration_map and count_words
         // are pure functions; when v1.5 moves them here, replace with tx.send(text) + rx.try_recv().
-        if app.last_keystroke.is_some_and(|t| t.elapsed() >= DEBOUNCE) {
+        if app.force_redecorate || app.last_keystroke.is_some_and(|t| t.elapsed() >= DEBOUNCE) {
             let text = app.textarea.lines().join("\n");
             app.decoration_map = build_decoration_map(&text, &app.theme, app.italic_support);
             app.word_count = count_words(&text);
             app.last_keystroke = None;
+            app.force_redecorate = false;
         }
         app.status.tick();
 
@@ -327,6 +328,7 @@ fn event_loop<B: ratatui::backend::Backend>(
                         (KeyModifiers::CONTROL, KeyCode::Char('v'))
                         | (KeyModifiers::SUPER, KeyCode::Char('v')) => {
                             yame::clipboard::handle_paste(app);
+                            app.force_redecorate = true;
                         }
                         // Undo/redo: tui-textarea uses Ctrl+U/Ctrl+R internally,
                         // but we expose the conventional Ctrl+Z / Ctrl+Y bindings
@@ -337,6 +339,7 @@ fn event_loop<B: ratatui::backend::Backend>(
                             app.status.dismiss();
                             app.config_warnings.clear();
                             app.textarea.undo();
+                            app.force_redecorate = true;
                             app.last_keystroke = Some(std::time::Instant::now());
                             app.recompute_dirty();
                         }
@@ -344,6 +347,7 @@ fn event_loop<B: ratatui::backend::Backend>(
                             app.status.dismiss();
                             app.config_warnings.clear();
                             app.textarea.redo();
+                            app.force_redecorate = true;
                             app.last_keystroke = Some(std::time::Instant::now());
                             app.recompute_dirty();
                         }
@@ -367,7 +371,11 @@ fn event_loop<B: ratatui::backend::Backend>(
                                 // Dismiss any dismissible message on any keypress
                                 app.status.dismiss();
                                 app.config_warnings.clear();
+                                let prev_line_count = app.textarea.lines().len();
                                 app.textarea.input(k);
+                                if app.textarea.lines().len() != prev_line_count {
+                                    app.force_redecorate = true;
+                                }
                                 app.mark_keystroke();
                             }
                         }
@@ -527,6 +535,7 @@ mod tests {
             theme: Theme::default_theme(),
             italic_support: false,
             last_keystroke: None,
+            force_redecorate: false,
             decoration_map: DecorationMap::default(),
             word_count: 0,
             status: StatusLine::default(),

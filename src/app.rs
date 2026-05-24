@@ -19,6 +19,10 @@ pub struct App {
     pub italic_support: bool,
     /// Set on every keystroke; cleared after decoration pass fires.
     pub last_keystroke: Option<Instant>,
+    /// Set when a structural change (line count change, undo, redo, paste) requires
+    /// the decoration map to be rebuilt on the very next frame instead of waiting
+    /// for the debounce timer. Cleared immediately after the rebuild fires.
+    pub force_redecorate: bool,
     pub decoration_map: DecorationMap,
     pub word_count: usize,
     pub status: StatusLine,
@@ -47,6 +51,7 @@ impl App {
             theme,
             italic_support,
             last_keystroke: None,
+            force_redecorate: false,
             decoration_map: DecorationMap::default(),
             word_count: 0,
             status: StatusLine::default(),
@@ -108,6 +113,7 @@ mod tests {
             theme: Theme::default_theme(),
             italic_support: false,
             last_keystroke: None,
+            force_redecorate: false,
             decoration_map: DecorationMap::default(),
             word_count: 0,
             status: StatusLine::default(),

@@ -26,6 +26,8 @@ A bare link with a long URL: [Rust documentation](https://doc.rust-lang.org/std/
 
 `inline code` at the start, middle `of` a sentence, and at the end `too`.
 
+What happens when I type a long line? A long line? A line that goes on for a long long time? 
+
 ~~Strikethrough.~~
 
 ---
