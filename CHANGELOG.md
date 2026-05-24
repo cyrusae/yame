@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- Color tweaks: heading # toward bg, ~~ revert to muted, checkbox brackets muted, fenced lang tag muted (#80)
 - Escape key exits (clean buffer) or prompts (dirty buffer), matching Ctrl+X (#66)
 - Checked todo `[x]` bracket uses text color for visual pop; item text stays muted (#67)
 - Heading delimiter blend, strikethrough delimiters, horizontal rule, H1–H3 bottom border (#48)

@@ -171,9 +171,14 @@ pub fn build_decoration_map(text: &str, theme: &Theme, italic_support: bool) -> 
                 if bold {
                     content_style = content_style.add_modifier(Modifier::BOLD);
                 }
-                // DIAGNOSTIC: force # delimiter to pure red to verify the
-                // span is actually reaching the renderer at all.
-                let delim_style = Style::default().fg(ratatui::style::Color::Rgb(255, 0, 0));
+                // Blend heading color toward the heading background so the `#`
+                // delimiter reads as dimmer than the heading text without
+                // jarring contrast against the highlighted row.
+                let delim_style = Style::default().fg(blend_colors(
+                    heading_color,
+                    theme.heading_bg,
+                    theme.delimiter_blend,
+                ));
                 // Bottom border for H1–H3 (thin underline in heading color).
                 let border_bottom = matches!(
                     level,
@@ -182,21 +187,6 @@ pub fn build_decoration_map(text: &str, theme: &Theme, italic_support: bool) -> 
                 .then_some(heading_color);
 
                 let (start_line, start_char) = byte_to_line_char(&line_starts, text, range.start);
-                let (end_line, end_char_excl) = byte_to_line_char(&line_starts, text, range.end);
-                // DIAGNOSTIC: log raw range and computed positions
-                {
-                    use std::io::Write as _;
-                    if let Ok(mut f) = std::fs::OpenOptions::new()
-                        .create(true).append(true)
-                        .open("/tmp/yame-decor-debug.log")
-                    {
-                        let snippet = &text[range.start.min(text.len())..range.end.min(text.len())];
-                        let _ = writeln!(f,
-                            "Heading {:?}: range={:?} start=({},{}) end=({},{}) snippet={:?}",
-                            level, range, start_line, start_char, end_line, end_char_excl, snippet
-                        );
-                    }
-                }
 
                 // Number of `#` characters + the trailing space.
                 let level_num = match level {
@@ -209,8 +199,14 @@ pub fn build_decoration_map(text: &str, theme: &Theme, italic_support: bool) -> 
                 };
                 let delim_chars = level_num + 1; // e.g. "# " = 2, "## " = 3
 
-                // Delimiter span (the `#`s + space).
-                let delim_end = (start_char + delim_chars).min(end_char_excl);
+                // ATX headings are always single-line. Use line_char_len to get the
+                // content extent — range.end points to the start of the *next* line
+                // (byte after \n), which byte_to_line_char maps to (next_line, 0),
+                // making end_char_excl = 0 and collapsing the delimiter span to nothing.
+                let line_len = line_char_len(&line_starts, text, start_line);
+                let delim_end = (start_char + delim_chars).min(line_len);
+
+                // Delimiter span (`#`s + space).
                 if delim_end > start_char {
                     push_span(
                         &mut map,
@@ -226,30 +222,20 @@ pub fn build_decoration_map(text: &str, theme: &Theme, italic_support: bool) -> 
                     );
                 }
 
-                // Content span (the heading text itself), possibly multi-line.
-                // The inner `c_start < c_end` guard handles empty headings; no outer
-                // pre-check needed.
-                for line in start_line..=end_line {
-                    let c_start = if line == start_line { delim_end } else { 0 };
-                    let c_end = if line == end_line {
-                        end_char_excl
-                    } else {
-                        line_char_len(&line_starts, text, line)
-                    };
-                    if c_start < c_end {
-                        push_span(
-                            &mut map,
-                            line,
-                            StyledSpan {
-                                char_start: c_start,
-                                char_end: c_end,
-                                style: content_style,
-                                full_line_bg: Some(theme.heading_bg),
-                                border_bottom,
-                                ..Default::default()
-                            },
-                        );
-                    }
+                // Content span (heading text after the `# ` prefix).
+                if delim_end < line_len {
+                    push_span(
+                        &mut map,
+                        start_line,
+                        StyledSpan {
+                            char_start: delim_end,
+                            char_end: line_len,
+                            style: content_style,
+                            full_line_bg: Some(theme.heading_bg),
+                            border_bottom,
+                            ..Default::default()
+                        },
+                    );
                 }
             }
 
@@ -1352,15 +1338,17 @@ mod tests {
             has_content,
             "H1 should have a content span starting at char 2"
         );
-        // Delimiter must use code_color (diagnostic green) — distinct from heading_color.
+        // Delimiter must be blended toward heading_bg — distinct from heading_color.
         let delim_span = spans
             .iter()
             .find(|s| s.char_start == 0 && s.char_end == 2)
             .expect("delimiter span must exist");
+        let expected_delim =
+            blend_colors(theme.headings.h1, theme.heading_bg, theme.delimiter_blend);
         assert_eq!(
             delim_span.style.fg,
-            Some(theme.code_color),
-            "H1 delimiter must be code_color (diagnostic); got {:?}",
+            Some(expected_delim),
+            "H1 delimiter must be blended toward heading_bg; got {:?}",
             delim_span.style.fg
         );
     }

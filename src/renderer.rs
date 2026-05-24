@@ -314,18 +314,6 @@ impl Widget for MarkdownView<'_> {
                 } else {
                     let row_default = default_style.bg(line_bg);
                     let segments = split_into_spans(row_str, &row_spans, row_default);
-                    // DIAGNOSTIC: log heading lines to /tmp/yame-render-debug.log
-                    if !row_spans.is_empty() && row_spans.iter().any(|s| s.full_line_bg.is_some()) {
-                        use std::io::Write as _;
-                        if let Ok(mut f) = std::fs::OpenOptions::new()
-                            .create(true).append(true)
-                            .open("/tmp/yame-render-debug.log")
-                        {
-                            let _ = writeln!(f, "--- heading row (log_row={log_row} wrap={wrap_idx}) ---");
-                            let _ = writeln!(f, "  row_spans: {:?}", row_spans.iter().map(|s| (s.char_start, s.char_end, s.style.fg)).collect::<Vec<_>>());
-                            let _ = writeln!(f, "  segments:  {:?}", segments.iter().map(|s| (s.content.as_ref(), s.style.fg)).collect::<Vec<_>>());
-                        }
-                    }
                     let mut x = area.x + GUTTER; // start after left gutter
                     for span in &segments {
                         for ch in span.content.chars() {
@@ -334,17 +322,6 @@ impl Widget for MarkdownView<'_> {
                             }
                             buf[(x, y)].set_char(ch).set_style(span.style);
                             x += 1;
-                        }
-                    }
-                    // DIAGNOSTIC: log what fg the # cell actually has after writing
-                    if !row_spans.is_empty() && row_spans.iter().any(|s| s.full_line_bg.is_some()) {
-                        use std::io::Write as _;
-                        if let Ok(mut f) = std::fs::OpenOptions::new()
-                            .create(true).append(true)
-                            .open("/tmp/yame-render-debug.log")
-                        {
-                            let hash_cell = &buf[(area.x + GUTTER, y)];
-                            let _ = writeln!(f, "  buf[#] after write: char={:?} fg={:?}", hash_cell.symbol(), hash_cell.style().fg);
                         }
                     }
                 }
