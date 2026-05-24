@@ -171,12 +171,12 @@ pub fn build_decoration_map(text: &str, theme: &Theme, italic_support: bool) -> 
                 if bold {
                     content_style = content_style.add_modifier(Modifier::BOLD);
                 }
-                // `# ` / `## ` / `### ` blend toward muted using the neutral text
-                // colour as the source (same formula as `*` and `[]()` delimiters).
-                // Blending from heading_color was too vivid for saturated accent hues.
+                // `# ` / `## ` / `### ` blend toward background so they read as
+                // darker/subordinate against the bright heading text, rather than
+                // toward text (which made them too light given heading highlights).
                 let delim_style = Style::default().fg(blend_colors(
-                    theme.text,
-                    theme.muted,
+                    heading_color,
+                    theme.bg,
                     theme.delimiter_blend,
                 ));
                 // Bottom border for H1–H3 (thin underline in heading color).
@@ -407,7 +407,9 @@ pub fn build_decoration_map(text: &str, theme: &Theme, italic_support: bool) -> 
                         theme.delimiter_blend,
                     ))
                     .bg(theme.fenced_bg);
-                let lang_style = Style::default().fg(theme.accent).bg(theme.fenced_bg);
+                // Language tag is UI chrome, not content — muted so it doesn't compete
+                // with the fence delimiters or the code inside.
+                let lang_style = Style::default().fg(theme.muted).bg(theme.fenced_bg);
 
                 // Opening fence line: ``` delimiters → code_color, language tag → accent.
                 // First span carries full_line_bg so the renderer flood-fills the whole row.
@@ -646,19 +648,28 @@ pub fn build_decoration_map(text: &str, theme: &Theme, italic_support: bool) -> 
                 let (marker_line, marker_char) = byte_to_line_char(&line_starts, text, range.start);
 
                 if checked {
-                    // `[x]` bracket in text colour for visual pop; item text in todo_done.
-                    // Strikethrough is intentionally absent: real ~~strikethrough~~ syntax
+                    // Checked item: `-` keeps accent (from list-bullet span), `[` and `]`
+                    // are muted UI chrome, `x` is text colour for visual pop, item text
+                    // is todo_done. Strikethrough is intentionally absent: real ~~syntax~~
                     // exists in Markdown and should remain visually distinct.
-                    // The list bullet (`-`) is coloured by the list-bullet span; no full-line
-                    // span here so the bullet keeps its accent colour.
                     let line_len = line_char_len(&line_starts, text, marker_line);
-                    // [x] is 3 chars: [, x, ]
+                    // [x] is 3 chars at marker_char: [ x ]
                     let bracket_end = (marker_char + 3).min(line_len);
-                    push_span(
-                        &mut map,
-                        marker_line,
-                        make_span(marker_char, bracket_end, Style::default().fg(theme.text)),
-                    );
+                    let muted = Style::default().fg(theme.muted);
+                    let x_style = Style::default().fg(theme.text);
+                    // `[`
+                    push_span(&mut map, marker_line,
+                        make_span(marker_char, (marker_char + 1).min(bracket_end), muted));
+                    // `x`
+                    if marker_char + 1 < bracket_end {
+                        push_span(&mut map, marker_line,
+                            make_span(marker_char + 1, (marker_char + 2).min(bracket_end), x_style));
+                    }
+                    // `]`
+                    if marker_char + 2 < bracket_end {
+                        push_span(&mut map, marker_line,
+                            make_span(marker_char + 2, bracket_end, muted));
+                    }
                     // Item text after the bracket
                     if bracket_end < line_len {
                         push_span(
@@ -741,12 +752,9 @@ pub fn build_decoration_map(text: &str, theme: &Theme, italic_support: bool) -> 
                 if start_line == end_line {
                     let span_len = end_char_excl.saturating_sub(start_char);
                     if span_len >= 4 {
-                        // ~~ delimiters use neutral text→muted blend (same as `*`, `#` etc.)
-                        let delim_style = Style::default().fg(blend_colors(
-                            theme.text,
-                            theme.muted,
-                            theme.delimiter_blend,
-                        ));
+                        // ~~ delimiters use plain muted — blending toward text made them
+                        // brighter than the struck-through content they surround.
+                        let delim_style = Style::default().fg(theme.muted);
                         let content_style = Style::default()
                             .fg(theme.strikethrough_color)
                             .add_modifier(Modifier::CROSSED_OUT);
@@ -1064,16 +1072,16 @@ mod tests {
     }
 
     #[test]
-    fn fenced_code_language_tag_uses_accent() {
-        // Language tag (e.g. "rust") must have a span with accent fg.
+    fn fenced_code_language_tag_is_muted() {
+        // Language tag (e.g. "rust") is UI chrome — must use muted fg, not accent.
         let text = "before\n```rust\nlet x = 1;\n```\nafter";
         let theme = make_theme();
         let map = build_decoration_map(text, &theme, true);
         // Opening fence with language tag is line 1.
         let opening = map.get(&1).expect("opening fence line must have spans");
         assert!(
-            opening.iter().any(|s| s.style.fg == Some(theme.accent)),
-            "language tag on opening fence must have accent fg"
+            opening.iter().any(|s| s.style.fg == Some(theme.muted)),
+            "language tag on opening fence must have muted fg"
         );
     }
 
