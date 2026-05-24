@@ -137,13 +137,15 @@ Optional per-element overrides. These take precedence over the derived defaults.
 
 ```toml
 [theme]
-# bold_color       = "#cdd6f4"
-# italic_color     = "#f5c2e7"   # e.g. Catppuccin pink for tonal distinction
-# blockquote_color = "#6c7086"
-# link_text_color  = "#cba6f7"
-# link_url_color   = "#6c7086"
-# todo_done        = "#585b70"   # color for completed todo items
-# code_bg          = "#262637"
+# bold_color         = "#cdd6f4"
+# italic_color       = "#f5c2e7"   # e.g. Catppuccin pink for tonal distinction
+# strikethrough_color = "#585b70"  # ~~struck~~ text (default: muted)
+# blockquote_color   = "#6c7086"
+# link_text_color    = "#cba6f7"
+# link_url_color     = "#6c7086"
+# todo_done          = "#585b70"   # completed todo items
+# rule_color         = "#585b70"   # horizontal rule ─────
+# code_bg            = "#262637"
 # fenced_bg        = "#222233"
 # heading_bg       = "#302d45"
 # selection_bg     = "#413d5c"

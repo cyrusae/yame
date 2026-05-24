@@ -8,7 +8,7 @@ use yame::decoration::{build_decoration_map, count_words};
 fn fixture_decoration_roundtrip() {
     let text = include_str!("fixtures/sample.md");
     let theme = Theme::default_theme();
-    let map = build_decoration_map(text, &theme, true, 9999); // cursor far away
+    let map = build_decoration_map(text, &theme, true);
 
     // Line 0 ("# Heading One") must have a full_line_bg highlight.
     assert!(

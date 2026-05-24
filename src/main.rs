@@ -3,13 +3,16 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseEventKind,
+    },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{
     Terminal, backend::CrosstermBackend, layout::Rect, style::Style, widgets::Paragraph,
 };
+use tui_textarea::CursorMove;
 
 use yame::app::App;
 use yame::config::{LayoutConfig, Theme, load_config, supports_italic};
@@ -93,6 +96,12 @@ fn event_loop<B: ratatui::backend::Backend>(
 
     const POLL_TIMEOUT: Duration = Duration::from_millis(16);
     const DEBOUNCE: Duration = Duration::from_millis(50);
+    /// Virtual empty rows kept below the cursor at end-of-document.
+    /// Implemented by firing the scroll clamp early (not by shrinking the viewport),
+    /// so all terminal rows remain usable when the cursor is mid-document.
+    const BOTTOM_PADDING: usize = 3;
+    /// Lines moved per scroll-wheel tick.
+    const SCROLL_LINES: usize = 3;
 
     let min_cols = layout_config.min_cols.unwrap_or(DEFAULT_MIN_COLS);
 
@@ -101,9 +110,7 @@ fn event_loop<B: ratatui::backend::Backend>(
     // keystroke to trigger the debounce.
     {
         let text = app.textarea.lines().join("\n");
-        let cursor_line = app.textarea.cursor().0;
-        app.decoration_map =
-            build_decoration_map(&text, &app.theme, app.italic_support, cursor_line);
+        app.decoration_map = build_decoration_map(&text, &app.theme, app.italic_support);
         app.word_count = count_words(&text);
     }
 
@@ -117,9 +124,7 @@ fn event_loop<B: ratatui::backend::Backend>(
         // are pure functions; when v1.5 moves them here, replace with tx.send(text) + rx.try_recv().
         if app.last_keystroke.is_some_and(|t| t.elapsed() >= DEBOUNCE) {
             let text = app.textarea.lines().join("\n");
-            let cursor_line = app.textarea.cursor().0;
-            app.decoration_map =
-                build_decoration_map(&text, &app.theme, app.italic_support, cursor_line);
+            app.decoration_map = build_decoration_map(&text, &app.theme, app.italic_support);
             app.word_count = count_words(&text);
             app.last_keystroke = None;
         }
@@ -127,6 +132,21 @@ fn event_loop<B: ratatui::backend::Backend>(
 
         terminal.draw(|f| {
             let layout = compute_layout(f.area(), min_cols);
+
+            // Flood-fill the full content area (everything above the info/status rows)
+            // with the editor background so the gutters on either side of the centered
+            // column share the same colour — one unified canvas rather than two
+            // distinct gutter strips flanking the column.
+            let content_bg_area = Rect {
+                x: layout.full.x,
+                y: layout.full.y,
+                width: layout.full.width,
+                height: layout.column.height,
+            };
+            f.render_widget(
+                Paragraph::new("").style(Style::default().bg(app.theme.bg)),
+                content_bg_area,
+            );
 
             // Config warning banner — occupies the first row of the column when present.
             // Dismissed on any keystroke (see event handling below).
@@ -151,14 +171,77 @@ fn event_loop<B: ratatui::backend::Backend>(
             };
 
             // Clamp scroll_top so the cursor stays visible after every keystroke,
-            // mouse click, or terminal resize — runs against the live editor area each frame.
-            let (cursor_row, _) = app.textarea.cursor();
+            // mouse click, or terminal resize.
+            //
+            // IMPORTANT: we track *visual* rows (after soft/hard wrap), not logical
+            // rows.  A logical line that wraps into N visual rows consumes N slots in
+            // the viewport, so a pure logical-row clamp lets the cursor drift off the
+            // bottom whenever wrapped lines sit between scroll_top and the cursor.
+            //
+            // BOTTOM_PADDING is applied by firing the scroll clamp BOTTOM_PADDING rows
+            // early — the viewport itself stays full height so all rows remain usable
+            // mid-document.  The renderer already draws canvas bg past end-of-content,
+            // so those virtual padding rows appear naturally.
+            //
+            // content_width must match the renderer's own calculation exactly so that
+            // wrap_line returns the same split as what gets drawn.
+            let (cursor_row, cursor_col) = app.textarea.cursor();
             let visible_rows = editor_area.height as usize;
+            let lines = app.textarea.lines();
+            // renderer::GUTTER == 1, two sides → subtract 2
+            let cw = (layout.column.width as usize).saturating_sub(2).max(1);
+
+            // ── Scroll up: cursor above the viewport ──────────────────────────
             if cursor_row < app.scroll_top {
                 app.scroll_top = cursor_row;
             }
-            if cursor_row >= app.scroll_top + visible_rows {
-                app.scroll_top = cursor_row.saturating_sub(visible_rows.saturating_sub(1));
+
+            // ── Scroll down: check cursor's visual position ───────────────────
+            // Count visual rows occupied by logical lines [scroll_top, cursor_row).
+            let above_visual: usize = lines
+                .get(app.scroll_top..cursor_row.min(lines.len()))
+                .unwrap_or(&[])
+                .iter()
+                .map(|l| renderer::wrap_line(l, cw).len())
+                .sum();
+
+            // Find which visual sub-row within cursor_row the cursor sits on.
+            // Mirrors the renderer's cursor-tracking logic (pointer-arithmetic char_start).
+            let cursor_line_str = lines.get(cursor_row).map_or("", |s| s.as_str());
+            let cursor_wraps = renderer::wrap_line(cursor_line_str, cw);
+            let cursor_subrow = cursor_wraps
+                .iter()
+                .enumerate()
+                .rev()
+                .find(|(_, wrap)| {
+                    let byte_off =
+                        (wrap.as_ptr() as usize).wrapping_sub(cursor_line_str.as_ptr() as usize);
+                    let char_start = cursor_line_str[..byte_off].chars().count();
+                    cursor_col >= char_start
+                })
+                .map_or(0, |(i, _)| i);
+
+            let cursor_visual = above_visual + cursor_subrow;
+
+            // Fire BOTTOM_PADDING rows early so the cursor never sits flush at the
+            // very bottom of the viewport.
+            if cursor_visual + BOTTOM_PADDING >= visible_rows {
+                // Walk backward from cursor_row, accumulating visual rows, until we
+                // find a scroll_top that places the cursor at (last visible row − padding).
+                let headroom = visible_rows.saturating_sub(1 + cursor_subrow + BOTTOM_PADDING);
+                let mut remaining = headroom;
+                let mut new_top = cursor_row;
+                while new_top > 0 {
+                    let prev_wraps =
+                        renderer::wrap_line(lines.get(new_top - 1).map_or("", |s| s.as_str()), cw)
+                            .len();
+                    if prev_wraps > remaining {
+                        break;
+                    }
+                    remaining -= prev_wraps;
+                    new_top -= 1;
+                }
+                app.scroll_top = new_top;
             }
 
             let view = renderer::MarkdownView {
@@ -185,7 +268,8 @@ fn event_loop<B: ratatui::backend::Backend>(
                         (KeyModifiers::CONTROL, KeyCode::Char('s')) => {
                             handle_save(app)?;
                         }
-                        (KeyModifiers::CONTROL, KeyCode::Char('x')) => {
+                        (KeyModifiers::CONTROL, KeyCode::Char('x'))
+                        | (KeyModifiers::NONE, KeyCode::Esc) => {
                             if handle_exit(app) {
                                 break;
                             }
@@ -233,15 +317,44 @@ fn event_loop<B: ratatui::backend::Backend>(
                     }
                 }
                 Event::Mouse(mut mouse) => {
-                    // tui-textarea expects coordinates relative to its widget origin
-                    // and uses them as (logical_row, col).  Translate from
-                    // screen-absolute by subtracting the editor area's top-left and
-                    // adding the current scroll offset so clicks land on the correct
-                    // logical line regardless of centering margin or scroll position.
-                    mouse.column = mouse.column.saturating_sub(last_editor_area.x);
-                    let rel_row = mouse.row.saturating_sub(last_editor_area.y) as usize;
-                    mouse.row = rel_row.saturating_add(app.scroll_top) as u16;
-                    app.textarea.input(Event::Mouse(mouse));
+                    match mouse.kind {
+                        // Scroll events are intercepted before tui-textarea to avoid
+                        // two problems:
+                        //   1. tui-textarea accumulates its own internal scroll offset
+                        //      that diverges from our scroll_top, producing "ghost"
+                        //      scroll steps that must be unwound before cursor moves.
+                        //   2. On scroll-up mid-viewport, the visual clamp only fires
+                        //      at the bottom boundary, so cursor drifts through the
+                        //      visible area without the viewport moving at all.
+                        //
+                        // Fix: move cursor ourselves, and on ScrollUp also decrement
+                        // scroll_top immediately so the viewport follows the gesture
+                        // without waiting for the cursor to hit the top of the view.
+                        // The visual clamp corrects any overshoot on the next frame.
+                        MouseEventKind::ScrollDown => {
+                            for _ in 0..SCROLL_LINES {
+                                app.textarea.move_cursor(CursorMove::Down);
+                            }
+                            // scroll_top is driven upward by the visual clamp when
+                            // the cursor approaches the bottom — no manual adjustment.
+                        }
+                        MouseEventKind::ScrollUp => {
+                            for _ in 0..SCROLL_LINES {
+                                app.textarea.move_cursor(CursorMove::Up);
+                            }
+                            // Immediately pull the viewport up so content moves on
+                            // every tick.  The clamp corrects if this undershoots.
+                            app.scroll_top = app.scroll_top.saturating_sub(SCROLL_LINES);
+                        }
+                        // Click / drag: translate screen coords → logical doc coords
+                        // so tui-textarea places the cursor on the correct line.
+                        _ => {
+                            mouse.column = mouse.column.saturating_sub(last_editor_area.x);
+                            let rel_row = mouse.row.saturating_sub(last_editor_area.y) as usize;
+                            mouse.row = rel_row.saturating_add(app.scroll_top) as u16;
+                            app.textarea.input(Event::Mouse(mouse));
+                        }
+                    }
                 }
                 Event::Resize(_, _) => {
                     // next draw() picks up new dimensions automatically
@@ -288,6 +401,15 @@ fn handle_exit(app: &mut App) -> bool {
         false
     } else {
         true
+    }
+}
+
+#[mutants::skip] // Entry point — calls process::exit, not unit-testable.
+fn main() {
+    let file_path = parse_args().unwrap_or_else(|_| std::process::exit(1));
+    if let Err(e) = run(file_path) {
+        eprintln!("error: {e}");
+        std::process::exit(1);
     }
 }
 
@@ -342,14 +464,5 @@ mod tests {
             matches!(app.status.mode, StatusMode::ExitPrompt),
             "dirty exit must show ExitPrompt"
         );
-    }
-}
-
-#[mutants::skip] // Entry point — calls process::exit, not unit-testable.
-fn main() {
-    let file_path = parse_args().unwrap_or_else(|_| std::process::exit(1));
-    if let Err(e) = run(file_path) {
-        eprintln!("error: {e}");
-        std::process::exit(1);
     }
 }

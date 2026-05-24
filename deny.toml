@@ -6,7 +6,10 @@
 [advisories]
 # Deny crates with known security vulnerabilities.
 version = 2
-ignore = []
+ignore = [
+    # arboard transitive dependency — EOL upstream, not actionable on our end
+    { id = "RUSTSEC-2024-0436", reason = "transitive via arboard; no fix available upstream" },
+]
 
 # ---------------------------------------------------------------------------
 # License policy
@@ -21,11 +24,9 @@ allow = [
     "Apache-2.0 WITH LLVM-exception",
     "BSD-2-Clause",
     "BSD-3-Clause",
-    "ISC",
+    "BSL-1.0",       # Boost Software License — OSI/FSF approved, used by arboard transitive deps
     "Unicode-3.0",
-    "Unicode-DFS-2016",
     "Zlib",
-    "CC0-1.0",
 ]
 
 # ---------------------------------------------------------------------------

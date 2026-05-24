@@ -73,6 +73,18 @@ impl App {
     }
 }
 
+/// Load a file into a TextArea, or return an empty TextArea for new files.
+#[mutants::skip] // fs::read_to_string I/O — mutations (e.g. skipping the read) not testable without a real FS.
+pub fn load_file(path: &Path) -> io::Result<TextArea<'static>> {
+    if path.exists() {
+        let content = std::fs::read_to_string(path)?;
+        let lines: Vec<String> = content.lines().map(String::from).collect();
+        Ok(TextArea::new(lines))
+    } else {
+        Ok(TextArea::default())
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -173,17 +185,5 @@ mod tests {
         // TextArea::new(vec![]) may return [""] — test only that recompute_dirty runs
         // without panic and produces a consistent result.
         app.recompute_dirty(); // must not panic
-    }
-}
-
-/// Load a file into a TextArea, or return an empty TextArea for new files.
-#[mutants::skip] // fs::read_to_string I/O — mutations (e.g. skipping the read) not testable without a real FS.
-pub fn load_file(path: &Path) -> io::Result<TextArea<'static>> {
-    if path.exists() {
-        let content = std::fs::read_to_string(path)?;
-        let lines: Vec<String> = content.lines().map(String::from).collect();
-        Ok(TextArea::new(lines))
-    } else {
-        Ok(TextArea::default())
     }
 }

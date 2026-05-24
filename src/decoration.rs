@@ -21,6 +21,11 @@ pub struct StyledSpan {
     pub is_blockquote: bool,
     /// When set, renderer expands this span's background to fill the full column width.
     pub full_line_bg: Option<Color>,
+    /// When set, renderer draws a full-width underline in this color after the row.
+    /// Used for H1–H3 bottom borders.
+    pub border_bottom: Option<Color>,
+    /// When true, renderer replaces line content with a `─` rule pattern.
+    pub is_rule: bool,
 }
 
 /// Maps logical line index → list of styled spans on that line.
@@ -78,8 +83,7 @@ fn make_span(char_start: usize, char_end: usize, style: Style) -> StyledSpan {
         char_start,
         char_end,
         style,
-        is_blockquote: false,
-        full_line_bg: None,
+        ..Default::default()
     }
 }
 
@@ -123,6 +127,7 @@ fn add_byte_range_span(
                 style: params.style,
                 is_blockquote: params.is_blockquote,
                 full_line_bg: params.full_line_bg,
+                ..Default::default()
             },
         );
     }
@@ -136,12 +141,7 @@ fn add_byte_range_span(
 ///
 /// Pure function — no terminal or UI side effects. This is the v1.5 migration seam:
 /// when moving to a background thread, only the call site changes.
-pub fn build_decoration_map(
-    text: &str,
-    theme: &Theme,
-    italic_support: bool,
-    cursor_line: usize,
-) -> DecorationMap {
+pub fn build_decoration_map(text: &str, theme: &Theme, italic_support: bool) -> DecorationMap {
     let line_starts = line_start_bytes(text);
     let mut map: DecorationMap = HashMap::new();
 
@@ -166,22 +166,79 @@ pub fn build_decoration_map(
                     HeadingLevel::H6 => theme.headings.h6,
                 };
                 let bold = matches!(level, HeadingLevel::H1 | HeadingLevel::H2);
-                let mut style = Style::default().fg(heading_color);
+                let mut content_style = Style::default().fg(heading_color);
                 if bold {
-                    style = style.add_modifier(Modifier::BOLD);
+                    content_style = content_style.add_modifier(Modifier::BOLD);
                 }
-                add_byte_range_span(
-                    &mut map,
-                    &line_starts,
-                    text,
-                    range.start,
-                    range.end,
-                    SpanParams {
-                        style,
-                        full_line_bg: Some(theme.heading_bg),
-                        is_blockquote: false,
-                    },
-                );
+                // `# ` / `## ` / `### ` etc. blend toward muted like other delimiters.
+                let delim_style = Style::default().fg(blend_colors(
+                    heading_color,
+                    theme.muted,
+                    theme.delimiter_blend,
+                ));
+                // Bottom border for H1–H3 (thin underline in heading color).
+                let border_bottom = matches!(
+                    level,
+                    HeadingLevel::H1 | HeadingLevel::H2 | HeadingLevel::H3
+                )
+                .then_some(heading_color);
+
+                let (start_line, start_char) = byte_to_line_char(&line_starts, text, range.start);
+                let (end_line, end_char_excl) = byte_to_line_char(&line_starts, text, range.end);
+
+                // Number of `#` characters + the trailing space.
+                let level_num = match level {
+                    HeadingLevel::H1 => 1usize,
+                    HeadingLevel::H2 => 2,
+                    HeadingLevel::H3 => 3,
+                    HeadingLevel::H4 => 4,
+                    HeadingLevel::H5 => 5,
+                    HeadingLevel::H6 => 6,
+                };
+                let delim_chars = level_num + 1; // e.g. "# " = 2, "## " = 3
+
+                // Delimiter span (the `#`s + space).
+                let delim_end = (start_char + delim_chars).min(end_char_excl);
+                if delim_end > start_char {
+                    push_span(
+                        &mut map,
+                        start_line,
+                        StyledSpan {
+                            char_start: start_char,
+                            char_end: delim_end,
+                            style: delim_style,
+                            full_line_bg: Some(theme.heading_bg),
+                            border_bottom,
+                            ..Default::default()
+                        },
+                    );
+                }
+
+                // Content span (the heading text itself), possibly multi-line.
+                // The inner `c_start < c_end` guard handles empty headings; no outer
+                // pre-check needed.
+                for line in start_line..=end_line {
+                    let c_start = if line == start_line { delim_end } else { 0 };
+                    let c_end = if line == end_line {
+                        end_char_excl
+                    } else {
+                        line_char_len(&line_starts, text, line)
+                    };
+                    if c_start < c_end {
+                        push_span(
+                            &mut map,
+                            line,
+                            StyledSpan {
+                                char_start: c_start,
+                                char_end: c_end,
+                                style: content_style,
+                                full_line_bg: Some(theme.heading_bg),
+                                border_bottom,
+                                ..Default::default()
+                            },
+                        );
+                    }
+                }
             }
 
             // ---- b. Bold ----
@@ -283,21 +340,100 @@ pub fn build_decoration_map(
             }
 
             // ---- e. Fenced code blocks ----
-            Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(_))) => {
-                // TODO(v1.5): pass block content and language tag to syntect here
-                let style = Style::default().bg(theme.fenced_bg);
-                add_byte_range_span(
-                    &mut map,
+            // DEFERRED(v1.5): pass block content and language tag to syntect for
+            // syntax highlighting.
+            Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(lang))) => {
+                let (start_line, _) = byte_to_line_char(&line_starts, text, range.start);
+                let (end_line, _) = byte_to_line_char(
                     &line_starts,
                     text,
-                    range.start,
-                    range.end,
-                    SpanParams {
-                        style,
-                        full_line_bg: Some(theme.fenced_bg),
-                        is_blockquote: false,
-                    },
+                    range.end.saturating_sub(1).max(range.start),
                 );
+                let fence_bg_style = Style::default().bg(theme.fenced_bg);
+                let fence_delim_style = Style::default().fg(theme.code_color).bg(theme.fenced_bg);
+                let lang_style = Style::default().fg(theme.accent).bg(theme.fenced_bg);
+
+                // Opening fence line: ``` delimiters → code_color, language tag → accent.
+                // First span carries full_line_bg so the renderer flood-fills the whole row.
+                {
+                    let line_len = line_char_len(&line_starts, text, start_line);
+                    let lb_start = line_starts[start_line];
+                    let lb_end = if start_line + 1 < line_starts.len() {
+                        line_starts[start_line + 1].saturating_sub(1)
+                    } else {
+                        text.len()
+                    };
+                    let fence_count = text[lb_start..lb_end]
+                        .chars()
+                        .take_while(|&c| c == '`' || c == '~')
+                        .count()
+                        .min(line_len);
+                    push_span(
+                        &mut map,
+                        start_line,
+                        StyledSpan {
+                            char_start: 0,
+                            char_end: fence_count.max(1),
+                            style: fence_delim_style,
+                            full_line_bg: Some(theme.fenced_bg),
+                            ..Default::default()
+                        },
+                    );
+                    let lang_str = lang.as_ref();
+                    if !lang_str.is_empty() {
+                        let lang_end = (fence_count + lang_str.chars().count()).min(line_len);
+                        if lang_end > fence_count {
+                            push_span(
+                                &mut map,
+                                start_line,
+                                make_span(fence_count, lang_end, lang_style),
+                            );
+                        }
+                    }
+                }
+
+                // Content lines: fenced_bg background only.
+                for line in (start_line + 1)..end_line {
+                    let line_len = line_char_len(&line_starts, text, line).max(1);
+                    push_span(
+                        &mut map,
+                        line,
+                        StyledSpan {
+                            char_start: 0,
+                            char_end: line_len,
+                            style: fence_bg_style,
+                            full_line_bg: Some(theme.fenced_bg),
+                            ..Default::default()
+                        },
+                    );
+                }
+
+                // Closing fence line: ``` delimiters → code_color.
+                if end_line > start_line {
+                    let close_len = line_char_len(&line_starts, text, end_line);
+                    let lb_start = line_starts[end_line];
+                    let lb_end = if end_line + 1 < line_starts.len() {
+                        line_starts[end_line + 1].saturating_sub(1)
+                    } else {
+                        text.len()
+                    };
+                    let close_fence = text[lb_start..lb_end]
+                        .chars()
+                        .take_while(|&c| c == '`' || c == '~')
+                        .count()
+                        .min(close_len);
+                    push_span(
+                        &mut map,
+                        end_line,
+                        StyledSpan {
+                            char_start: 0,
+                            char_end: close_fence.max(1),
+                            style: fence_delim_style,
+                            full_line_bg: Some(theme.fenced_bg),
+                            ..Default::default()
+                        },
+                    );
+                }
             }
 
             // ---- f. Blockquotes ----
@@ -326,7 +462,7 @@ pub fn build_decoration_map(
                             char_end: 1,
                             style: indicator_style,
                             is_blockquote: true,
-                            full_line_bg: None,
+                            ..Default::default()
                         },
                     );
                     // rest of line content
@@ -339,7 +475,7 @@ pub fn build_decoration_map(
                                 char_end: line_len,
                                 style: content_style,
                                 is_blockquote: true,
-                                full_line_bg: None,
+                                ..Default::default()
                             },
                         );
                     }
@@ -454,12 +590,27 @@ pub fn build_decoration_map(
                 let (marker_line, marker_char) = byte_to_line_char(&line_starts, text, range.start);
 
                 if checked {
-                    // Apply todo_done colour to the entire item line.
+                    // `[x]` bracket in text colour for visual pop; item text in todo_done.
                     // Strikethrough is intentionally absent: real ~~strikethrough~~ syntax
                     // exists in Markdown and should remain visually distinct.
+                    // The list bullet (`-`) is coloured by the list-bullet span; no full-line
+                    // span here so the bullet keeps its accent colour.
                     let line_len = line_char_len(&line_starts, text, marker_line);
-                    let style = Style::default().fg(theme.todo_done);
-                    push_span(&mut map, marker_line, make_span(0, line_len, style));
+                    // [x] is 3 chars: [, x, ]
+                    let bracket_end = (marker_char + 3).min(line_len);
+                    push_span(
+                        &mut map,
+                        marker_line,
+                        make_span(marker_char, bracket_end, Style::default().fg(theme.text)),
+                    );
+                    // Item text after the bracket
+                    if bracket_end < line_len {
+                        push_span(
+                            &mut map,
+                            marker_line,
+                            make_span(bracket_end, line_len, Style::default().fg(theme.todo_done)),
+                        );
+                    }
                 } else {
                     // Style [ and ] in accent, leave space between as normal
                     let accent = Style::default().fg(theme.accent);
@@ -526,12 +677,67 @@ pub fn build_decoration_map(
                 );
             }
 
+            // ---- k. Strikethrough ----
+            Event::Start(Tag::Strikethrough) => {
+                let (start_line, start_char) = byte_to_line_char(&line_starts, text, range.start);
+                let (end_line, end_char_excl) = byte_to_line_char(&line_starts, text, range.end);
+
+                if start_line == end_line {
+                    let span_len = end_char_excl.saturating_sub(start_char);
+                    if span_len >= 4 {
+                        let delim_style = Style::default().fg(blend_colors(
+                            theme.strikethrough_color,
+                            theme.muted,
+                            theme.delimiter_blend,
+                        ));
+                        let content_style = Style::default()
+                            .fg(theme.strikethrough_color)
+                            .add_modifier(Modifier::CROSSED_OUT);
+
+                        // opening ~~
+                        push_span(
+                            &mut map,
+                            start_line,
+                            make_span(start_char, start_char + 2, delim_style),
+                        );
+                        // content
+                        if start_char + 2 < end_char_excl.saturating_sub(2) {
+                            push_span(
+                                &mut map,
+                                start_line,
+                                make_span(start_char + 2, end_char_excl - 2, content_style),
+                            );
+                        }
+                        // closing ~~
+                        push_span(
+                            &mut map,
+                            end_line,
+                            make_span(end_char_excl - 2, end_char_excl, delim_style),
+                        );
+                    }
+                }
+            }
+
+            // ---- l. Horizontal rule ----
+            Event::Rule => {
+                let (rule_line, _) = byte_to_line_char(&line_starts, text, range.start);
+                let line_len = line_char_len(&line_starts, text, rule_line).max(1);
+                push_span(
+                    &mut map,
+                    rule_line,
+                    StyledSpan {
+                        char_start: 0,
+                        char_end: line_len,
+                        style: Style::default().fg(theme.rule_color),
+                        is_rule: true,
+                        ..Default::default()
+                    },
+                );
+            }
+
             _ => {}
         }
     }
-
-    // Step 6.5 — Remove cursor line entries so raw Markdown is visible while editing
-    map.remove(&cursor_line);
 
     map
 }
@@ -640,7 +846,7 @@ mod tests {
     #[test]
     fn heading_h1_has_full_line_bg() {
         let text = "# Hello World";
-        let map = build_decoration_map(text, &make_theme(), true, 99);
+        let map = build_decoration_map(text, &make_theme(), true);
         let spans = map.get(&0).expect("line 0 should have spans");
         assert!(
             spans.iter().any(|s| s.full_line_bg.is_some()),
@@ -651,7 +857,7 @@ mod tests {
     #[test]
     fn heading_h1_is_bold() {
         let text = "# Heading";
-        let map = build_decoration_map(text, &make_theme(), true, 99);
+        let map = build_decoration_map(text, &make_theme(), true);
         let spans = map.get(&0).expect("line 0 should have spans");
         assert!(
             spans
@@ -664,7 +870,7 @@ mod tests {
     #[test]
     fn heading_h3_not_bold() {
         let text = "### Heading Three";
-        let map = build_decoration_map(text, &make_theme(), true, 99);
+        let map = build_decoration_map(text, &make_theme(), true);
         let spans = map.get(&0).expect("line 0 should have spans");
         // H3+ should not have bold modifier
         assert!(
@@ -679,7 +885,7 @@ mod tests {
     #[test]
     fn bold_span_exists() {
         let text = "Text **bold content** here";
-        let map = build_decoration_map(text, &make_theme(), true, 99);
+        let map = build_decoration_map(text, &make_theme(), true);
         let spans = map.get(&0).expect("line 0 should have spans");
         assert!(
             spans
@@ -692,7 +898,7 @@ mod tests {
     #[test]
     fn bold_delimiter_has_blended_color() {
         let text = "**hi**";
-        let map = build_decoration_map(text, &make_theme(), true, 99);
+        let map = build_decoration_map(text, &make_theme(), true);
         let spans = map.get(&0).expect("line 0 should have spans");
         // There should be 3 spans: delim, content, delim
         assert!(spans.len() >= 2, "bold should produce multiple spans");
@@ -702,7 +908,7 @@ mod tests {
     #[test]
     fn italic_span_with_support() {
         let text = "*italic text*";
-        let map = build_decoration_map(text, &make_theme(), true, 99);
+        let map = build_decoration_map(text, &make_theme(), true);
         let spans = map.get(&0).expect("line 0 should have spans");
         assert!(
             spans
@@ -715,7 +921,7 @@ mod tests {
     #[test]
     fn italic_span_without_support_no_modifier() {
         let text = "*italic text*";
-        let map = build_decoration_map(text, &make_theme(), false, 99);
+        let map = build_decoration_map(text, &make_theme(), false);
         let spans = map.get(&0).expect("line 0 should have spans");
         assert!(
             !spans
@@ -729,7 +935,7 @@ mod tests {
     #[test]
     fn inline_code_has_code_bg() {
         let text = "text `code` text";
-        let map = build_decoration_map(text, &make_theme(), true, 99);
+        let map = build_decoration_map(text, &make_theme(), true);
         let spans = map.get(&0).expect("line 0 should have spans");
         assert!(
             spans.iter().any(|s| s.style.bg.is_some()),
@@ -741,7 +947,7 @@ mod tests {
     #[test]
     fn fenced_code_block_has_bg_on_all_lines() {
         let text = "before\n```\ncode line 1\ncode line 2\n```\nafter";
-        let map = build_decoration_map(text, &make_theme(), true, 99);
+        let map = build_decoration_map(text, &make_theme(), true);
         // The fenced block spans lines 1-4 (the ``` delimiters + content)
         // At least lines 2 and 3 (code content) should have fenced_bg
         let has_fenced = map
@@ -750,11 +956,44 @@ mod tests {
         assert!(has_fenced, "fenced code block must have full_line_bg spans");
     }
 
+    #[test]
+    fn fenced_code_fence_delimiters_use_code_color() {
+        // Opening ``` line must have a span with code_color fg.
+        let text = "before\n```\ncode\n```\nafter";
+        let theme = make_theme();
+        let map = build_decoration_map(text, &theme, true);
+        // Opening fence is line 1, closing fence is line 3.
+        let opening = map.get(&1).expect("opening fence line must have spans");
+        assert!(
+            opening.iter().any(|s| s.style.fg == Some(theme.code_color)),
+            "opening ``` fence must have code_color fg"
+        );
+        let closing = map.get(&3).expect("closing fence line must have spans");
+        assert!(
+            closing.iter().any(|s| s.style.fg == Some(theme.code_color)),
+            "closing ``` fence must have code_color fg"
+        );
+    }
+
+    #[test]
+    fn fenced_code_language_tag_uses_accent() {
+        // Language tag (e.g. "rust") must have a span with accent fg.
+        let text = "before\n```rust\nlet x = 1;\n```\nafter";
+        let theme = make_theme();
+        let map = build_decoration_map(text, &theme, true);
+        // Opening fence with language tag is line 1.
+        let opening = map.get(&1).expect("opening fence line must have spans");
+        assert!(
+            opening.iter().any(|s| s.style.fg == Some(theme.accent)),
+            "language tag on opening fence must have accent fg"
+        );
+    }
+
     // f. Blockquotes
     #[test]
     fn blockquote_has_indicator_span() {
         let text = "> quoted text";
-        let map = build_decoration_map(text, &make_theme(), true, 99);
+        let map = build_decoration_map(text, &make_theme(), true);
         let spans = map.get(&0).expect("line 0 should have spans");
         assert!(
             spans
@@ -767,7 +1006,7 @@ mod tests {
     #[test]
     fn blockquote_sets_is_blockquote_flag() {
         let text = "> A blockquote";
-        let map = build_decoration_map(text, &make_theme(), true, 99);
+        let map = build_decoration_map(text, &make_theme(), true);
         let spans = map.get(&0).expect("line 0 should have spans");
         assert!(
             spans.iter().any(|s| s.is_blockquote),
@@ -779,7 +1018,7 @@ mod tests {
     #[test]
     fn link_text_has_underline() {
         let text = "[example](https://example.com)";
-        let map = build_decoration_map(text, &make_theme(), true, 99);
+        let map = build_decoration_map(text, &make_theme(), true);
         let spans = map.get(&0).expect("line 0 should have spans");
         assert!(
             spans
@@ -800,7 +1039,7 @@ mod tests {
     #[test]
     fn list_bullet_has_accent_color() {
         let text = "- item one\n- item two";
-        let map = build_decoration_map(text, &make_theme(), true, 99);
+        let map = build_decoration_map(text, &make_theme(), true);
         let theme = make_theme();
         // At least one span should have accent color on line 0
         let spans = map.get(&0).expect("line 0 should have spans");
@@ -814,7 +1053,7 @@ mod tests {
     #[test]
     fn todo_unchecked_bracket_has_accent() {
         let text = "- [ ] todo item";
-        let map = build_decoration_map(text, &make_theme(), true, 99);
+        let map = build_decoration_map(text, &make_theme(), true);
         let theme = make_theme();
         let spans = map.get(&0).expect("line 0 should have spans");
         assert!(
@@ -827,12 +1066,17 @@ mod tests {
     fn todo_checked_is_muted_no_strikethrough() {
         let text = "- [x] done item";
         let theme = make_theme();
-        let map = build_decoration_map(text, &theme, true, 99);
+        let map = build_decoration_map(text, &theme, true);
         let spans = map.get(&0).expect("line 0 should have spans");
-        // Must be todo_done colour (defaults to muted).
+        // Item text after the bracket must use todo_done colour.
         assert!(
             spans.iter().any(|s| s.style.fg == Some(theme.todo_done)),
-            "checked todo must use todo_done colour"
+            "checked todo text must use todo_done colour"
+        );
+        // [x] bracket must use text colour for visual pop.
+        assert!(
+            spans.iter().any(|s| s.style.fg == Some(theme.text)),
+            "checked todo [x] bracket must use theme.text colour"
         );
         // Must NOT have strikethrough — that is reserved for real ~~syntax~~.
         assert!(
@@ -847,7 +1091,7 @@ mod tests {
     #[test]
     fn table_pipes_have_muted_color() {
         let text = "| A | B |\n| - | - |\n| 1 | 2 |";
-        let map = build_decoration_map(text, &make_theme(), true, 99);
+        let map = build_decoration_map(text, &make_theme(), true);
         let theme = make_theme();
         let has_pipe_spans = map
             .values()
@@ -859,25 +1103,12 @@ mod tests {
     #[test]
     fn table_header_is_bold() {
         let text = "| Head A | Head B |\n| --- | --- |\n| cell | cell |";
-        let map = build_decoration_map(text, &make_theme(), true, 99);
+        let map = build_decoration_map(text, &make_theme(), true);
         let has_bold = map
             .values()
             .flatten()
             .any(|s| s.style.add_modifier.contains(Modifier::BOLD));
         assert!(has_bold, "table header must have bold");
-    }
-
-    // Step 6.5 — cursor line exclusion
-    #[test]
-    fn cursor_line_has_no_decoration() {
-        let text = "# Heading\nnormal line";
-        let map = build_decoration_map(text, &make_theme(), true, 0); // cursor on heading
-        assert!(
-            map.get(&0).map_or(true, |v| v.is_empty()),
-            "cursor line (0) should have no decoration"
-        );
-        // Non-cursor line unaffected
-        // line 1 has no decoration naturally (plain text), so we just check no crash
     }
 
     // Step 6.6 — word count
@@ -899,15 +1130,15 @@ mod tests {
     fn heading_with_multibyte_chars() {
         let text = "# Café résumé";
         // Should not panic
-        let map = build_decoration_map(text, &make_theme(), true, 99);
-        assert!(map.get(&0).is_some());
+        let map = build_decoration_map(text, &make_theme(), true);
+        assert!(map.contains_key(&0));
     }
 
     #[test]
     fn bold_with_multibyte_chars() {
         let text = "**café**";
         // Should not panic
-        let _map = build_decoration_map(text, &make_theme(), true, 99);
+        let _map = build_decoration_map(text, &make_theme(), true);
     }
 
     // Full fixture smoke test (subset — full integration test in Phase 11)
@@ -915,7 +1146,7 @@ mod tests {
     fn fixture_produces_nonempty_map() {
         let text = include_str!("../tests/fixtures/sample.md");
         let theme = make_theme();
-        let map = build_decoration_map(text, &theme, true, 9999);
+        let map = build_decoration_map(text, &theme, true);
         assert!(!map.is_empty(), "fixture should produce decorations");
     }
 
@@ -923,7 +1154,7 @@ mod tests {
     fn fixture_has_heading_bg() {
         let text = include_str!("../tests/fixtures/sample.md");
         let theme = make_theme();
-        let map = build_decoration_map(text, &theme, true, 9999);
+        let map = build_decoration_map(text, &theme, true);
         // Line 0 is `# Heading One`
         let spans = map.get(&0).expect("line 0 should have heading spans");
         assert!(spans.iter().any(|s| s.full_line_bg.is_some()));
@@ -933,7 +1164,7 @@ mod tests {
     fn fixture_has_blockquote() {
         let text = include_str!("../tests/fixtures/sample.md");
         let theme = make_theme();
-        let map = build_decoration_map(text, &theme, true, 9999);
+        let map = build_decoration_map(text, &theme, true);
         assert!(
             map.values().flatten().any(|s| s.is_blockquote),
             "fixture should have blockquote spans"
@@ -944,5 +1175,298 @@ mod tests {
     fn fixture_word_count_nonzero() {
         let text = include_str!("../tests/fixtures/sample.md");
         assert!(count_words(text) > 100);
+    }
+
+    // k. Strikethrough
+    #[test]
+    fn strikethrough_has_crossed_out_modifier() {
+        let text = "normal ~~struck~~ normal";
+        let map = build_decoration_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.style.add_modifier.contains(Modifier::CROSSED_OUT)),
+            "strikethrough content must have CROSSED_OUT modifier"
+        );
+    }
+
+    #[test]
+    fn strikethrough_delimiters_are_blended() {
+        let text = "~~hi~~";
+        let map = build_decoration_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        // Should produce at least delimiter + content spans
+        assert!(
+            spans.len() >= 2,
+            "strikethrough should produce multiple spans"
+        );
+    }
+
+    // l. Horizontal rule
+    #[test]
+    fn horizontal_rule_sets_is_rule_flag() {
+        // A `---` line surrounded by blank lines is a thematic break in pulldown-cmark
+        let text = "above\n\n---\n\nbelow";
+        let map = build_decoration_map(text, &make_theme(), true);
+        assert!(
+            map.values().flatten().any(|s| s.is_rule),
+            "horizontal rule must set is_rule=true on its line"
+        );
+    }
+
+    // a. Heading delimiter blending
+    #[test]
+    fn heading_h1_delimiter_is_blended() {
+        let text = "# Hello";
+        let map = build_decoration_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        // Should have both delimiter span (char 0..2) and content span (char 2..)
+        let has_delim = spans.iter().any(|s| s.char_start == 0 && s.char_end == 2);
+        let has_content = spans.iter().any(|s| s.char_start == 2);
+        assert!(has_delim, "H1 should have a delimiter span at 0..2");
+        assert!(
+            has_content,
+            "H1 should have a content span starting at char 2"
+        );
+    }
+
+    #[test]
+    fn heading_h2_delimiter_is_three_chars() {
+        let text = "## Title";
+        let map = build_decoration_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        // `## ` = 3 chars: delimiter at 0..3
+        let has_delim = spans.iter().any(|s| s.char_start == 0 && s.char_end == 3);
+        assert!(has_delim, "H2 should have delimiter span at 0..3");
+    }
+
+    #[test]
+    fn heading_h1_has_border_bottom() {
+        let text = "# Heading One";
+        let map = build_decoration_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        assert!(
+            spans.iter().any(|s| s.border_bottom.is_some()),
+            "H1 must have border_bottom set"
+        );
+    }
+
+    #[test]
+    fn heading_h4_no_border_bottom() {
+        let text = "#### Heading Four";
+        let map = build_decoration_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        assert!(
+            !spans.iter().any(|s| s.border_bottom.is_some()),
+            "H4+ must not have border_bottom"
+        );
+    }
+
+    // --- Mutant-killing: heading with no content produces no content span ---
+
+    #[test]
+    fn heading_empty_content_produces_no_content_span() {
+        // "# " has only the delimiter chars and no text after them.
+        // The inner c_start < c_end guard must prevent an empty span being emitted.
+        // If that guard becomes c_start <= c_end, a zero-width span at (2..2) appears.
+        let text = "# ";
+        let map = build_decoration_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        assert!(
+            !spans.iter().any(|s| s.char_start == s.char_end),
+            "no zero-width (char_start == char_end) span must exist for an empty heading"
+        );
+    }
+
+    // --- Mutant-killing: heading delimiter span carries its own fields ---
+
+    #[test]
+    fn heading_delimiter_span_has_own_full_line_bg() {
+        // Deleting full_line_bg from the delimiter StyledSpan must be caught even
+        // when the content span still carries it.
+        let text = "# Hello";
+        let map = build_decoration_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.char_start == 0 && s.char_end == 2 && s.full_line_bg.is_some()),
+            "H1 delimiter span (0..2) must have full_line_bg set"
+        );
+    }
+
+    #[test]
+    fn heading_delimiter_span_has_own_border_bottom() {
+        // Deleting border_bottom from the delimiter StyledSpan must be caught even
+        // when the content span still carries it.
+        let text = "# Hello";
+        let map = build_decoration_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.char_start == 0 && s.char_end == 2 && s.border_bottom.is_some()),
+            "H1 delimiter span (0..2) must have border_bottom set"
+        );
+    }
+
+    #[test]
+    fn heading_delimiter_style_differs_from_content() {
+        // Deleting `style` from the delimiter span makes it fall back to default,
+        // which won't match the blended delimiter fg.
+        let text = "# Hello";
+        let theme = make_theme();
+        let map = build_decoration_map(text, &theme, true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        let delim = spans
+            .iter()
+            .find(|s| s.char_start == 0 && s.char_end == 2)
+            .expect("H1 delimiter span (0..2) must exist");
+        let content = spans
+            .iter()
+            .find(|s| s.char_start == 2)
+            .expect("H1 content span must start at char 2");
+        assert_ne!(
+            delim.style.fg, content.style.fg,
+            "delimiter fg must be blended (different from content fg)"
+        );
+        assert!(
+            delim.style.fg.is_some(),
+            "delimiter span must have an explicit fg color"
+        );
+    }
+
+    #[test]
+    fn heading_content_span_char_end_reaches_line_end() {
+        // Deleting char_end from the content StyledSpan makes it default to 0.
+        let text = "# Hello"; // 7 chars
+        let map = build_decoration_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        let content = spans
+            .iter()
+            .find(|s| s.char_start == 2)
+            .expect("H1 content span must start at char 2");
+        assert_eq!(
+            content.char_end, 7,
+            "H1 content span char_end must reach the end of '# Hello' (7 chars)"
+        );
+    }
+
+    #[test]
+    fn heading_content_span_has_own_border_bottom() {
+        // Deleting border_bottom from the content StyledSpan must be caught even
+        // when the delimiter span still carries it.
+        let text = "# Hello";
+        let map = build_decoration_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        let content = spans
+            .iter()
+            .find(|s| s.char_start == 2)
+            .expect("H1 content span must start at char 2");
+        assert!(
+            content.border_bottom.is_some(),
+            "H1 content span must have border_bottom set"
+        );
+    }
+
+    // --- Mutant-killing: blockquote content span is_blockquote ---
+
+    #[test]
+    fn blockquote_content_span_has_is_blockquote() {
+        // The indicator span (0..1) already has is_blockquote=true.
+        // This test ensures the content span (char_start >= 1) also carries it.
+        let text = "> quoted text";
+        let map = build_decoration_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        assert!(
+            spans.iter().any(|s| s.is_blockquote && s.char_start >= 1),
+            "blockquote content span (char_start >= 1) must have is_blockquote=true"
+        );
+    }
+
+    // --- Mutant-killing: strikethrough char boundaries ---
+
+    #[test]
+    fn strikethrough_opening_delimiter_boundary() {
+        // "~~hi~~": opening ~~ must occupy exactly chars 0..2.
+        let text = "~~hi~~";
+        let map = build_decoration_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        assert!(
+            spans.iter().any(|s| s.char_start == 0 && s.char_end == 2),
+            "opening ~~ delimiter must be at char 0..2"
+        );
+    }
+
+    #[test]
+    fn strikethrough_content_boundary_and_modifier() {
+        // "~~hi~~": content must be at chars 2..4 with CROSSED_OUT.
+        let text = "~~hi~~";
+        let map = build_decoration_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        assert!(
+            spans.iter().any(|s| {
+                s.char_start == 2
+                    && s.char_end == 4
+                    && s.style.add_modifier.contains(Modifier::CROSSED_OUT)
+            }),
+            "strikethrough content must be at char 2..4 with CROSSED_OUT"
+        );
+    }
+
+    #[test]
+    fn strikethrough_closing_delimiter_boundary() {
+        // "~~hi~~": closing ~~ must occupy exactly chars 4..6.
+        let text = "~~hi~~";
+        let map = build_decoration_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        assert!(
+            spans.iter().any(|s| s.char_start == 4 && s.char_end == 6),
+            "closing ~~ delimiter must be at char 4..6"
+        );
+    }
+
+    // --- Mutant-killing: horizontal rule span fields ---
+
+    #[test]
+    fn horizontal_rule_span_char_start_is_zero() {
+        let text = "above\n\n---\n\nbelow";
+        let map = build_decoration_map(text, &make_theme(), true);
+        let rule = map
+            .values()
+            .flatten()
+            .find(|s| s.is_rule)
+            .expect("horizontal rule span must exist");
+        assert_eq!(rule.char_start, 0, "rule span must start at char 0");
+    }
+
+    #[test]
+    fn horizontal_rule_span_char_end_covers_line() {
+        let text = "above\n\n---\n\nbelow";
+        let map = build_decoration_map(text, &make_theme(), true);
+        let rule = map
+            .values()
+            .flatten()
+            .find(|s| s.is_rule)
+            .expect("horizontal rule span must exist");
+        assert!(rule.char_end > 0, "rule span char_end must be non-zero");
+    }
+
+    #[test]
+    fn horizontal_rule_span_has_rule_color() {
+        let text = "above\n\n---\n\nbelow";
+        let theme = make_theme();
+        let map = build_decoration_map(text, &theme, true);
+        let rule = map
+            .values()
+            .flatten()
+            .find(|s| s.is_rule)
+            .expect("horizontal rule span must exist");
+        assert_eq!(
+            rule.style.fg,
+            Some(theme.rule_color),
+            "rule span must have rule_color as fg"
+        );
     }
 }

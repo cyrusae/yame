@@ -25,7 +25,8 @@ impl Default for Palette {
             accent: "#cba6f7".into(),
             muted: "#585b70".into(),
             code: "#a6e3a1".into(),
-            bg: "#1e1e2e".into(),
+            // Catppuccin Crust — near-black main canvas
+            bg: "#11111b".into(),
             warning: "#f38ba8".into(),
         }
     }
@@ -37,10 +38,12 @@ impl Default for Palette {
 pub struct ThemeOverrides {
     pub bold_color: Option<String>,
     pub italic_color: Option<String>,
+    pub strikethrough_color: Option<String>,
     pub blockquote_color: Option<String>,
     pub link_text_color: Option<String>,
     pub link_url_color: Option<String>,
     pub todo_done: Option<String>,
+    pub rule_color: Option<String>,
     pub code_bg: Option<String>,
     pub fenced_bg: Option<String>,
     pub heading_bg: Option<String>,
@@ -107,10 +110,12 @@ pub struct Theme {
     // derived
     pub bold_color: Color,
     pub italic_color: Color,
+    pub strikethrough_color: Color,
     pub blockquote_color: Color,
     pub link_text: Color,
     pub link_url: Color,
     pub todo_done: Color,
+    pub rule_color: Color,
     pub code_bg: Color,
     pub fenced_bg: Color,
     pub heading_bg: Color,
@@ -220,7 +225,9 @@ impl Theme {
         };
 
         let bold_color = resolve(&overrides.bold_color, text, warnings);
-        let italic_color = resolve(&overrides.italic_color, blend(accent, text, 0.7), warnings);
+        // Italic defaults to plain text color (same as bold) — independently overridable.
+        let italic_color = resolve(&overrides.italic_color, text, warnings);
+        let strikethrough_color = resolve(&overrides.strikethrough_color, muted, warnings);
         let blockquote_color = resolve(
             &overrides.blockquote_color,
             blend(muted, text, 0.5),
@@ -233,13 +240,16 @@ impl Theme {
         );
         let link_url = resolve(&overrides.link_url_color, muted, warnings);
         let todo_done = resolve(&overrides.todo_done, muted, warnings);
+        let rule_color = resolve(&overrides.rule_color, muted, warnings);
         let code_bg_rgb = resolve(&overrides.code_bg, blend(code_rgb, bg, 0.15), warnings);
         let fenced_bg_rgb = resolve(&overrides.fenced_bg, blend(code_rgb, bg, 0.08), warnings);
         let heading_bg_rgb = resolve(&overrides.heading_bg, blend(accent, bg, 0.15), warnings);
         let selection_bg_rgb = resolve(&overrides.selection_bg, blend(accent, bg, 0.6), warnings);
         let selection_fg_rgb = resolve(&overrides.selection_fg, bg, warnings);
-        let ui_bg_rgb = resolve(&overrides.ui_bg, blend(muted, bg, 0.3), warnings);
-        let ui_bar_rgb = resolve(&overrides.ui_bar, blend(muted, bg, 0.5), warnings);
+        // Hints-pill bg: canvas blended 10% toward text — subtly lifted off the canvas.
+        let ui_bg_rgb = resolve(&overrides.ui_bg, blend(text, bg, 0.10), warnings);
+        // ui_bar is retained as an override target; not used in the default renderer.
+        let ui_bar_rgb = resolve(&overrides.ui_bar, bg, warnings);
         let ui_text_rgb = resolve(&overrides.ui_text, text, warnings);
         let delimiter_blend = overrides.delimiter_blend.unwrap_or(0.4).clamp(0.0, 1.0);
 
@@ -285,10 +295,12 @@ impl Theme {
             warning: to_color(warning_rgb),
             bold_color: to_color(bold_color),
             italic_color: to_color(italic_color),
+            strikethrough_color: to_color(strikethrough_color),
             blockquote_color: to_color(blockquote_color),
             link_text: to_color(link_text),
             link_url: to_color(link_url),
             todo_done: to_color(todo_done),
+            rule_color: to_color(rule_color),
             code_bg: to_color(code_bg_rgb),
             fenced_bg: to_color(fenced_bg_rgb),
             heading_bg: to_color(heading_bg_rgb),
@@ -449,13 +461,13 @@ mod tests {
     #[test]
     fn derived_heading_bg() {
         let theme = Theme::default_theme();
-        // heading_bg = blend(accent #cba6f7, bg #1e1e2e, 0.15)
-        // blend((203,166,247), (30,30,46), 0.15)
-        // r = 30 + (203-30)*0.15 = 30 + 25.95 = 55.95 → 56
-        // g = 30 + (166-30)*0.15 = 30 + 20.4  = 50.4  → 50
-        // b = 46 + (247-46)*0.15 = 46 + 30.15 = 76.15 → 76
+        // heading_bg = blend(accent #cba6f7, bg #11111b, 0.15)
+        // blend((203,166,247), (17,17,27), 0.15)
+        // r = 17 + (203-17)*0.15 = 17 + 27.9  = 44.9  → 45
+        // g = 17 + (166-17)*0.15 = 17 + 22.35 = 39.35 → 39
+        // b = 27 + (247-27)*0.15 = 27 + 33.0  = 60.0  → 60
         assert!(
-            matches!(theme.heading_bg, Color::Rgb(r, g, b) if r == 56 && g == 50 && b == 76),
+            matches!(theme.heading_bg, Color::Rgb(r, g, b) if r == 45 && g == 39 && b == 60),
             "heading_bg was {:?}",
             theme.heading_bg
         );
@@ -463,8 +475,10 @@ mod tests {
 
     #[test]
     fn override_takes_precedence() {
-        let mut overrides = ThemeOverrides::default();
-        overrides.bold_color = Some("#ff0000".into());
+        let overrides = ThemeOverrides {
+            bold_color: Some("#ff0000".into()),
+            ..Default::default()
+        };
         let mut warnings = Vec::new();
         let theme = Theme::from_config(
             &Palette::default(),

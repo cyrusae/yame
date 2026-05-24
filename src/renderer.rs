@@ -280,6 +280,8 @@ impl Widget for MarkdownView<'_> {
                                 style: s.style,
                                 is_blockquote: s.is_blockquote,
                                 full_line_bg: s.full_line_bg,
+                                border_bottom: s.border_bottom,
+                                is_rule: s.is_rule,
                             })
                             .collect()
                     })
@@ -287,6 +289,9 @@ impl Widget for MarkdownView<'_> {
 
                 // --- Full-line background (headings, fenced blocks) ---
                 let line_bg = row_spans.iter().find_map(|s| s.full_line_bg).unwrap_or(bg);
+                let border_color = row_spans.iter().find_map(|s| s.border_bottom);
+                let is_rule = row_spans.iter().any(|s| s.is_rule);
+                let is_last_wrap = wrap_idx + 1 == wrapped.len();
 
                 let y = area.y + visual_row as u16;
 
@@ -296,17 +301,45 @@ impl Widget for MarkdownView<'_> {
                 }
 
                 // --- Write character cells ---
-                let row_default = default_style.bg(line_bg);
-                let segments = split_into_spans(row_str, &row_spans, row_default);
-                let mut x = area.x + GUTTER; // start after left gutter
-                for span in &segments {
-                    for ch in span.content.chars() {
-                        if (x.saturating_sub(area.x + GUTTER)) as usize >= content_width {
-                            break;
-                        }
-                        buf[(x, y)].set_char(ch).set_style(span.style);
-                        x += 1;
+                if is_rule {
+                    // Replace source text (---, ***, ___) with a ─ rule across the content width.
+                    let rule_style = row_spans
+                        .iter()
+                        .find(|s| s.is_rule)
+                        .map(|s| s.style)
+                        .unwrap_or(default_style);
+                    for x in area.x + GUTTER..area.x + GUTTER + content_width as u16 {
+                        buf[(x, y)].set_char('─').set_style(rule_style);
                     }
+                } else {
+                    let row_default = default_style.bg(line_bg);
+                    let segments = split_into_spans(row_str, &row_spans, row_default);
+                    let mut x = area.x + GUTTER; // start after left gutter
+                    for span in &segments {
+                        for ch in span.content.chars() {
+                            if (x.saturating_sub(area.x + GUTTER)) as usize >= content_width {
+                                break;
+                            }
+                            buf[(x, y)].set_char(ch).set_style(span.style);
+                            x += 1;
+                        }
+                    }
+                }
+
+                // --- Bottom border (H1–H3 heading underline, last visual row only) ---
+                if let Some(bc) = border_color
+                    && is_last_wrap
+                {
+                    use ratatui::layout::Rect as R;
+                    buf.set_style(
+                        R {
+                            x: area.x,
+                            y,
+                            width: self.column_width,
+                            height: 1,
+                        },
+                        Style::default().fg(bc).add_modifier(Modifier::UNDERLINED),
+                    );
                 }
 
                 visual_row += 1;
@@ -410,12 +443,18 @@ fn apply_selection_overlay(
 const POWERLINE_RIGHT: char = '\u{e0b0}';
 
 /// Render the bottom status bar into `area`.
+///
+/// Normal mode: two left-aligned Powerline pills floating on the canvas colour.
+///   Pill 1 — filename: bg=text(clean)/accent(dirty), fg=bg(clean)/text(dirty)
+///   Pill 2 — hints:    bg=ui_bg (canvas+5% text), fg=muted
+/// Each pill is capped with a ▶ that blends its bg into the next region's bg.
+///
+/// Non-normal modes (exit prompt, messages) fill the row with a hints-bg backdrop.
 #[mutants::skip] // Writes into ratatui Buffer — mutations have no observable return value to assert on.
 pub fn render_status_bar(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
-
-    let bar_bg = theme.ui_bar;
-    let text_fg = theme.ui_text;
+    let canvas_bg = theme.bg;
+    let hints_bg = theme.ui_bg;
     let warning_fg = theme.warning;
 
     let content: Line = match &app.status.mode {
@@ -423,12 +462,11 @@ pub fn render_status_bar(f: &mut Frame, area: Rect, app: &App) {
             " Save modified buffer? [Y]es  [N]o  [C]ancel ",
             Style::default()
                 .fg(warning_fg)
-                .bg(bar_bg)
+                .bg(hints_bg)
                 .add_modifier(Modifier::BOLD),
         )]),
 
         StatusMode::TimedMessage { text, .. } | StatusMode::DismissibleMessage(text) => {
-            // Center the message text in the bar
             let msg = format!(" {text} ");
             let pad = area
                 .width
@@ -437,54 +475,50 @@ pub fn render_status_bar(f: &mut Frame, area: Rect, app: &App) {
             let padded = format!("{:pad$}{msg}", "", pad = pad as usize);
             Line::from(vec![Span::styled(
                 padded,
-                Style::default().fg(text_fg).bg(bar_bg),
+                Style::default().fg(theme.text).bg(hints_bg),
             )])
         }
 
-        StatusMode::Normal => build_normal_status_bar(app, area.width),
+        StatusMode::Normal => build_normal_status_bar(app),
     };
 
-    let para = Paragraph::new(content).style(Style::default().bg(bar_bg));
+    // Paragraph bg = canvas — cells beyond the spans show the canvas colour.
+    let para = Paragraph::new(content).style(Style::default().bg(canvas_bg));
     f.render_widget(para, area);
 }
 
-fn build_normal_status_bar(app: &App, width: u16) -> Line<'static> {
+fn build_normal_status_bar(app: &App) -> Line<'static> {
     let theme = &app.theme;
-    let bar_bg = theme.ui_bar;
-    let text_fg = theme.ui_text;
-    let accent_fg = theme.accent;
+    let canvas_bg = theme.bg;
+    let hints_bg = theme.ui_bg;
     let muted_fg = theme.muted;
-
-    // Left: shortened path + dirty flag
-    let path_str = shorten_path(&app.file_path, 3);
-    let dirty = if app.is_dirty { " [*]" } else { "" };
-    let left = format!(" {path_str}{dirty} ");
-
-    // Center: keybinding hints
-    let center = " ^S Save  ^X Exit  ^Z Undo  ^Y Redo ";
-
-    // Powerline separator
     let sep = POWERLINE_RIGHT.to_string();
 
-    // Build left segment spans
-    let left_bg = theme.ui_bg;
-    let mut spans: Vec<Span<'static>> = vec![
-        Span::styled(left, Style::default().fg(text_fg).bg(left_bg)),
-        Span::styled(sep.clone(), Style::default().fg(left_bg).bg(bar_bg)),
-    ];
+    // Pill 1 — filename chip.
+    // Clean: light-coloured chip (text bg, dark fg).
+    // Dirty: accent-coloured chip (accent bg, text fg) — colour alone signals the state.
+    let (pill_bg, pill_fg) = if app.is_dirty {
+        (theme.accent, theme.bg) // accent chip, dark text reads on purple
+    } else {
+        (theme.text, theme.bg) // text-colour chip, dark text reads on lavender
+    };
+    let dirty_marker = if app.is_dirty { " [*]" } else { "" };
+    let path_str = shorten_path(&app.file_path, 3);
+    let pill1_text = format!(" {path_str}{dirty_marker} ");
 
-    // Pad center — compute available space
-    let used = spans.iter().map(|s| s.content.len()).sum::<usize>() + center.len() + sep.len();
-    let right_pad = (width as usize).saturating_sub(used);
-    let padded_center = format!("{center}{:right_pad$}", "", right_pad = right_pad);
+    let pill1 = Span::styled(pill1_text, Style::default().fg(pill_fg).bg(pill_bg));
+    // ▶ cap: bleeds pill1 bg → hints pill bg (no seam between pills).
+    let cap1 = Span::styled(sep.clone(), Style::default().fg(pill_bg).bg(hints_bg));
 
-    spans.push(Span::styled(
-        padded_center,
-        Style::default().fg(muted_fg).bg(bar_bg),
-    ));
-    spans.push(Span::styled(sep, Style::default().fg(accent_fg).bg(bar_bg)));
+    // Pill 2 — keybinding hints.
+    let hints = Span::styled(
+        " ^S Save  ^X Exit  ^Z Undo  ^Y Redo ",
+        Style::default().fg(muted_fg).bg(hints_bg),
+    );
+    // ▶ cap: bleeds hints bg → canvas (right edge of hints pill).
+    let cap2 = Span::styled(sep, Style::default().fg(hints_bg).bg(canvas_bg));
 
-    Line::from(spans)
+    Line::from(vec![pill1, cap1, hints, cap2])
 }
 
 // ---------------------------------------------------------------------------
@@ -518,7 +552,7 @@ pub fn render_info_line(f: &mut Frame, area: Rect, app: &App) {
         ..area
     };
     f.render_widget(
-        Paragraph::new(text).style(Style::default().fg(theme.muted).bg(theme.ui_bg)),
+        Paragraph::new(text).style(Style::default().fg(theme.muted).bg(theme.bg)),
         text_area,
     );
 }
@@ -742,7 +776,7 @@ mod tests {
     #[test]
     fn status_bar_clean_has_no_dirty_flag() {
         let app = make_app();
-        let line = build_normal_status_bar(&app, 80);
+        let line = build_normal_status_bar(&app);
         let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
         assert!(!text.contains("[*]"), "clean file must not show [*]");
     }
@@ -751,7 +785,7 @@ mod tests {
     fn status_bar_dirty_shows_flag() {
         let mut app = make_app();
         app.is_dirty = true;
-        let line = build_normal_status_bar(&app, 80);
+        let line = build_normal_status_bar(&app);
         let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
         assert!(text.contains("[*]"), "dirty file must show [*]");
     }
@@ -759,15 +793,15 @@ mod tests {
     #[test]
     fn status_bar_includes_path() {
         let app = make_app();
-        let line = build_normal_status_bar(&app, 80);
+        let line = build_normal_status_bar(&app);
         let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
         assert!(text.contains("foo.md"), "status bar must include filename");
     }
 
     #[test]
-    fn status_bar_zero_width_no_panic() {
+    fn status_bar_no_panic() {
         let app = make_app();
-        // Must not panic even at zero width (saturating arithmetic).
-        let _ = build_normal_status_bar(&app, 0);
+        // Must not panic regardless of theme values.
+        let _ = build_normal_status_bar(&app);
     }
 }
