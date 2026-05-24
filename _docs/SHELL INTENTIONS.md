@@ -10,6 +10,8 @@ Goal: Bash and Zsh (maybe Fish?) users can run `yame init` to create a helper fu
 
 `yame README.md` opens README.md.
 
+`yame .gitignore` opens .gitignore (I think I might have to take the hit of `yame giti` not doing so?).
+
 `yame readm` opens README.md.
 
 `yame docs/d` opens _docs/DESIGN.md.
