@@ -6,7 +6,7 @@ description = "A lightweight terminal Markdown editor"
 license = "MIT"
 keywords = ["markdown", "editor", "terminal", "tui"]
 categories = ["command-line-utilities", "text-editors"]
-exclude = [".chainlink", ".claude", ".github", "_docs"]
+exclude = [".chainlink", ".claude", ".github", "_docs", ".antigravitycli"]
 
 [dependencies]
 ratatui = "0.29"
