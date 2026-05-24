@@ -308,10 +308,8 @@ impl Widget for MarkdownView<'_> {
                         .find(|s| s.is_rule)
                         .map(|s| s.style)
                         .unwrap_or(default_style);
-                    let mut x = area.x + GUTTER;
-                    for _ in 0..content_width {
+                    for x in area.x + GUTTER..area.x + GUTTER + content_width as u16 {
                         buf[(x, y)].set_char('─').set_style(rule_style);
-                        x += 1;
                     }
                 } else {
                     let row_default = default_style.bg(line_bg);
