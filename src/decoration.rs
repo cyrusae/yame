@@ -171,9 +171,11 @@ pub fn build_decoration_map(text: &str, theme: &Theme, italic_support: bool) -> 
                 if bold {
                     content_style = content_style.add_modifier(Modifier::BOLD);
                 }
-                // `# ` / `## ` / `### ` etc. blend toward muted like other delimiters.
+                // `# ` / `## ` / `### ` blend toward muted using the neutral text
+                // colour as the source (same formula as `*` and `[]()` delimiters).
+                // Blending from heading_color was too vivid for saturated accent hues.
                 let delim_style = Style::default().fg(blend_colors(
-                    heading_color,
+                    theme.text,
                     theme.muted,
                     theme.delimiter_blend,
                 ));
@@ -325,19 +327,47 @@ pub fn build_decoration_map(text: &str, theme: &Theme, italic_support: bool) -> 
 
             // ---- d. Inline code ----
             Event::Code(_) => {
-                let style = Style::default().fg(theme.code_color).bg(theme.code_bg);
-                add_byte_range_span(
-                    &mut map,
-                    &line_starts,
-                    text,
-                    range.start,
-                    range.end,
-                    SpanParams {
-                        style,
-                        full_line_bg: None,
-                        is_blockquote: false,
-                    },
-                );
+                let (start_line, start_char) =
+                    byte_to_line_char(&line_starts, text, range.start);
+                let (end_line, end_char_excl) =
+                    byte_to_line_char(&line_starts, text, range.end);
+                let code_style = Style::default().fg(theme.code_color).bg(theme.code_bg);
+                // Backtick delimiters blend toward muted (same standard as `*`, `[]()` etc.)
+                let delim_style = Style::default()
+                    .fg(blend_colors(theme.code_color, theme.muted, theme.delimiter_blend))
+                    .bg(theme.code_bg);
+
+                if start_line == end_line {
+                    // Count the opening backtick run so we can split delimiters from content.
+                    let bt = text[range.start..range.end]
+                        .chars()
+                        .take_while(|&c| c == '`')
+                        .count()
+                        .max(1);
+                    let open_end = (start_char + bt).min(end_char_excl);
+                    let close_start = end_char_excl.saturating_sub(bt).max(open_end);
+
+                    // Opening backtick(s)
+                    push_span(&mut map, start_line, make_span(start_char, open_end, delim_style));
+                    // Content between the backticks
+                    if open_end < close_start {
+                        push_span(&mut map, start_line, make_span(open_end, close_start, code_style));
+                    }
+                    // Closing backtick(s)
+                    if close_start < end_char_excl {
+                        push_span(&mut map, start_line, make_span(close_start, end_char_excl, delim_style));
+                    }
+                } else {
+                    // Multi-line fallback (rare in practice — treat whole span uniformly).
+                    add_byte_range_span(
+                        &mut map,
+                        &line_starts,
+                        text,
+                        range.start,
+                        range.end,
+                        SpanParams { style: code_style, full_line_bg: None, is_blockquote: false },
+                    );
+                }
             }
 
             // ---- e. Fenced code blocks ----
@@ -351,7 +381,10 @@ pub fn build_decoration_map(text: &str, theme: &Theme, italic_support: bool) -> 
                     range.end.saturating_sub(1).max(range.start),
                 );
                 let fence_bg_style = Style::default().bg(theme.fenced_bg);
-                let fence_delim_style = Style::default().fg(theme.code_color).bg(theme.fenced_bg);
+                // Fence ``` delimiters blend toward muted, same standard as other delimiters.
+                let fence_delim_style = Style::default()
+                    .fg(blend_colors(theme.code_color, theme.muted, theme.delimiter_blend))
+                    .bg(theme.fenced_bg);
                 let lang_style = Style::default().fg(theme.accent).bg(theme.fenced_bg);
 
                 // Opening fence line: ``` delimiters → code_color, language tag → accent.
@@ -686,8 +719,9 @@ pub fn build_decoration_map(text: &str, theme: &Theme, italic_support: bool) -> 
                 if start_line == end_line {
                     let span_len = end_char_excl.saturating_sub(start_char);
                     if span_len >= 4 {
+                        // ~~ delimiters use neutral text→muted blend (same as `*`, `#` etc.)
                         let delim_style = Style::default().fg(blend_colors(
-                            theme.strikethrough_color,
+                            theme.text,
                             theme.muted,
                             theme.delimiter_blend,
                         ));
@@ -958,21 +992,46 @@ mod tests {
     }
 
     #[test]
-    fn fenced_code_fence_delimiters_use_code_color() {
-        // Opening ``` line must have a span with code_color fg.
+    fn fenced_code_fence_delimiters_are_dimmed() {
+        // ``` delimiter lines must use the blended (dimmed) colour, not raw code_color.
         let text = "before\n```\ncode\n```\nafter";
         let theme = make_theme();
         let map = build_decoration_map(text, &theme, true);
+        let expected_fg = blend_colors(theme.code_color, theme.muted, theme.delimiter_blend);
         // Opening fence is line 1, closing fence is line 3.
         let opening = map.get(&1).expect("opening fence line must have spans");
         assert!(
-            opening.iter().any(|s| s.style.fg == Some(theme.code_color)),
-            "opening ``` fence must have code_color fg"
+            opening.iter().any(|s| s.style.fg == Some(expected_fg)),
+            "opening ``` fence must have blended (dimmed) fg, not raw code_color"
         );
         let closing = map.get(&3).expect("closing fence line must have spans");
         assert!(
-            closing.iter().any(|s| s.style.fg == Some(theme.code_color)),
-            "closing ``` fence must have code_color fg"
+            closing.iter().any(|s| s.style.fg == Some(expected_fg)),
+            "closing ``` fence must have blended (dimmed) fg, not raw code_color"
+        );
+    }
+
+    #[test]
+    fn inline_code_backtick_delimiters_are_dimmed() {
+        // The ` chars around inline code must be dimmed; content uses code_color.
+        let text = "text `hello` text";
+        let theme = make_theme();
+        let map = build_decoration_map(text, &theme, true);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        let expected_delim = blend_colors(theme.code_color, theme.muted, theme.delimiter_blend);
+        // Opening ` at char 5, closing ` at char 11 — both must be dimmed.
+        assert!(
+            spans.iter().any(|s| s.char_start == 5 && s.char_end == 6 && s.style.fg == Some(expected_delim)),
+            "opening backtick must be blended/dimmed at char 5..6"
+        );
+        assert!(
+            spans.iter().any(|s| s.char_start == 11 && s.char_end == 12 && s.style.fg == Some(expected_delim)),
+            "closing backtick must be blended/dimmed at char 11..12"
+        );
+        // Content `hello` at chars 6..11 must use code_color.
+        assert!(
+            spans.iter().any(|s| s.char_start == 6 && s.char_end == 11 && s.style.fg == Some(theme.code_color)),
+            "inline code content must use code_color at chars 6..11"
         );
     }
 

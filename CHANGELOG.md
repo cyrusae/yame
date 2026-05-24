@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - v1 polish: italic startup warning, `delimiter_blend` config token, parent-dir creation on save (#35)
 
 ### Fixed
+- Dim # heading and backtick/tilde delimiters using delimiter_blend like bold/italic/link delimiters (#75)
 - Fenced code block background color wrong — blending toward code_color instead of staying dark (#72)
 - Ctrl+Z undo not working (#70)
 - Fix non-ASCII link text truncating closing bracket (#51)
