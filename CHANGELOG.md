@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - v1 polish: italic startup warning, `delimiter_blend` config token, parent-dir creation on save (#35)
 
 ### Fixed
+- Ctrl+Z undo not working (#70)
 - Fix non-ASCII link text truncating closing bracket (#51)
 - Fix mouse click to reposition cursor (gutter offset not subtracted) (#55)
 - Scroll clamping now accounts for soft-wrapped visual rows, preventing cursor jumping off-screen (#63)

@@ -320,13 +320,22 @@ fn event_loop<B: ratatui::backend::Backend>(
                         (KeyModifiers::CONTROL, KeyCode::Char('v')) => {
                             yame::clipboard::handle_paste(app);
                         }
-                        // Undo/redo: pass to tui-textarea then recompute dirty,
-                        // since undoing to the saved state should clear the flag.
-                        (KeyModifiers::CONTROL, KeyCode::Char('z'))
-                        | (KeyModifiers::CONTROL, KeyCode::Char('y')) => {
+                        // Undo/redo: tui-textarea uses Ctrl+U/Ctrl+R internally,
+                        // but we expose the conventional Ctrl+Z / Ctrl+Y bindings
+                        // by calling the methods directly. After each operation we
+                        // recompute the dirty flag so undoing back to saved state
+                        // clears it, and trigger a decoration refresh.
+                        (KeyModifiers::CONTROL, KeyCode::Char('z')) => {
                             app.status.dismiss();
                             app.config_warnings.clear();
-                            app.textarea.input(k);
+                            app.textarea.undo();
+                            app.last_keystroke = Some(std::time::Instant::now());
+                            app.recompute_dirty();
+                        }
+                        (KeyModifiers::CONTROL, KeyCode::Char('y')) => {
+                            app.status.dismiss();
+                            app.config_warnings.clear();
+                            app.textarea.redo();
                             app.last_keystroke = Some(std::time::Instant::now());
                             app.recompute_dirty();
                         }
