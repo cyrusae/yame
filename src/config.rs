@@ -152,6 +152,17 @@ fn to_color(rgb: (u8, u8, u8)) -> Color {
     Color::Rgb(rgb.0, rgb.1, rgb.2)
 }
 
+/// Blend two `Color::Rgb` values. Falls back to `a` for non-Rgb colors.
+pub fn blend_colors(a: Color, b: Color, t: f32) -> Color {
+    match (a, b) {
+        (Color::Rgb(ar, ag, ab), Color::Rgb(br, bg, bb)) => {
+            let (r, g, bv) = blend((ar, ag, ab), (br, bg, bb), t);
+            Color::Rgb(r, g, bv)
+        }
+        _ => a,
+    }
+}
+
 /// Parse a hex string to Color, falling back to `default` on error.
 /// Pushes a warning string into `warnings` on failure.
 fn parse_or_warn(s: &str, default: (u8, u8, u8), warnings: &mut Vec<String>) -> (u8, u8, u8) {
