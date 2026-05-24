@@ -7,12 +7,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
-- feat: heading delimiter blend, strikethrough, horizontal rule, H1-H3 bottom border (#48)
-- v1 polish: italic startup warning, delimiter_blend config, parent-dir creation, theme tokens (#35)
+- Escape key exits (clean buffer) or prompts (dirty buffer), matching Ctrl+X (#66)
+- Checked todo `[x]` bracket uses text color for visual pop; item text stays muted (#67)
+- Heading delimiter blend, strikethrough delimiters, horizontal rule, H1–H3 bottom border (#48)
+- v1 polish: italic startup warning, `delimiter_blend` config token, parent-dir creation on save (#35)
 
 ### Fixed
+- Scroll clamping now accounts for soft-wrapped visual rows, preventing cursor jumping off-screen (#63)
+- Ghost scroll accumulation eliminated by intercepting scroll events before tui-textarea (#63)
+- Italic default color now matches text color (not accent blend) (#60)
 
 ### Changed
+- Color fenced code language tag accent, backtick fences inline-code color (#57)
+- Color scheme: Catppuccin Crust `#11111b` main bg; gutter and editor column unified (#49)
+- Status bar redesigned as floating Powerline pills on canvas background (#49, #52, #53)
+- Filename pill turns accent color when buffer is dirty (#58)
+- UI chrome bg dynamically blends toward text color (`blend(text, bg, 0.10)`) (#52)
+- Formatting now persists on the cursor line (decoration stripping removed) (#61)
+- Virtual bottom padding added so last document lines don't sit flush against the UI bar (#62)
+- `cargo deny`: suppressed RUSTSEC-2024-0436 (arboard transitive dep, not actionable) (#64)
+- BSL-1.0 (Boost Software License) added to `cargo deny` allowlist for arboard transitive deps (#64)
 - Phase 12: README & Distribution (#13)
 - chore: remove scrollbar widget (#34)
 - fix: initial decoration pass, gutter, todo muted, info line width (#33)

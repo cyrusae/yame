@@ -340,21 +340,100 @@ pub fn build_decoration_map(text: &str, theme: &Theme, italic_support: bool) -> 
             }
 
             // ---- e. Fenced code blocks ----
-            Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(_))) => {
-                // TODO(v1.5): pass block content and language tag to syntect here
-                let style = Style::default().bg(theme.fenced_bg);
-                add_byte_range_span(
-                    &mut map,
+            // DEFERRED(v1.5): pass block content and language tag to syntect for
+            // syntax highlighting.
+            Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(lang))) => {
+                let (start_line, _) = byte_to_line_char(&line_starts, text, range.start);
+                let (end_line, _) = byte_to_line_char(
                     &line_starts,
                     text,
-                    range.start,
-                    range.end,
-                    SpanParams {
-                        style,
-                        full_line_bg: Some(theme.fenced_bg),
-                        is_blockquote: false,
-                    },
+                    range.end.saturating_sub(1).max(range.start),
                 );
+                let fence_bg_style = Style::default().bg(theme.fenced_bg);
+                let fence_delim_style = Style::default().fg(theme.code_color).bg(theme.fenced_bg);
+                let lang_style = Style::default().fg(theme.accent).bg(theme.fenced_bg);
+
+                // Opening fence line: ``` delimiters → code_color, language tag → accent.
+                // First span carries full_line_bg so the renderer flood-fills the whole row.
+                {
+                    let line_len = line_char_len(&line_starts, text, start_line);
+                    let lb_start = line_starts[start_line];
+                    let lb_end = if start_line + 1 < line_starts.len() {
+                        line_starts[start_line + 1].saturating_sub(1)
+                    } else {
+                        text.len()
+                    };
+                    let fence_count = text[lb_start..lb_end]
+                        .chars()
+                        .take_while(|&c| c == '`' || c == '~')
+                        .count()
+                        .min(line_len);
+                    push_span(
+                        &mut map,
+                        start_line,
+                        StyledSpan {
+                            char_start: 0,
+                            char_end: fence_count.max(1),
+                            style: fence_delim_style,
+                            full_line_bg: Some(theme.fenced_bg),
+                            ..Default::default()
+                        },
+                    );
+                    let lang_str = lang.as_ref();
+                    if !lang_str.is_empty() {
+                        let lang_end = (fence_count + lang_str.chars().count()).min(line_len);
+                        if lang_end > fence_count {
+                            push_span(
+                                &mut map,
+                                start_line,
+                                make_span(fence_count, lang_end, lang_style),
+                            );
+                        }
+                    }
+                }
+
+                // Content lines: fenced_bg background only.
+                for line in (start_line + 1)..end_line {
+                    let line_len = line_char_len(&line_starts, text, line).max(1);
+                    push_span(
+                        &mut map,
+                        line,
+                        StyledSpan {
+                            char_start: 0,
+                            char_end: line_len,
+                            style: fence_bg_style,
+                            full_line_bg: Some(theme.fenced_bg),
+                            ..Default::default()
+                        },
+                    );
+                }
+
+                // Closing fence line: ``` delimiters → code_color.
+                if end_line > start_line {
+                    let close_len = line_char_len(&line_starts, text, end_line);
+                    let lb_start = line_starts[end_line];
+                    let lb_end = if end_line + 1 < line_starts.len() {
+                        line_starts[end_line + 1].saturating_sub(1)
+                    } else {
+                        text.len()
+                    };
+                    let close_fence = text[lb_start..lb_end]
+                        .chars()
+                        .take_while(|&c| c == '`' || c == '~')
+                        .count()
+                        .min(close_len);
+                    push_span(
+                        &mut map,
+                        end_line,
+                        StyledSpan {
+                            char_start: 0,
+                            char_end: close_fence.max(1),
+                            style: fence_delim_style,
+                            full_line_bg: Some(theme.fenced_bg),
+                            ..Default::default()
+                        },
+                    );
+                }
             }
 
             // ---- f. Blockquotes ----
@@ -875,6 +954,39 @@ mod tests {
             .iter()
             .any(|(_, spans)| spans.iter().any(|s| s.full_line_bg.is_some()));
         assert!(has_fenced, "fenced code block must have full_line_bg spans");
+    }
+
+    #[test]
+    fn fenced_code_fence_delimiters_use_code_color() {
+        // Opening ``` line must have a span with code_color fg.
+        let text = "before\n```\ncode\n```\nafter";
+        let theme = make_theme();
+        let map = build_decoration_map(text, &theme, true);
+        // Opening fence is line 1, closing fence is line 3.
+        let opening = map.get(&1).expect("opening fence line must have spans");
+        assert!(
+            opening.iter().any(|s| s.style.fg == Some(theme.code_color)),
+            "opening ``` fence must have code_color fg"
+        );
+        let closing = map.get(&3).expect("closing fence line must have spans");
+        assert!(
+            closing.iter().any(|s| s.style.fg == Some(theme.code_color)),
+            "closing ``` fence must have code_color fg"
+        );
+    }
+
+    #[test]
+    fn fenced_code_language_tag_uses_accent() {
+        // Language tag (e.g. "rust") must have a span with accent fg.
+        let text = "before\n```rust\nlet x = 1;\n```\nafter";
+        let theme = make_theme();
+        let map = build_decoration_map(text, &theme, true);
+        // Opening fence with language tag is line 1.
+        let opening = map.get(&1).expect("opening fence line must have spans");
+        assert!(
+            opening.iter().any(|s| s.style.fg == Some(theme.accent)),
+            "language tag on opening fence must have accent fg"
+        );
     }
 
     // f. Blockquotes
