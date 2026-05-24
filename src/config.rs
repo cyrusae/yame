@@ -225,7 +225,8 @@ impl Theme {
         };
 
         let bold_color = resolve(&overrides.bold_color, text, warnings);
-        let italic_color = resolve(&overrides.italic_color, blend(accent, text, 0.7), warnings);
+        // Italic defaults to plain text color (same as bold) — independently overridable.
+        let italic_color = resolve(&overrides.italic_color, text, warnings);
         let strikethrough_color = resolve(&overrides.strikethrough_color, muted, warnings);
         let blockquote_color = resolve(
             &overrides.blockquote_color,
@@ -245,10 +246,10 @@ impl Theme {
         let heading_bg_rgb = resolve(&overrides.heading_bg, blend(accent, bg, 0.15), warnings);
         let selection_bg_rgb = resolve(&overrides.selection_bg, blend(accent, bg, 0.6), warnings);
         let selection_fg_rgb = resolve(&overrides.selection_fg, bg, warnings);
-        // UI chrome defaults to Catppuccin Base (#1e1e2e) — slightly lighter than
-        // the Crust main canvas, so the status bar and info line sit visibly above it.
-        let ui_bg_rgb = resolve(&overrides.ui_bg, (30, 30, 46), warnings);
-        let ui_bar_rgb = resolve(&overrides.ui_bar, (30, 30, 46), warnings);
+        // Hints-pill bg: canvas blended 10% toward text — subtly lifted off the canvas.
+        let ui_bg_rgb = resolve(&overrides.ui_bg, blend(text, bg, 0.10), warnings);
+        // ui_bar is retained as an override target; not used in the default renderer.
+        let ui_bar_rgb = resolve(&overrides.ui_bar, bg, warnings);
         let ui_text_rgb = resolve(&overrides.ui_text, text, warnings);
         let delimiter_blend = overrides.delimiter_blend.unwrap_or(0.4).clamp(0.0, 1.0);
 
