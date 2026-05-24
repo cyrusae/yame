@@ -6,7 +6,10 @@
 [advisories]
 # Deny crates with known security vulnerabilities.
 version = 2
-ignore = []
+ignore = [
+    # arboard transitive dependency — EOL upstream, not actionable on our end
+    { id = "RUSTSEC-2024-0436", reason = "transitive via arboard; no fix available upstream" },
+]
 
 # ---------------------------------------------------------------------------
 # License policy
