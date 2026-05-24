@@ -8,7 +8,10 @@ use crossterm::{
         MouseEventKind,
     },
     execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+    terminal::{
+        BeginSynchronizedUpdate, EndSynchronizedUpdate, EnterAlternateScreen, LeaveAlternateScreen,
+        disable_raw_mode, enable_raw_mode,
+    },
 };
 use ratatui::{
     Terminal, backend::CrosstermBackend, layout::Rect, style::Style, widgets::Paragraph,
@@ -169,6 +172,7 @@ fn event_loop<B: ratatui::backend::Backend>(
         }
         app.status.tick();
 
+        execute!(io::stdout(), BeginSynchronizedUpdate)?;
         terminal.draw(|f| {
             let layout = compute_layout(f.area(), min_cols);
 
@@ -300,6 +304,7 @@ fn event_loop<B: ratatui::backend::Backend>(
             // Persist so the mouse handler can translate coordinates next frame.
             last_editor_area = editor_area;
         })?;
+        execute!(io::stdout(), EndSynchronizedUpdate)?;
 
         if event::poll(POLL_TIMEOUT)? {
             match event::read()? {
