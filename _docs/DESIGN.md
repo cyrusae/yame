@@ -40,9 +40,37 @@ Single optional file argument. No built-in file browser — file discovery is ha
 
 ---
 
+## Rendering Architecture
+
+`tui-textarea` is used as the **text state backend only** — it owns the buffer, cursor position, undo/redo stack, and keymap. It does **not** own the visual output.
+
+The rendering layer is implemented as a custom Ratatui widget that:
+
+1. Reads `textarea.lines()` to get the current buffer content as a `&[String]`.
+2. Applies the decoration map (see below) to produce a `Vec<ratatui::text::Line>` of styled `Span`s.
+3. Draws those lines directly via a `Paragraph` (or equivalent custom `Widget` impl), positioned within the centered editing column.
+
+This means `textarea.widget()` is **never called** for display. tui-textarea's built-in rendering is bypassed entirely. This is the only approach that supports inline per-span styling and blockquote soft-wrap continuation indentation — none of which are achievable through tui-textarea's public styling API.
+
+Cursor and selection state are read from tui-textarea and re-applied in the custom renderer so they remain visually correct.
+
+**Selection rendering**: selection applies a full fg+bg override — the selection colors replace span colors entirely for all covered characters. This keeps selection visually unambiguous regardless of what decoration is underneath. Composing selection with per-span colors would produce too many visual variations and make the selection hard to read.
+
+---
+
 ## Inline Markdown Decoration
 
-Run `pulldown-cmark` in **offset-iterator mode** on the full buffer text on every keystroke, debounced at ~50ms. Build a `HashMap<usize, Vec<Span>>` (line index → styled spans) from the parse output and pass it to tui-textarea's highlight callback.
+Run `pulldown-cmark` in **offset-iterator mode** on the full buffer text on every keystroke, debounced at ~50ms. Build a `HashMap<usize, Vec<Span>>` (line index → styled spans) from the parse output. The custom renderer (see above) applies this map when drawing each line.
+
+**Threading model (v1): single-threaded timer loop.** The event loop uses `crossterm::event::poll()` with a short timeout (~16ms). Last-keystroke time is tracked with `std::time::Instant`; when 50 ms has elapsed since the last keystroke the decoration pass runs inline on the main thread before the next render. No background threads or channels. pulldown-cmark is fast enough on typical Markdown files that blocking the event loop for the decoration pass is not a real concern in v1.
+
+**Isolation seam for v1.5:** the decoration pass must be implemented as a free function with a clear signature:
+
+```rust
+fn build_decoration_map(text: &str) -> DecorationMap
+```
+
+This makes it trivial to move the call to a background `std::thread` + `mpsc` channel in v1.5 (when syntect is added and grammar loading makes the pass expensive) without touching the renderer or event loop.
 
 **Do not use line-by-line regex.** The parser must handle multi-line constructs correctly — fenced code blocks, blockquotes, and nested structures must all be handled via the parser's event stream.
 
@@ -61,11 +89,11 @@ Decoration is applied to the **full matched span including delimiters**. The ra
 | `*italic*`             | Italic + emphasis color, including the `*` delimiters                                                                                                           |
 | `inline code`          | Code color + distinct background tint; backtick delimiters included                                                                                             |
 | `fenced blocks`        | Block-level background tint across all lines; no syntax highlighting inside blocks                                                                              |
-| `> blockquote`         | Muted color, left-edge indicator character. On soft-wrapped lines, indent continuation text to align with the text start after `>` — do not wrap to column zero |
+| `> blockquote`         | Muted color, left-edge indicator `▌` (U+258C LEFT HALF BLOCK). On soft-wrapped lines, indent continuation text to align with the text start after `>` — do not wrap to column zero |
 | `[link text](url)`     | Link text: underlined + accent color. URL: italic + muted color. All delimiters (`[`, `]`, `(`, `)`) included in styling                                        |
 | `-` / `*` / `1.` lists | Preserve visual indentation; bullet/number in accent color                                                                                                      |
-| `- [ ]` todo           | Render `☐` character, normal style                                                                                                                              |
-| `- [x]` todo           | Render `☑` character, muted style                                                                                                                               |
+| `- [ ]` todo           | `[` `]` delimiters in accent color; content normal style                                                                                                                    |
+| `- [x]` todo           | `[` `x` `]` in muted color; content in strikethrough + muted color                                                                                                         |
 | Tables (GFM)           | Table headers: bold + accent color. Pipes (`\|`): muted delimiter style. Cell content: normal text. No column alignment in v1.                                  |
 
 ### Cursor line unfurl
@@ -74,7 +102,7 @@ The line the cursor is currently on: render raw syntax at normal weight (no deco
 
 ### Italic fallback
 
-At startup, detect whether the terminal supports italics via terminfo capability query (using the `term_cursor` or similar terminfo crate, or checking `$TERM` against a known-good list). If italics are unsupported:
+At startup, detect italic support by checking `$TERM` against a hardcoded known-good list: `xterm-256color`, `tmux-256color`, `screen-256color`, `kitty`, `alacritty`, `rio`, `wezterm`, `foot`, and any value prefixed with `xterm-kitty`. No additional crate is needed. If italics are unsupported:
 
 - Fall back to emphasis color only (no italic style attribute applied anywhere)
 - Display a one-time dismissible warning in the status bar: `⚠ Terminal does not support italics — using color fallback [press any key to dismiss]`
@@ -93,7 +121,8 @@ If detection is uncertain, assume italics are supported rather than disabling th
     - `Ctrl+C`: copy selection (if any) or current line to system clipboard via `arboard`
     - `Ctrl+V`: paste from system clipboard at cursor position
     - **Copy behavior with soft-wrapped text:** When copying selected text, soft-wrap line breaks are not included — the clipboard receives the logical buffer content without renderer-inserted breaks. This preserves Markdown syntax when pasting into other tools.
-- **Word count**: computed during the decoration debounce pass (split on whitespace, normalizing). Display live in the floating info line as `· N words`. Format with thousands separator for large counts.
+    - **Clipboard failure handling:** if `arboard` returns an error (e.g. no clipboard provider on a headless system, or Wayland without a compositor), display a dismissible status bar warning: `⚠ Clipboard unavailable: <error>`. Do not panic or silently discard the operation.
+- **Word count**: computed during the decoration debounce pass. Strip Markdown syntax by collecting only `Event::Text` payloads from a `pulldown-cmark` pass over the buffer, then split on whitespace and count tokens. This is an eyeball-size convenience feature — exact accuracy is not critical, but Markdown syntax characters should not inflate the count. Display live in the floating info line as `· N words`. Format with thousands separator for large counts.
 
 ---
 
@@ -109,7 +138,7 @@ If the config file is present but contains errors:
 - **Invalid individual values** (e.g., malformed color `"not-a-color"`): Skip that key, load the default for it, and display a dismissible warning banner at the top of the editor: `⚠ Config warning: Invalid color value for theme.accent, using default`. The user can continue editing and fix the config file in another window.
 - **Missing keys**: Use hardcoded defaults — no error needed, config is optional.
 
-This approach keeps the editor usable while making problems visible. A user who typos a color can still work while they fix it..
+This approach keeps the editor usable while making problems visible. A user who typos a color can still work while they fix it.
 
 ### Architecture: base palette + derived tokens
 
