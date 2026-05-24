@@ -171,14 +171,9 @@ pub fn build_decoration_map(text: &str, theme: &Theme, italic_support: bool) -> 
                 if bold {
                     content_style = content_style.add_modifier(Modifier::BOLD);
                 }
-                // `# ` / `## ` / `### ` blend toward background so they read as
-                // darker/subordinate against the bright heading text, rather than
-                // toward text (which made them too light given heading highlights).
-                let delim_style = Style::default().fg(blend_colors(
-                    heading_color,
-                    theme.bg,
-                    theme.delimiter_blend,
-                ));
+                // DIAGNOSTIC: force # delimiter to pure red to verify the
+                // span is actually reaching the renderer at all.
+                let delim_style = Style::default().fg(ratatui::style::Color::Rgb(255, 0, 0));
                 // Bottom border for H1–H3 (thin underline in heading color).
                 let border_bottom = matches!(
                     level,
@@ -188,6 +183,20 @@ pub fn build_decoration_map(text: &str, theme: &Theme, italic_support: bool) -> 
 
                 let (start_line, start_char) = byte_to_line_char(&line_starts, text, range.start);
                 let (end_line, end_char_excl) = byte_to_line_char(&line_starts, text, range.end);
+                // DIAGNOSTIC: log raw range and computed positions
+                {
+                    use std::io::Write as _;
+                    if let Ok(mut f) = std::fs::OpenOptions::new()
+                        .create(true).append(true)
+                        .open("/tmp/yame-decor-debug.log")
+                    {
+                        let snippet = &text[range.start.min(text.len())..range.end.min(text.len())];
+                        let _ = writeln!(f,
+                            "Heading {:?}: range={:?} start=({},{}) end=({},{}) snippet={:?}",
+                            level, range, start_line, start_char, end_line, end_char_excl, snippet
+                        );
+                    }
+                }
 
                 // Number of `#` characters + the trailing space.
                 let level_num = match level {
@@ -407,9 +416,16 @@ pub fn build_decoration_map(text: &str, theme: &Theme, italic_support: bool) -> 
                         theme.delimiter_blend,
                     ))
                     .bg(theme.fenced_bg);
-                // Language tag is UI chrome, not content — muted so it doesn't compete
-                // with the fence delimiters or the code inside.
-                let lang_style = Style::default().fg(theme.muted).bg(theme.fenced_bg);
+                // Language tag is UI chrome but benefits from the accent hue to signal
+                // "this block has a type" — blend accent toward muted so it pops
+                // without matching the full brightness of content accent usage.
+                let lang_style = Style::default()
+                    .fg(blend_colors(
+                        theme.accent,
+                        theme.muted,
+                        theme.delimiter_blend,
+                    ))
+                    .bg(theme.fenced_bg);
 
                 // Opening fence line: ``` delimiters → code_color, language tag → accent.
                 // First span carries full_line_bg so the renderer flood-fills the whole row.
@@ -658,17 +674,26 @@ pub fn build_decoration_map(text: &str, theme: &Theme, italic_support: bool) -> 
                     let muted = Style::default().fg(theme.muted);
                     let x_style = Style::default().fg(theme.text);
                     // `[`
-                    push_span(&mut map, marker_line,
-                        make_span(marker_char, (marker_char + 1).min(bracket_end), muted));
+                    push_span(
+                        &mut map,
+                        marker_line,
+                        make_span(marker_char, (marker_char + 1).min(bracket_end), muted),
+                    );
                     // `x`
                     if marker_char + 1 < bracket_end {
-                        push_span(&mut map, marker_line,
-                            make_span(marker_char + 1, (marker_char + 2).min(bracket_end), x_style));
+                        push_span(
+                            &mut map,
+                            marker_line,
+                            make_span(marker_char + 1, (marker_char + 2).min(bracket_end), x_style),
+                        );
                     }
                     // `]`
                     if marker_char + 2 < bracket_end {
-                        push_span(&mut map, marker_line,
-                            make_span(marker_char + 2, bracket_end, muted));
+                        push_span(
+                            &mut map,
+                            marker_line,
+                            make_span(marker_char + 2, bracket_end, muted),
+                        );
                     }
                     // Item text after the bracket
                     if bracket_end < line_len {
@@ -1072,16 +1097,17 @@ mod tests {
     }
 
     #[test]
-    fn fenced_code_language_tag_is_muted() {
-        // Language tag (e.g. "rust") is UI chrome — must use muted fg, not accent.
+    fn fenced_code_language_tag_is_dimmed_accent() {
+        // Language tag is accent blended toward muted — hue pop without full brightness.
         let text = "before\n```rust\nlet x = 1;\n```\nafter";
         let theme = make_theme();
         let map = build_decoration_map(text, &theme, true);
+        let expected = blend_colors(theme.accent, theme.muted, theme.delimiter_blend);
         // Opening fence with language tag is line 1.
         let opening = map.get(&1).expect("opening fence line must have spans");
         assert!(
-            opening.iter().any(|s| s.style.fg == Some(theme.muted)),
-            "language tag on opening fence must have muted fg"
+            opening.iter().any(|s| s.style.fg == Some(expected)),
+            "language tag on opening fence must have dimmed accent fg"
         );
     }
 
@@ -1315,7 +1341,8 @@ mod tests {
     #[test]
     fn heading_h1_delimiter_is_blended() {
         let text = "# Hello";
-        let map = build_decoration_map(text, &make_theme(), true);
+        let theme = make_theme();
+        let map = build_decoration_map(text, &theme, true);
         let spans = map.get(&0).expect("line 0 should have spans");
         // Should have both delimiter span (char 0..2) and content span (char 2..)
         let has_delim = spans.iter().any(|s| s.char_start == 0 && s.char_end == 2);
@@ -1324,6 +1351,17 @@ mod tests {
         assert!(
             has_content,
             "H1 should have a content span starting at char 2"
+        );
+        // Delimiter must use code_color (diagnostic green) — distinct from heading_color.
+        let delim_span = spans
+            .iter()
+            .find(|s| s.char_start == 0 && s.char_end == 2)
+            .expect("delimiter span must exist");
+        assert_eq!(
+            delim_span.style.fg,
+            Some(theme.code_color),
+            "H1 delimiter must be code_color (diagnostic); got {:?}",
+            delim_span.style.fg
         );
     }
 

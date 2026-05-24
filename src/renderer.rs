@@ -314,6 +314,18 @@ impl Widget for MarkdownView<'_> {
                 } else {
                     let row_default = default_style.bg(line_bg);
                     let segments = split_into_spans(row_str, &row_spans, row_default);
+                    // DIAGNOSTIC: log heading lines to /tmp/yame-render-debug.log
+                    if !row_spans.is_empty() && row_spans.iter().any(|s| s.full_line_bg.is_some()) {
+                        use std::io::Write as _;
+                        if let Ok(mut f) = std::fs::OpenOptions::new()
+                            .create(true).append(true)
+                            .open("/tmp/yame-render-debug.log")
+                        {
+                            let _ = writeln!(f, "--- heading row (log_row={log_row} wrap={wrap_idx}) ---");
+                            let _ = writeln!(f, "  row_spans: {:?}", row_spans.iter().map(|s| (s.char_start, s.char_end, s.style.fg)).collect::<Vec<_>>());
+                            let _ = writeln!(f, "  segments:  {:?}", segments.iter().map(|s| (s.content.as_ref(), s.style.fg)).collect::<Vec<_>>());
+                        }
+                    }
                     let mut x = area.x + GUTTER; // start after left gutter
                     for span in &segments {
                         for ch in span.content.chars() {
@@ -324,6 +336,17 @@ impl Widget for MarkdownView<'_> {
                             x += 1;
                         }
                     }
+                    // DIAGNOSTIC: log what fg the # cell actually has after writing
+                    if !row_spans.is_empty() && row_spans.iter().any(|s| s.full_line_bg.is_some()) {
+                        use std::io::Write as _;
+                        if let Ok(mut f) = std::fs::OpenOptions::new()
+                            .create(true).append(true)
+                            .open("/tmp/yame-render-debug.log")
+                        {
+                            let hash_cell = &buf[(area.x + GUTTER, y)];
+                            let _ = writeln!(f, "  buf[#] after write: char={:?} fg={:?}", hash_cell.symbol(), hash_cell.style().fg);
+                        }
+                    }
                 }
 
                 // --- Bottom border (H1–H3 heading underline, last visual row only) ---
@@ -331,6 +354,9 @@ impl Widget for MarkdownView<'_> {
                     && is_last_wrap
                 {
                     use ratatui::layout::Rect as R;
+                    // Use underline_color rather than fg so the border does not
+                    // overwrite each cell's own fg (which would suppress delimiter
+                    // colour differences on H1–H3 headings).
                     buf.set_style(
                         R {
                             x: area.x,
@@ -338,7 +364,9 @@ impl Widget for MarkdownView<'_> {
                             width: self.column_width,
                             height: 1,
                         },
-                        Style::default().fg(bc).add_modifier(Modifier::UNDERLINED),
+                        Style::default()
+                            .underline_color(bc)
+                            .add_modifier(Modifier::UNDERLINED),
                     );
                 }
 
@@ -804,5 +832,38 @@ mod tests {
         let app = make_app();
         // Must not panic regardless of theme values.
         let _ = build_normal_status_bar(&app);
+    }
+
+    #[test]
+    fn heading_delimiter_fg_survives_split_into_spans() {
+        use crate::decoration::StyledSpan;
+        use ratatui::style::Color;
+        // Simulate the two spans produced for `# Hello` by build_decoration_map.
+        // Delimiter at 0..2 uses diagnostic code_color; content at 2..7 uses a heading color.
+        let green = Color::Rgb(166, 227, 161); // typical code_color
+        let heading = Color::Rgb(203, 166, 247); // typical h1 color
+        let delim_span = StyledSpan {
+            char_start: 0,
+            char_end: 2,
+            style: Style::default().fg(green),
+            ..Default::default()
+        };
+        let content_span = StyledSpan {
+            char_start: 2,
+            char_end: 7,
+            style: Style::default().fg(heading),
+            ..Default::default()
+        };
+        let segments = split_into_spans("# Hello", &[delim_span, content_span], Style::default());
+        let hash_span = segments
+            .iter()
+            .find(|s| s.content.starts_with('#'))
+            .expect("must have a span starting with #");
+        assert_eq!(
+            hash_span.style.fg,
+            Some(green),
+            "# character must carry green fg through split_into_spans; got {:?}",
+            hash_span.style.fg
+        );
     }
 }
