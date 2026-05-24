@@ -192,7 +192,7 @@ pub fn wrap_line(s: &str, width: usize) -> Vec<&str> {
 
 /// Blank columns on each side of the text content within the editor column.
 /// Keeps text from running flush against the background boundary.
-const GUTTER: u16 = 1;
+pub const GUTTER: u16 = 1;
 
 // ---------------------------------------------------------------------------
 // Step 7.1 — MarkdownView widget

@@ -1470,4 +1470,56 @@ mod tests {
             "rule span must have rule_color as fg"
         );
     }
+
+    #[test]
+    fn link_non_ascii_text_bracket_positions() {
+        // [héllo](url): é is 2 bytes but 1 char — all span boundaries must be
+        // char-indexed, not byte-indexed.  Previously split_idx could equal the
+        // byte offset of ](, placing the ] span one position too late.
+        let text = "[héllo](url)";
+        let theme = make_theme();
+        let map = build_decoration_map(text, &theme, true);
+        let spans = map.get(&0).expect("line 0 must have spans");
+
+        // Opening [  must sit at char 0
+        assert!(
+            spans.iter().any(|s| s.char_start == 0 && s.char_end == 1),
+            "opening [ must be at char 0..1"
+        );
+        // Link text héllo must be chars 1..6 (5 chars)
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.style.add_modifier.contains(Modifier::UNDERLINED)
+                    && s.char_start == 1
+                    && s.char_end == 6),
+            "link text must be underlined at chars 1..6"
+        );
+        // ]( delimiter must start at char 6 (right after o, not one byte late)
+        assert!(
+            spans.iter().any(|s| s.char_start == 6 && s.char_end == 8),
+            "]( delimiter must be at chars 6..8"
+        );
+    }
+
+    #[test]
+    fn link_non_ascii_prefix_bracket_positions() {
+        // Non-ASCII before the link: byte offset of [ != char offset of [.
+        // Ensure start_char is derived from byte_to_line_char, not raw range.start.
+        let text = "héllo [world](url)";
+        let theme = make_theme();
+        let map = build_decoration_map(text, &theme, true);
+        let spans = map.get(&0).expect("line 0 must have spans");
+
+        // [ is at char 6 (h=0 é=1 l=2 l=3 o=4 ' '=5 [=6)
+        assert!(
+            spans.iter().any(|s| s.char_start == 6 && s.char_end == 7),
+            "opening [ must be at char 6 (after non-ASCII prefix)"
+        );
+        // ]( is at char 12 ([=6 w=7 o=8 r=9 l=10 d=11 ]=12)
+        assert!(
+            spans.iter().any(|s| s.char_start == 12 && s.char_end == 14),
+            "]( delimiter must be at chars 12..14"
+        );
+    }
 }

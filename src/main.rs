@@ -188,8 +188,9 @@ fn event_loop<B: ratatui::backend::Backend>(
             let (cursor_row, cursor_col) = app.textarea.cursor();
             let visible_rows = editor_area.height as usize;
             let lines = app.textarea.lines();
-            // renderer::GUTTER == 1, two sides → subtract 2
-            let cw = (layout.column.width as usize).saturating_sub(2).max(1);
+            let cw = (layout.column.width as usize)
+                .saturating_sub(2 * renderer::GUTTER as usize)
+                .max(1);
 
             // ── Scroll up: cursor above the viewport ──────────────────────────
             if cursor_row < app.scroll_top {
@@ -349,7 +350,9 @@ fn event_loop<B: ratatui::backend::Backend>(
                         // Click / drag: translate screen coords → logical doc coords
                         // so tui-textarea places the cursor on the correct line.
                         _ => {
-                            mouse.column = mouse.column.saturating_sub(last_editor_area.x);
+                            mouse.column = mouse
+                                .column
+                                .saturating_sub(last_editor_area.x + renderer::GUTTER);
                             let rel_row = mouse.row.saturating_sub(last_editor_area.y) as usize;
                             mouse.row = rel_row.saturating_add(app.scroll_top) as u16;
                             app.textarea.input(Event::Mouse(mouse));

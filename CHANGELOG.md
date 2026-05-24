@@ -13,11 +13,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - v1 polish: italic startup warning, `delimiter_blend` config token, parent-dir creation on save (#35)
 
 ### Fixed
+- Fix non-ASCII link text truncating closing bracket (#51)
+- Fix mouse click to reposition cursor (gutter offset not subtracted) (#55)
 - Scroll clamping now accounts for soft-wrapped visual rows, preventing cursor jumping off-screen (#63)
 - Ghost scroll accumulation eliminated by intercepting scroll events before tui-textarea (#63)
 - Italic default color now matches text color (not accent blend) (#60)
 
 ### Changed
+- Annotate build_decoration_map with mutants::skip (#69)
+- Document yame init shell helper design notes and review (#68)
 - Color fenced code language tag accent, backtick fences inline-code color (#57)
 - Color scheme: Catppuccin Crust `#11111b` main bg; gutter and editor column unified (#49)
 - Status bar redesigned as floating Powerline pills on canvas background (#49, #52, #53)
