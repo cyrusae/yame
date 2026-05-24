@@ -93,6 +93,9 @@ fn event_loop<B: ratatui::backend::Backend>(
 
     const POLL_TIMEOUT: Duration = Duration::from_millis(16);
     const DEBOUNCE: Duration = Duration::from_millis(50);
+    /// Blank rows reserved at the bottom of the editor so the last line of a
+    /// document never sits flush against the info/status bar.
+    const BOTTOM_PADDING: u16 = 2;
 
     let min_cols = layout_config.min_cols.unwrap_or(DEFAULT_MIN_COLS);
 
@@ -161,15 +164,81 @@ fn event_loop<B: ratatui::backend::Backend>(
                 layout.column
             };
 
+            // Reserve a few blank rows at the bottom so the last line of the document
+            // never sits flush against the info/status bar.  The canvas flood-fill above
+            // already covers the full column, so padding rows show clean canvas colour.
+            let editor_area = Rect {
+                height: editor_area.height.saturating_sub(BOTTOM_PADDING),
+                ..editor_area
+            };
+
             // Clamp scroll_top so the cursor stays visible after every keystroke,
-            // mouse click, or terminal resize — runs against the live editor area each frame.
-            let (cursor_row, _) = app.textarea.cursor();
+            // mouse click, or terminal resize.
+            //
+            // IMPORTANT: we track *visual* rows (after soft/hard wrap), not logical
+            // rows.  A logical line that wraps into N visual rows consumes N slots in
+            // the viewport, so a pure logical-row clamp lets the cursor drift off the
+            // bottom whenever wrapped lines sit between scroll_top and the cursor.
+            //
+            // content_width must match the renderer's own calculation exactly so that
+            // wrap_line returns the same split as what gets drawn.
+            let (cursor_row, cursor_col) = app.textarea.cursor();
             let visible_rows = editor_area.height as usize;
+            let lines = app.textarea.lines();
+            // renderer::GUTTER == 1, two sides → subtract 2
+            let cw = (layout.column.width as usize).saturating_sub(2).max(1);
+
+            // ── Scroll up: cursor above the viewport ──────────────────────────
             if cursor_row < app.scroll_top {
                 app.scroll_top = cursor_row;
             }
-            if cursor_row >= app.scroll_top + visible_rows {
-                app.scroll_top = cursor_row.saturating_sub(visible_rows.saturating_sub(1));
+
+            // ── Scroll down: check cursor's visual position ───────────────────
+            // Count visual rows occupied by logical lines [scroll_top, cursor_row).
+            let above_visual: usize = lines
+                .get(app.scroll_top..cursor_row.min(lines.len()))
+                .unwrap_or(&[])
+                .iter()
+                .map(|l| renderer::wrap_line(l, cw).len())
+                .sum();
+
+            // Find which visual sub-row within cursor_row the cursor sits on.
+            // Mirrors the renderer's cursor-tracking logic (pointer-arithmetic char_start).
+            let cursor_line_str = lines.get(cursor_row).map_or("", |s| s.as_str());
+            let cursor_wraps = renderer::wrap_line(cursor_line_str, cw);
+            let cursor_subrow = cursor_wraps
+                .iter()
+                .enumerate()
+                .rev()
+                .find(|(_, wrap)| {
+                    let byte_off = (wrap.as_ptr() as usize)
+                        .wrapping_sub(cursor_line_str.as_ptr() as usize);
+                    let char_start = cursor_line_str[..byte_off].chars().count();
+                    cursor_col >= char_start
+                })
+                .map_or(0, |(i, _)| i);
+
+            let cursor_visual = above_visual + cursor_subrow;
+
+            if cursor_visual >= visible_rows {
+                // Walk backward from cursor_row, accumulating visual rows, until we
+                // find a scroll_top that places the cursor at the last visible row.
+                let headroom = visible_rows.saturating_sub(1 + cursor_subrow);
+                let mut remaining = headroom;
+                let mut new_top = cursor_row;
+                while new_top > 0 {
+                    let prev_wraps = renderer::wrap_line(
+                        lines.get(new_top - 1).map_or("", |s| s.as_str()),
+                        cw,
+                    )
+                    .len();
+                    if prev_wraps > remaining {
+                        break;
+                    }
+                    remaining -= prev_wraps;
+                    new_top -= 1;
+                }
+                app.scroll_top = new_top;
             }
 
             let view = renderer::MarkdownView {
