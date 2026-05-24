@@ -511,12 +511,27 @@ pub fn build_decoration_map(text: &str, theme: &Theme, italic_support: bool) -> 
                 let (marker_line, marker_char) = byte_to_line_char(&line_starts, text, range.start);
 
                 if checked {
-                    // Apply todo_done colour to the entire item line.
+                    // `[x]` bracket in text colour for visual pop; item text in todo_done.
                     // Strikethrough is intentionally absent: real ~~strikethrough~~ syntax
                     // exists in Markdown and should remain visually distinct.
+                    // The list bullet (`-`) is coloured by the list-bullet span; no full-line
+                    // span here so the bullet keeps its accent colour.
                     let line_len = line_char_len(&line_starts, text, marker_line);
-                    let style = Style::default().fg(theme.todo_done);
-                    push_span(&mut map, marker_line, make_span(0, line_len, style));
+                    // [x] is 3 chars: [, x, ]
+                    let bracket_end = (marker_char + 3).min(line_len);
+                    push_span(
+                        &mut map,
+                        marker_line,
+                        make_span(marker_char, bracket_end, Style::default().fg(theme.text)),
+                    );
+                    // Item text after the bracket
+                    if bracket_end < line_len {
+                        push_span(
+                            &mut map,
+                            marker_line,
+                            make_span(bracket_end, line_len, Style::default().fg(theme.todo_done)),
+                        );
+                    }
                 } else {
                     // Style [ and ] in accent, leave space between as normal
                     let accent = Style::default().fg(theme.accent);
@@ -941,10 +956,15 @@ mod tests {
         let theme = make_theme();
         let map = build_decoration_map(text, &theme, true);
         let spans = map.get(&0).expect("line 0 should have spans");
-        // Must be todo_done colour (defaults to muted).
+        // Item text after the bracket must use todo_done colour.
         assert!(
             spans.iter().any(|s| s.style.fg == Some(theme.todo_done)),
-            "checked todo must use todo_done colour"
+            "checked todo text must use todo_done colour"
+        );
+        // [x] bracket must use text colour for visual pop.
+        assert!(
+            spans.iter().any(|s| s.style.fg == Some(theme.text)),
+            "checked todo [x] bracket must use theme.text colour"
         );
         // Must NOT have strikethrough — that is reserved for real ~~syntax~~.
         assert!(
