@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Fixed
 
 ### Changed
+- Phase 12: README & Distribution (#13)
 - chore: remove scrollbar widget (#34)
 - fix: initial decoration pass, gutter, todo muted, info line width (#33)
 - fix: POSIX trailing newline, navigation dirty flag, mouse coordinate offset (#32)
