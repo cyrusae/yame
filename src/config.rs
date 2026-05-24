@@ -242,7 +242,9 @@ impl Theme {
         let todo_done = resolve(&overrides.todo_done, muted, warnings);
         let rule_color = resolve(&overrides.rule_color, muted, warnings);
         let code_bg_rgb = resolve(&overrides.code_bg, blend(code_rgb, bg, 0.15), warnings);
-        let fenced_bg_rgb = resolve(&overrides.fenced_bg, blend(code_rgb, bg, 0.08), warnings);
+        // Fenced block background: lift bg slightly toward text (neutral) so the
+        // panel reads as a distinct surface without inheriting code_color's hue.
+        let fenced_bg_rgb = resolve(&overrides.fenced_bg, blend(text, bg, 0.08), warnings);
         let heading_bg_rgb = resolve(&overrides.heading_bg, blend(accent, bg, 0.15), warnings);
         let selection_bg_rgb = resolve(&overrides.selection_bg, blend(accent, bg, 0.6), warnings);
         let selection_fg_rgb = resolve(&overrides.selection_fg, bg, warnings);
