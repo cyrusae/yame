@@ -1,0 +1,64 @@
+name: Mutation Tests
+
+# Run on every PR and on pushes to main (diff against parent commit).
+# Uses --in-diff mode: only mutates lines that changed in this diff,
+# so cost scales with the size of the change, not the whole codebase.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  mutants:
+    name: Cargo Mutants (diff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history needed so we can diff against the base.
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-mutants
+        run: cargo install cargo-mutants --locked
+
+      # Pre-build the test binary once so mutant runs don't each re-link.
+      - name: Build test binary (baseline)
+        run: cargo test --no-run --all
+
+      # For PRs: diff against the base branch.
+      - name: Generate diff (pull request)
+        if: github.event_name == 'pull_request'
+        run: git diff origin/${{ github.base_ref }}...HEAD > changes.diff
+
+      # For pushes to main: diff against the parent commit.
+      # `|| true` handles the (rare) case of a single-commit history.
+      - name: Generate diff (push to main)
+        if: github.event_name == 'push'
+        run: git diff HEAD~1 > changes.diff || true
+
+      - name: Run cargo mutants on diff
+        run: |
+          if [ -s changes.diff ]; then
+            cargo mutants \
+              --in-diff changes.diff \
+              --timeout-multiplier 2.0 \
+              --jobs 4
+          else
+            echo "Diff is empty — nothing to mutate."
+          fi
+
+      # Always upload the mutants output so it's inspectable even on failure.
+      - name: Upload mutants output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutants-out
+          path: mutants.out/
+          if-no-files-found: ignore

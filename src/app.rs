@@ -28,6 +28,7 @@ pub struct App {
 
 impl App {
     /// Create a new App, loading file content if it exists.
+    #[mutants::skip] // Calls load_file (fs I/O) and returns a struct — mutations masked by I/O.
     pub fn new(
         file_path: PathBuf,
         theme: Theme,
@@ -67,6 +68,7 @@ impl App {
 }
 
 /// Load a file into a TextArea, or return an empty TextArea for new files.
+#[mutants::skip] // fs::read_to_string I/O — mutations (e.g. skipping the read) not testable without a real FS.
 pub fn load_file(path: &Path) -> io::Result<TextArea<'static>> {
     if path.exists() {
         let content = std::fs::read_to_string(path)?;

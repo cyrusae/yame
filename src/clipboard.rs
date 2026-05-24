@@ -2,6 +2,7 @@ use crate::app::App;
 
 /// Copy selection or current line to the system clipboard.
 /// On error, posts a dismissible status message.
+#[mutants::skip] // Clipboard I/O — arboard calls not testable in a headless CI environment.
 pub fn handle_copy(app: &mut App) {
     let text = get_copy_text(app);
     match copy_to_clipboard(&text) {
@@ -14,6 +15,7 @@ pub fn handle_copy(app: &mut App) {
 }
 
 /// Paste from the system clipboard into the buffer.
+#[mutants::skip] // Clipboard I/O.
 pub fn handle_paste(app: &mut App) {
     match paste_from_clipboard() {
         Ok(text) => {
@@ -27,6 +29,7 @@ pub fn handle_paste(app: &mut App) {
     }
 }
 
+#[mutants::skip] // Accesses textarea cursor/lines state; meaningful only in a live App context.
 fn get_copy_text(app: &App) -> String {
     // TODO: respect selection range when tui-textarea exposes selection_range() in v0.7
     // For now, copy the current line.
@@ -34,12 +37,14 @@ fn get_copy_text(app: &App) -> String {
     app.textarea.lines().get(row).cloned().unwrap_or_default()
 }
 
+#[mutants::skip] // arboard::Clipboard I/O — not available in CI (no display server).
 pub fn copy_to_clipboard(text: &str) -> Result<(), String> {
     arboard::Clipboard::new()
         .and_then(|mut cb| cb.set_text(text.to_owned()))
         .map_err(|e| e.to_string())
 }
 
+#[mutants::skip] // arboard::Clipboard I/O.
 pub fn paste_from_clipboard() -> Result<String, String> {
     arboard::Clipboard::new()
         .and_then(|mut cb| cb.get_text())

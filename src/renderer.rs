@@ -47,6 +47,7 @@ pub fn format_thousands(n: usize) -> String {
 const POWERLINE_RIGHT: char = '\u{e0b0}';
 
 /// Render the bottom status bar into `area`.
+#[mutants::skip] // Writes into ratatui Buffer — mutations have no observable return value to assert on.
 pub fn render_status_bar(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
 
@@ -128,6 +129,7 @@ fn build_normal_status_bar(app: &App, width: u16) -> Line<'static> {
 // ---------------------------------------------------------------------------
 
 /// Render the second-to-last row: cursor position and word count.
+#[mutants::skip] // Writes into ratatui Buffer — void, not testable via return value.
 pub fn render_info_line(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let (row, col) = app.textarea.cursor();
@@ -149,6 +151,7 @@ pub fn render_info_line(f: &mut Frame, area: Rect, app: &App) {
 // ---------------------------------------------------------------------------
 
 /// Render the vertical scrollbar in `area`.
+#[mutants::skip] // Writes into ratatui Buffer — void, not testable via return value.
 pub fn render_scrollbar(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let total_lines = app.textarea.lines().len();

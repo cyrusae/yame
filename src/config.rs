@@ -329,6 +329,7 @@ pub fn config_path() -> PathBuf {
 
 /// Load config from disk; fall back to defaults on any error.
 /// Returns `(Config, warnings)`.
+#[mutants::skip] // fs::read_to_string + toml::from_str I/O path — mutations masked by filesystem state.
 pub fn load_config() -> (Config, Vec<String>) {
     let path = config_path();
     let mut warnings = Vec::new();

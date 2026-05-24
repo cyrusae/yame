@@ -1,0 +1,48 @@
+# cargo-deny configuration  https://embarkstudios.github.io/cargo-deny/
+
+# ---------------------------------------------------------------------------
+# Security advisories (RustSec database)
+# ---------------------------------------------------------------------------
+[advisories]
+# Deny crates with known security vulnerabilities.
+version = 2
+ignore = []
+
+# ---------------------------------------------------------------------------
+# License policy
+# ---------------------------------------------------------------------------
+[licenses]
+version = 2
+# Only allow these SPDX identifiers.  All direct and transitive deps of
+# yame are MIT or Apache-2.0; tighten this list if that ever changes.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+    "CC0-1.0",
+]
+
+# ---------------------------------------------------------------------------
+# Dependency bans
+# ---------------------------------------------------------------------------
+[bans]
+# Warn (not deny) on multiple versions of the same crate — transitive deps
+# outside our control sometimes pull in two minor versions.  Revisit once
+# the dep graph is stable.
+multiple-versions = "warn"
+wildcards = "allow"
+highlight = "all"
+
+# ---------------------------------------------------------------------------
+# Source policy
+# ---------------------------------------------------------------------------
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

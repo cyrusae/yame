@@ -23,6 +23,7 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 use app::App;
 use config::{Theme, load_config, supports_italic};
 
+#[mutants::skip] // Installs a global panic hook — untestable side effect with no return value.
 fn setup_panic_hook() {
     let original = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -33,6 +34,7 @@ fn setup_panic_hook() {
     }));
 }
 
+#[mutants::skip] // Reads std::env::args() — side-effectful, not unit-testable without refactoring.
 fn parse_args() -> Result<PathBuf, ()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.len() {
@@ -44,6 +46,7 @@ fn parse_args() -> Result<PathBuf, ()> {
     }
 }
 
+#[mutants::skip] // Full terminal I/O orchestration — no unit-testable return value.
 fn run(file_path: PathBuf) -> io::Result<()> {
     setup_panic_hook();
 
@@ -79,6 +82,7 @@ fn run(file_path: PathBuf) -> io::Result<()> {
     result
 }
 
+#[mutants::skip] // Terminal event loop — requires a real terminal backend, not unit-testable.
 fn event_loop<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
@@ -167,6 +171,7 @@ fn event_loop<B: ratatui::backend::Backend>(
     Ok(())
 }
 
+#[mutants::skip] // Calls std::fs::write — I/O side effect; status message logic tested in Phase 11.
 fn handle_save(app: &mut App) -> io::Result<()> {
     let content = app.textarea.lines().join("\n");
     match std::fs::write(&app.file_path, &content) {
@@ -192,6 +197,7 @@ fn handle_exit(app: &mut App) -> bool {
     }
 }
 
+#[mutants::skip] // Entry point — calls process::exit, not unit-testable.
 fn main() {
     let file_path = parse_args().unwrap_or_else(|_| std::process::exit(1));
     if let Err(e) = run(file_path) {

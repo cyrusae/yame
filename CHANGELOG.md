@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Fixed
 
 ### Changed
+- CI tooling: cargo-mutants, cargo-deny, cargo-nextest (#31)
 - Word count (count_words) (#24)
 - Cursor line exclusion (#23)
 - GFM tables (with v3 TODO seam) (#22)
