@@ -101,9 +101,7 @@ fn event_loop<B: ratatui::backend::Backend>(
     // keystroke to trigger the debounce.
     {
         let text = app.textarea.lines().join("\n");
-        let cursor_line = app.textarea.cursor().0;
-        app.decoration_map =
-            build_decoration_map(&text, &app.theme, app.italic_support, cursor_line);
+        app.decoration_map = build_decoration_map(&text, &app.theme, app.italic_support);
         app.word_count = count_words(&text);
     }
 
@@ -117,9 +115,7 @@ fn event_loop<B: ratatui::backend::Backend>(
         // are pure functions; when v1.5 moves them here, replace with tx.send(text) + rx.try_recv().
         if app.last_keystroke.is_some_and(|t| t.elapsed() >= DEBOUNCE) {
             let text = app.textarea.lines().join("\n");
-            let cursor_line = app.textarea.cursor().0;
-            app.decoration_map =
-                build_decoration_map(&text, &app.theme, app.italic_support, cursor_line);
+            app.decoration_map = build_decoration_map(&text, &app.theme, app.italic_support);
             app.word_count = count_words(&text);
             app.last_keystroke = None;
         }
