@@ -3,10 +3,12 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers,
+            MouseEventKind},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
+use tui_textarea::CursorMove;
 use ratatui::{
     Terminal, backend::CrosstermBackend, layout::Rect, style::Style, widgets::Paragraph,
 };
@@ -93,9 +95,12 @@ fn event_loop<B: ratatui::backend::Backend>(
 
     const POLL_TIMEOUT: Duration = Duration::from_millis(16);
     const DEBOUNCE: Duration = Duration::from_millis(50);
-    /// Blank rows reserved at the bottom of the editor so the last line of a
-    /// document never sits flush against the info/status bar.
-    const BOTTOM_PADDING: u16 = 2;
+    /// Virtual empty rows kept below the cursor at end-of-document.
+    /// Implemented by firing the scroll clamp early (not by shrinking the viewport),
+    /// so all terminal rows remain usable when the cursor is mid-document.
+    const BOTTOM_PADDING: usize = 3;
+    /// Lines moved per scroll-wheel tick.
+    const SCROLL_LINES: usize = 3;
 
     let min_cols = layout_config.min_cols.unwrap_or(DEFAULT_MIN_COLS);
 
@@ -164,14 +169,6 @@ fn event_loop<B: ratatui::backend::Backend>(
                 layout.column
             };
 
-            // Reserve a few blank rows at the bottom so the last line of the document
-            // never sits flush against the info/status bar.  The canvas flood-fill above
-            // already covers the full column, so padding rows show clean canvas colour.
-            let editor_area = Rect {
-                height: editor_area.height.saturating_sub(BOTTOM_PADDING),
-                ..editor_area
-            };
-
             // Clamp scroll_top so the cursor stays visible after every keystroke,
             // mouse click, or terminal resize.
             //
@@ -179,6 +176,11 @@ fn event_loop<B: ratatui::backend::Backend>(
             // rows.  A logical line that wraps into N visual rows consumes N slots in
             // the viewport, so a pure logical-row clamp lets the cursor drift off the
             // bottom whenever wrapped lines sit between scroll_top and the cursor.
+            //
+            // BOTTOM_PADDING is applied by firing the scroll clamp BOTTOM_PADDING rows
+            // early — the viewport itself stays full height so all rows remain usable
+            // mid-document.  The renderer already draws canvas bg past end-of-content,
+            // so those virtual padding rows appear naturally.
             //
             // content_width must match the renderer's own calculation exactly so that
             // wrap_line returns the same split as what gets drawn.
@@ -220,10 +222,12 @@ fn event_loop<B: ratatui::backend::Backend>(
 
             let cursor_visual = above_visual + cursor_subrow;
 
-            if cursor_visual >= visible_rows {
+            // Fire BOTTOM_PADDING rows early so the cursor never sits flush at the
+            // very bottom of the viewport.
+            if cursor_visual + BOTTOM_PADDING >= visible_rows {
                 // Walk backward from cursor_row, accumulating visual rows, until we
-                // find a scroll_top that places the cursor at the last visible row.
-                let headroom = visible_rows.saturating_sub(1 + cursor_subrow);
+                // find a scroll_top that places the cursor at (last visible row − padding).
+                let headroom = visible_rows.saturating_sub(1 + cursor_subrow + BOTTOM_PADDING);
                 let mut remaining = headroom;
                 let mut new_top = cursor_row;
                 while new_top > 0 {
@@ -313,15 +317,47 @@ fn event_loop<B: ratatui::backend::Backend>(
                     }
                 }
                 Event::Mouse(mut mouse) => {
-                    // tui-textarea expects coordinates relative to its widget origin
-                    // and uses them as (logical_row, col).  Translate from
-                    // screen-absolute by subtracting the editor area's top-left and
-                    // adding the current scroll offset so clicks land on the correct
-                    // logical line regardless of centering margin or scroll position.
-                    mouse.column = mouse.column.saturating_sub(last_editor_area.x);
-                    let rel_row = mouse.row.saturating_sub(last_editor_area.y) as usize;
-                    mouse.row = rel_row.saturating_add(app.scroll_top) as u16;
-                    app.textarea.input(Event::Mouse(mouse));
+                    match mouse.kind {
+                        // Scroll events are intercepted before tui-textarea to avoid
+                        // two problems:
+                        //   1. tui-textarea accumulates its own internal scroll offset
+                        //      that diverges from our scroll_top, producing "ghost"
+                        //      scroll steps that must be unwound before cursor moves.
+                        //   2. On scroll-up mid-viewport, the visual clamp only fires
+                        //      at the bottom boundary, so cursor drifts through the
+                        //      visible area without the viewport moving at all.
+                        //
+                        // Fix: move cursor ourselves, and on ScrollUp also decrement
+                        // scroll_top immediately so the viewport follows the gesture
+                        // without waiting for the cursor to hit the top of the view.
+                        // The visual clamp corrects any overshoot on the next frame.
+                        MouseEventKind::ScrollDown => {
+                            for _ in 0..SCROLL_LINES {
+                                app.textarea.move_cursor(CursorMove::Down);
+                            }
+                            // scroll_top is driven upward by the visual clamp when
+                            // the cursor approaches the bottom — no manual adjustment.
+                        }
+                        MouseEventKind::ScrollUp => {
+                            for _ in 0..SCROLL_LINES {
+                                app.textarea.move_cursor(CursorMove::Up);
+                            }
+                            // Immediately pull the viewport up so content moves on
+                            // every tick.  The clamp corrects if this undershoots.
+                            app.scroll_top = app.scroll_top.saturating_sub(SCROLL_LINES);
+                        }
+                        // Click / drag: translate screen coords → logical doc coords
+                        // so tui-textarea places the cursor on the correct line.
+                        _ => {
+                            mouse.column =
+                                mouse.column.saturating_sub(last_editor_area.x);
+                            let rel_row =
+                                mouse.row.saturating_sub(last_editor_area.y) as usize;
+                            mouse.row =
+                                rel_row.saturating_add(app.scroll_top) as u16;
+                            app.textarea.input(Event::Mouse(mouse));
+                        }
+                    }
                 }
                 Event::Resize(_, _) => {
                     // next draw() picks up new dimensions automatically
