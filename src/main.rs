@@ -268,7 +268,8 @@ fn event_loop<B: ratatui::backend::Backend>(
                         (KeyModifiers::CONTROL, KeyCode::Char('s')) => {
                             handle_save(app)?;
                         }
-                        (KeyModifiers::CONTROL, KeyCode::Char('x')) => {
+                        (KeyModifiers::CONTROL, KeyCode::Char('x'))
+                        | (KeyModifiers::NONE, KeyCode::Esc) => {
                             if handle_exit(app) {
                                 break;
                             }
