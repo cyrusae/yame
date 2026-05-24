@@ -108,10 +108,20 @@ fn event_loop<B: ratatui::backend::Backend>(
 
         terminal.draw(|f| {
             let layout = compute_layout(f.area(), min_cols);
+            let view = renderer::MarkdownView {
+                lines: app.textarea.lines(),
+                decoration_map: &app.decoration_map,
+                scroll_top: app.scroll_top,
+                cursor: app.textarea.cursor(),
+                selection: app.textarea.selection_range(),
+                theme: &app.theme,
+                italic_support: app.italic_support,
+                column_width: layout.column.width,
+            };
+            f.render_widget(view, layout.column);
             renderer::render_status_bar(f, layout.status_bar, app);
             renderer::render_info_line(f, layout.info_line, app);
             renderer::render_scrollbar(f, layout.scrollbar, app);
-            // Main editor column wired in Phase 7
         })?;
 
         if event::poll(POLL_TIMEOUT)? {

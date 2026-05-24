@@ -11,6 +11,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Fixed
 
 ### Changed
+- Phase 7: Custom Renderer (#8)
+- Wire MarkdownView into event loop draw call (#30)
+- Selection overlay (full fg+bg override) (#29)
+- Cursor rendering (#28)
+- MarkdownView widget struct and Widget impl stub (#25)
 - wrap_line() with word/hard-break and blockquote continuation (#27)
 - span_split_into_spans() with multi-byte safety (#26)
 - CI tooling: cargo-mutants, cargo-deny, cargo-nextest (#31)

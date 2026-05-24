@@ -2,7 +2,7 @@ use ratatui::{
     Frame,
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Widget},
 };
@@ -174,6 +174,219 @@ pub fn wrap_line(s: &str, width: usize) -> Vec<&str> {
     }
 
     result
+}
+
+// ---------------------------------------------------------------------------
+// Step 7.1 — MarkdownView widget
+// ---------------------------------------------------------------------------
+
+/// The main editor rendering widget.
+///
+/// Renders visible logical lines from `scroll_top`, applying soft-wrap,
+/// decoration spans, cursor highlighting, and selection overlay.
+pub struct MarkdownView<'a> {
+    pub lines: &'a [String],
+    pub decoration_map: &'a DecorationMap,
+    pub scroll_top: usize,
+    /// Logical (row, col) cursor position from `textarea.cursor()`.
+    pub cursor: (usize, usize),
+    /// Normalised selection range from `textarea.selection_range()`.
+    pub selection: Option<((usize, usize), (usize, usize))>,
+    pub theme: &'a crate::config::Theme,
+    /// Whether the terminal supports italic — stored for future use (e.g. tooltips).
+    pub italic_support: bool,
+    pub column_width: u16,
+}
+
+impl Widget for MarkdownView<'_> {
+    #[mutants::skip] // Writes into ratatui Buffer — void, not testable via return value.
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let width = self.column_width as usize;
+        let visible = area.height as usize;
+        let bg = self.theme.bg;
+        let default_style = Style::default().fg(self.theme.text).bg(bg);
+
+        // 1. Flood-fill the entire area with the background colour.
+        for row in 0..area.height {
+            for col in 0..area.width {
+                buf[(area.x + col, area.y + row)].set_bg(bg);
+            }
+        }
+
+        let (cursor_log_row, cursor_log_col) = self.cursor;
+        let mut cursor_buf_pos: Option<(u16, u16)> = None;
+
+        // 2. Render each visible logical line.
+        let mut visual_row: usize = 0;
+        let total = self.lines.len();
+        let mut log_row = self.scroll_top;
+
+        while visual_row < visible && log_row < total {
+            let line = &self.lines[log_row];
+            let wrapped = wrap_line(line, width.max(1));
+            let line_decs = self.decoration_map.get(&log_row);
+
+            for (wrap_idx, &row_str) in wrapped.iter().enumerate() {
+                if visual_row >= visible {
+                    break;
+                }
+
+                // --- Compute this visual row's char range within the logical line ---
+                let byte_off = (row_str.as_ptr() as usize)
+                    .wrapping_sub(line.as_ptr() as usize);
+                let char_start = line[..byte_off].chars().count();
+                let char_len = row_str.chars().count();
+                let char_end = char_start + char_len;
+
+                // --- Cursor tracking ---
+                if log_row == cursor_log_row {
+                    let is_last_wrap = wrap_idx + 1 == wrapped.len();
+                    let in_range = cursor_log_col >= char_start
+                        && (cursor_log_col < char_end || is_last_wrap);
+                    if in_range {
+                        let col_in_row = (cursor_log_col.saturating_sub(char_start))
+                            .min(width.saturating_sub(1));
+                        cursor_buf_pos = Some((
+                            area.x + col_in_row as u16,
+                            area.y + visual_row as u16,
+                        ));
+                    }
+                }
+
+                // --- Adjust decoration spans to this visual row's char range ---
+                let row_spans: Vec<StyledSpan> = line_decs
+                    .map(|decs| {
+                        decs.iter()
+                            .filter(|s| s.char_end > char_start && s.char_start < char_end)
+                            .map(|s| StyledSpan {
+                                char_start: s.char_start.saturating_sub(char_start),
+                                char_end: s.char_end.saturating_sub(char_start).min(char_len),
+                                style: s.style,
+                                is_blockquote: s.is_blockquote,
+                                full_line_bg: s.full_line_bg,
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                // --- Full-line background (headings, fenced blocks) ---
+                let line_bg = row_spans
+                    .iter()
+                    .find_map(|s| s.full_line_bg)
+                    .unwrap_or(bg);
+
+                let y = area.y + visual_row as u16;
+
+                // Flood-fill background across the full column width first.
+                for col in 0..self.column_width {
+                    buf[(area.x + col, y)].set_bg(line_bg);
+                }
+
+                // --- Write character cells ---
+                let row_default = default_style.bg(line_bg);
+                let segments = split_into_spans(row_str, &row_spans, row_default);
+                let mut x = area.x;
+                for span in &segments {
+                    for ch in span.content.chars() {
+                        if (x.saturating_sub(area.x)) as usize >= width {
+                            break;
+                        }
+                        buf[(x, y)].set_char(ch).set_style(span.style);
+                        x += 1;
+                    }
+                }
+
+                visual_row += 1;
+            }
+
+            log_row += 1;
+        }
+
+        // 3. Selection overlay — applied after content, before cursor.
+        if let Some(selection) = self.selection {
+            apply_selection_overlay(area, buf, &self, selection);
+        }
+
+        // 4. Cursor cell — always on top.
+        if let Some((cx, cy)) = cursor_buf_pos {
+            buf[(cx, cy)].set_fg(self.theme.bg).set_bg(self.theme.accent);
+        }
+    }
+}
+
+/// Apply the selection highlight over the already-rendered buffer cells.
+///
+/// Iterates logical lines in the selection range, maps each visual row's
+/// char range to buffer coordinates, and overwrites fg+bg for covered cells.
+fn apply_selection_overlay(
+    area: Rect,
+    buf: &mut Buffer,
+    view: &MarkdownView<'_>,
+    selection: ((usize, usize), (usize, usize)),
+) {
+    let ((sel_row_start, sel_col_start), (sel_row_end, sel_col_end)) = selection;
+    let width = view.column_width as usize;
+    let visible = area.height as usize;
+    let total = view.lines.len();
+    let sel_fg = view.theme.selection_fg;
+    let sel_bg = view.theme.selection_bg;
+
+    let mut visual_row: usize = 0;
+    let mut log_row = view.scroll_top;
+
+    while visual_row < visible && log_row < total {
+        // Stop scanning once we're past the selection end.
+        if log_row > sel_row_end {
+            break;
+        }
+
+        let line = &view.lines[log_row];
+        let wrapped = wrap_line(line, width.max(1));
+
+        for row_str in &wrapped {
+            if visual_row >= visible {
+                break;
+            }
+
+            let byte_off = (row_str.as_ptr() as usize)
+                .wrapping_sub(line.as_ptr() as usize);
+            let char_start = line[..byte_off].chars().count();
+            let char_len = row_str.chars().count();
+            let char_end = char_start + char_len;
+
+            if log_row >= sel_row_start && log_row <= sel_row_end {
+                // Selection range on this logical line (in logical-line char units)
+                let line_sel_start = if log_row == sel_row_start {
+                    sel_col_start
+                } else {
+                    0
+                };
+                let line_sel_end = if log_row == sel_row_end {
+                    sel_col_end
+                } else {
+                    usize::MAX
+                };
+
+                // Intersect with this visual row's char range
+                let row_sel_start = line_sel_start.max(char_start);
+                let row_sel_end = line_sel_end.min(char_end);
+
+                if row_sel_start < row_sel_end {
+                    let y = area.y + visual_row as u16;
+                    let x_start = area.x + (row_sel_start - char_start) as u16;
+                    let x_end = (area.x + (row_sel_end - char_start) as u16)
+                        .min(area.x + view.column_width);
+                    for x in x_start..x_end {
+                        buf[(x, y)].set_fg(sel_fg).set_bg(sel_bg);
+                    }
+                }
+            }
+
+            visual_row += 1;
+        }
+
+        log_row += 1;
+    }
 }
 
 // ---------------------------------------------------------------------------
