@@ -215,28 +215,28 @@ pub fn build_decoration_map(text: &str, theme: &Theme, italic_support: bool) -> 
                 }
 
                 // Content span (the heading text itself), possibly multi-line.
-                if delim_end < end_char_excl || end_line > start_line {
-                    for line in start_line..=end_line {
-                        let c_start = if line == start_line { delim_end } else { 0 };
-                        let c_end = if line == end_line {
-                            end_char_excl
-                        } else {
-                            line_char_len(&line_starts, text, line)
-                        };
-                        if c_start < c_end {
-                            push_span(
-                                &mut map,
-                                line,
-                                StyledSpan {
-                                    char_start: c_start,
-                                    char_end: c_end,
-                                    style: content_style,
-                                    full_line_bg: Some(theme.heading_bg),
-                                    border_bottom,
-                                    ..Default::default()
-                                },
-                            );
-                        }
+                // The inner `c_start < c_end` guard handles empty headings; no outer
+                // pre-check needed.
+                for line in start_line..=end_line {
+                    let c_start = if line == start_line { delim_end } else { 0 };
+                    let c_end = if line == end_line {
+                        end_char_excl
+                    } else {
+                        line_char_len(&line_starts, text, line)
+                    };
+                    if c_start < c_end {
+                        push_span(
+                            &mut map,
+                            line,
+                            StyledSpan {
+                                char_start: c_start,
+                                char_end: c_end,
+                                style: content_style,
+                                full_line_bg: Some(theme.heading_bg),
+                                border_bottom,
+                                ..Default::default()
+                            },
+                        );
                     }
                 }
             }
@@ -1128,6 +1128,213 @@ mod tests {
         assert!(
             !spans.iter().any(|s| s.border_bottom.is_some()),
             "H4+ must not have border_bottom"
+        );
+    }
+
+    // --- Mutant-killing: heading with no content produces no content span ---
+
+    #[test]
+    fn heading_empty_content_produces_no_content_span() {
+        // "# " has only the delimiter chars and no text after them.
+        // The inner c_start < c_end guard must prevent an empty span being emitted.
+        // If that guard becomes c_start <= c_end, a zero-width span at (2..2) appears.
+        let text = "# ";
+        let map = build_decoration_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        assert!(
+            !spans.iter().any(|s| s.char_start == s.char_end),
+            "no zero-width (char_start == char_end) span must exist for an empty heading"
+        );
+    }
+
+    // --- Mutant-killing: heading delimiter span carries its own fields ---
+
+    #[test]
+    fn heading_delimiter_span_has_own_full_line_bg() {
+        // Deleting full_line_bg from the delimiter StyledSpan must be caught even
+        // when the content span still carries it.
+        let text = "# Hello";
+        let map = build_decoration_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.char_start == 0 && s.char_end == 2 && s.full_line_bg.is_some()),
+            "H1 delimiter span (0..2) must have full_line_bg set"
+        );
+    }
+
+    #[test]
+    fn heading_delimiter_span_has_own_border_bottom() {
+        // Deleting border_bottom from the delimiter StyledSpan must be caught even
+        // when the content span still carries it.
+        let text = "# Hello";
+        let map = build_decoration_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.char_start == 0 && s.char_end == 2 && s.border_bottom.is_some()),
+            "H1 delimiter span (0..2) must have border_bottom set"
+        );
+    }
+
+    #[test]
+    fn heading_delimiter_style_differs_from_content() {
+        // Deleting `style` from the delimiter span makes it fall back to default,
+        // which won't match the blended delimiter fg.
+        let text = "# Hello";
+        let theme = make_theme();
+        let map = build_decoration_map(text, &theme, true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        let delim = spans
+            .iter()
+            .find(|s| s.char_start == 0 && s.char_end == 2)
+            .expect("H1 delimiter span (0..2) must exist");
+        let content = spans
+            .iter()
+            .find(|s| s.char_start == 2)
+            .expect("H1 content span must start at char 2");
+        assert_ne!(
+            delim.style.fg, content.style.fg,
+            "delimiter fg must be blended (different from content fg)"
+        );
+        assert!(
+            delim.style.fg.is_some(),
+            "delimiter span must have an explicit fg color"
+        );
+    }
+
+    #[test]
+    fn heading_content_span_char_end_reaches_line_end() {
+        // Deleting char_end from the content StyledSpan makes it default to 0.
+        let text = "# Hello"; // 7 chars
+        let map = build_decoration_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        let content = spans
+            .iter()
+            .find(|s| s.char_start == 2)
+            .expect("H1 content span must start at char 2");
+        assert_eq!(
+            content.char_end, 7,
+            "H1 content span char_end must reach the end of '# Hello' (7 chars)"
+        );
+    }
+
+    #[test]
+    fn heading_content_span_has_own_border_bottom() {
+        // Deleting border_bottom from the content StyledSpan must be caught even
+        // when the delimiter span still carries it.
+        let text = "# Hello";
+        let map = build_decoration_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        let content = spans
+            .iter()
+            .find(|s| s.char_start == 2)
+            .expect("H1 content span must start at char 2");
+        assert!(
+            content.border_bottom.is_some(),
+            "H1 content span must have border_bottom set"
+        );
+    }
+
+    // --- Mutant-killing: blockquote content span is_blockquote ---
+
+    #[test]
+    fn blockquote_content_span_has_is_blockquote() {
+        // The indicator span (0..1) already has is_blockquote=true.
+        // This test ensures the content span (char_start >= 1) also carries it.
+        let text = "> quoted text";
+        let map = build_decoration_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        assert!(
+            spans.iter().any(|s| s.is_blockquote && s.char_start >= 1),
+            "blockquote content span (char_start >= 1) must have is_blockquote=true"
+        );
+    }
+
+    // --- Mutant-killing: strikethrough char boundaries ---
+
+    #[test]
+    fn strikethrough_opening_delimiter_boundary() {
+        // "~~hi~~": opening ~~ must occupy exactly chars 0..2.
+        let text = "~~hi~~";
+        let map = build_decoration_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        assert!(
+            spans.iter().any(|s| s.char_start == 0 && s.char_end == 2),
+            "opening ~~ delimiter must be at char 0..2"
+        );
+    }
+
+    #[test]
+    fn strikethrough_content_boundary_and_modifier() {
+        // "~~hi~~": content must be at chars 2..4 with CROSSED_OUT.
+        let text = "~~hi~~";
+        let map = build_decoration_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        assert!(
+            spans.iter().any(|s| {
+                s.char_start == 2
+                    && s.char_end == 4
+                    && s.style.add_modifier.contains(Modifier::CROSSED_OUT)
+            }),
+            "strikethrough content must be at char 2..4 with CROSSED_OUT"
+        );
+    }
+
+    #[test]
+    fn strikethrough_closing_delimiter_boundary() {
+        // "~~hi~~": closing ~~ must occupy exactly chars 4..6.
+        let text = "~~hi~~";
+        let map = build_decoration_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        assert!(
+            spans.iter().any(|s| s.char_start == 4 && s.char_end == 6),
+            "closing ~~ delimiter must be at char 4..6"
+        );
+    }
+
+    // --- Mutant-killing: horizontal rule span fields ---
+
+    #[test]
+    fn horizontal_rule_span_char_start_is_zero() {
+        let text = "above\n\n---\n\nbelow";
+        let map = build_decoration_map(text, &make_theme(), true);
+        let rule = map
+            .values()
+            .flatten()
+            .find(|s| s.is_rule)
+            .expect("horizontal rule span must exist");
+        assert_eq!(rule.char_start, 0, "rule span must start at char 0");
+    }
+
+    #[test]
+    fn horizontal_rule_span_char_end_covers_line() {
+        let text = "above\n\n---\n\nbelow";
+        let map = build_decoration_map(text, &make_theme(), true);
+        let rule = map
+            .values()
+            .flatten()
+            .find(|s| s.is_rule)
+            .expect("horizontal rule span must exist");
+        assert!(rule.char_end > 0, "rule span char_end must be non-zero");
+    }
+
+    #[test]
+    fn horizontal_rule_span_has_rule_color() {
+        let text = "above\n\n---\n\nbelow";
+        let theme = make_theme();
+        let map = build_decoration_map(text, &theme, true);
+        let rule = map
+            .values()
+            .flatten()
+            .find(|s| s.is_rule)
+            .expect("horizontal rule span must exist");
+        assert_eq!(
+            rule.style.fg,
+            Some(theme.rule_color),
+            "rule span must have rule_color as fg"
         );
     }
 }
