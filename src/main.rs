@@ -403,6 +403,15 @@ fn handle_exit(app: &mut App) -> bool {
     }
 }
 
+#[mutants::skip] // Entry point — calls process::exit, not unit-testable.
+fn main() {
+    let file_path = parse_args().unwrap_or_else(|_| std::process::exit(1));
+    if let Err(e) = run(file_path) {
+        eprintln!("error: {e}");
+        std::process::exit(1);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -454,14 +463,5 @@ mod tests {
             matches!(app.status.mode, StatusMode::ExitPrompt),
             "dirty exit must show ExitPrompt"
         );
-    }
-}
-
-#[mutants::skip] // Entry point — calls process::exit, not unit-testable.
-fn main() {
-    let file_path = parse_args().unwrap_or_else(|_| std::process::exit(1));
-    if let Err(e) = run(file_path) {
-        eprintln!("error: {e}");
-        std::process::exit(1);
     }
 }

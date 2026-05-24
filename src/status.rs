@@ -119,8 +119,9 @@ mod tests {
 
     #[test]
     fn message_returns_none_for_exit_prompt() {
-        let mut s = StatusLine::default();
-        s.mode = StatusMode::ExitPrompt;
+        let s = StatusLine {
+            mode: StatusMode::ExitPrompt,
+        };
         assert_eq!(s.message(), None);
     }
 }

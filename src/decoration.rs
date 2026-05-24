@@ -999,7 +999,7 @@ mod tests {
         let text = "# Café résumé";
         // Should not panic
         let map = build_decoration_map(text, &make_theme(), true);
-        assert!(map.get(&0).is_some());
+        assert!(map.contains_key(&0));
     }
 
     #[test]

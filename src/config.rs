@@ -475,8 +475,10 @@ mod tests {
 
     #[test]
     fn override_takes_precedence() {
-        let mut overrides = ThemeOverrides::default();
-        overrides.bold_color = Some("#ff0000".into());
+        let overrides = ThemeOverrides {
+            bold_color: Some("#ff0000".into()),
+            ..Default::default()
+        };
         let mut warnings = Vec::new();
         let theme = Theme::from_config(
             &Palette::default(),
