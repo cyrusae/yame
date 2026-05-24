@@ -10,7 +10,7 @@ use crate::config::{Theme, blend_colors};
 // ---------------------------------------------------------------------------
 
 /// A styled span within a single logical line, using char indices (not byte indices).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct StyledSpan {
     /// Start char index within the line (inclusive).
     pub char_start: usize,

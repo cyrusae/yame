@@ -1,12 +1,14 @@
 use ratatui::{
     Frame,
+    buffer::Buffer,
     layout::Rect,
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
+    widgets::{Block, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Widget},
 };
 
 use crate::app::App;
+use crate::decoration::{DecorationMap, StyledSpan};
 use crate::status::StatusMode;
 
 // ---------------------------------------------------------------------------
@@ -37,6 +39,140 @@ pub fn format_thousands(n: usize) -> String {
         }
         result.push(b as char);
     }
+    result
+}
+
+// ---------------------------------------------------------------------------
+// Step 7.3 — Span boundary splitting
+// ---------------------------------------------------------------------------
+
+/// Split a raw line string into ratatui `Span`s at decoration span boundaries.
+///
+/// `spans` need not be sorted or non-overlapping; this function sorts by
+/// `char_start` and clips any later span that overlaps a prior one.
+/// All indices are char indices (not byte indices).
+pub fn split_into_spans(line: &str, spans: &[StyledSpan], default_style: Style) -> Vec<Span<'static>> {
+    let chars: Vec<(usize, char)> = line.char_indices().collect();
+    let char_count = chars.len();
+
+    // Fast path — no decoration spans
+    if spans.is_empty() {
+        return vec![Span::styled(line.to_owned(), default_style)];
+    }
+
+    // Sort by char_start (stable — preserves paint order within same position)
+    let mut sorted = spans.to_vec();
+    sorted.sort_by_key(|s| s.char_start);
+
+    let mut result: Vec<Span<'static>> = Vec::with_capacity(sorted.len() * 2 + 1);
+    let mut char_pos = 0usize; // current position in char terms
+
+    for span in &sorted {
+        // Clamp and clip for safety
+        let s_start = span.char_start.min(char_count);
+        let s_end = span.char_end.min(char_count);
+        // Clip start forward to handle overlapping spans
+        let s_start = s_start.max(char_pos);
+
+        if s_start >= s_end {
+            continue; // zero-width or fully overlapped
+        }
+
+        // Unstyled gap before this span
+        if char_pos < s_start {
+            let byte_start = chars[char_pos].0;
+            let byte_end = chars[s_start].0;
+            result.push(Span::styled(line[byte_start..byte_end].to_owned(), default_style));
+        }
+
+        // Styled span content
+        let byte_start = chars[s_start].0;
+        let byte_end = if s_end < char_count { chars[s_end].0 } else { line.len() };
+        result.push(Span::styled(line[byte_start..byte_end].to_owned(), span.style));
+
+        char_pos = s_end;
+    }
+
+    // Trailing unstyled tail
+    if char_pos < char_count {
+        let byte_start = chars[char_pos].0;
+        result.push(Span::styled(line[byte_start..].to_owned(), default_style));
+    }
+
+    // Always return at least one span (handles empty lines)
+    if result.is_empty() {
+        result.push(Span::styled(String::new(), default_style));
+    }
+
+    result
+}
+
+// ---------------------------------------------------------------------------
+// Step 7.5 — Soft-wrap
+// ---------------------------------------------------------------------------
+
+/// Soft-wrap a string into visual rows of at most `width` chars each.
+///
+/// Breaks at the last space before `width`; falls back to a hard break at
+/// exactly `width` chars when no space exists. Returns byte-slices of `s`
+/// so no allocation is needed.
+///
+/// Width is measured in Unicode scalar values (chars), not display columns.
+/// Wide characters (e.g. CJK) are a v1.5 concern; use `unicode-width` then.
+pub fn wrap_line(s: &str, width: usize) -> Vec<&str> {
+    if s.is_empty() || width == 0 {
+        return vec![s];
+    }
+
+    let char_indices: Vec<(usize, char)> = s.char_indices().collect();
+    let total_chars = char_indices.len();
+
+    // Fits on a single row without wrapping
+    if total_chars <= width {
+        return vec![s];
+    }
+
+    let mut result: Vec<&str> = Vec::new();
+    let mut char_start = 0usize;
+
+    loop {
+        let remaining = total_chars - char_start;
+        if remaining == 0 {
+            break;
+        }
+
+        if remaining <= width {
+            let byte_start = char_indices[char_start].0;
+            result.push(&s[byte_start..]);
+            break;
+        }
+
+        let chunk_end = char_start + width; // exclusive upper bound
+
+        // Find the last space in [char_start .. chunk_end)
+        let last_space_rel = char_indices[char_start..chunk_end]
+            .iter()
+            .rposition(|&(_, c)| c == ' ');
+
+        let (break_char, next_char) = match last_space_rel {
+            Some(rel) => {
+                let abs = char_start + rel;
+                (abs, abs + 1) // break before space, skip the space itself
+            }
+            None => (chunk_end, chunk_end), // hard break — no space found
+        };
+
+        let byte_start = char_indices[char_start].0;
+        let byte_end = char_indices[break_char].0;
+        result.push(&s[byte_start..byte_end]);
+
+        char_start = next_char;
+    }
+
+    if result.is_empty() {
+        result.push(s);
+    }
+
     result
 }
 
@@ -224,5 +360,129 @@ mod tests {
     #[test]
     fn format_thousands_exactly_1000() {
         assert_eq!(format_thousands(1000), "1,000");
+    }
+
+    // --- split_into_spans ---
+
+    fn bold_style() -> Style {
+        Style::default().add_modifier(Modifier::BOLD)
+    }
+
+    #[test]
+    fn span_split_no_spans_returns_whole_line() {
+        let result = split_into_spans("hello world", &[], Style::default());
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].content, "hello world");
+    }
+
+    #[test]
+    fn span_split_mid_span_correct_boundaries() {
+        let span = StyledSpan {
+            char_start: 2,
+            char_end: 5,
+            style: bold_style(),
+            ..Default::default()
+        };
+        let result = split_into_spans("0123456789", &[span], Style::default());
+        assert_eq!(result[0].content, "01");    // unstyled prefix
+        assert_eq!(result[1].content, "234");   // styled span
+        assert_eq!(result[2].content, "56789"); // unstyled suffix
+    }
+
+    #[test]
+    fn span_split_multibyte_safe() {
+        // "café" — chars: c(0) a(1) f(2) é(3); 'é' is 2 bytes
+        // span covers char index 1 ("a")
+        let span = StyledSpan {
+            char_start: 1,
+            char_end: 2,
+            ..Default::default()
+        };
+        let result = split_into_spans("café", &[span], Style::default());
+        assert_eq!(result[0].content, "c");
+        assert_eq!(result[1].content, "a");
+    }
+
+    #[test]
+    fn span_split_full_line_span() {
+        let span = StyledSpan {
+            char_start: 0,
+            char_end: 5,
+            style: bold_style(),
+            ..Default::default()
+        };
+        let result = split_into_spans("hello", &[span], Style::default());
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].content, "hello");
+    }
+
+    #[test]
+    fn span_split_empty_line_returns_one_span() {
+        let result = split_into_spans("", &[], Style::default());
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].content, "");
+    }
+
+    #[test]
+    fn span_split_overlapping_clips_later_span() {
+        // Two overlapping spans: first covers 0..5, second covers 3..8
+        // Second should be clipped to start at 5
+        let s1 = StyledSpan { char_start: 0, char_end: 5, style: bold_style(), ..Default::default() };
+        let s2 = StyledSpan { char_start: 3, char_end: 8, ..Default::default() };
+        let result = split_into_spans("0123456789", &[s1, s2], Style::default());
+        // s1: 0..5 = "01234"
+        // s2 clipped: 5..8 = "567"
+        // trailing: 8..10 = "89"
+        assert_eq!(result[0].content, "01234");
+        assert_eq!(result[1].content, "567");
+        assert_eq!(result[2].content, "89");
+    }
+
+    // --- wrap_line ---
+
+    #[test]
+    fn wrap_short_line_unchanged() {
+        assert_eq!(wrap_line("hello", 40), vec!["hello"]);
+    }
+
+    #[test]
+    fn wrap_breaks_at_word_boundary() {
+        let result = wrap_line("one two three four five", 12);
+        assert!(result[0].len() <= 12);
+        assert!(result.iter().all(|s| s.len() <= 12));
+    }
+
+    #[test]
+    fn wrap_hard_breaks_unbreakable_word() {
+        let long = "abcdefghijklmnop";
+        let result = wrap_line(long, 8);
+        assert_eq!(result[0], "abcdefgh");
+        assert_eq!(result[1], "ijklmnop");
+    }
+
+    #[test]
+    fn wrap_multibyte_respects_char_count() {
+        // 4 kanji chars, width=4 — fits in one visual row (char-count width)
+        let result = wrap_line("日本語テ", 4);
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn wrap_empty_string() {
+        let result = wrap_line("", 40);
+        assert_eq!(result, vec![""]);
+    }
+
+    #[test]
+    fn wrap_exact_width_no_break() {
+        let result = wrap_line("abcde", 5);
+        assert_eq!(result, vec!["abcde"]);
+    }
+
+    #[test]
+    fn wrap_single_word_over_width_hard_breaks() {
+        let result = wrap_line("abcdef", 4);
+        assert_eq!(result[0], "abcd");
+        assert_eq!(result[1], "ef");
     }
 }
