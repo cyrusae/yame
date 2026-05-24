@@ -3,15 +3,16 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers,
-            MouseEventKind},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseEventKind,
+    },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use tui_textarea::CursorMove;
 use ratatui::{
     Terminal, backend::CrosstermBackend, layout::Rect, style::Style, widgets::Paragraph,
 };
+use tui_textarea::CursorMove;
 
 use yame::app::App;
 use yame::config::{LayoutConfig, Theme, load_config, supports_italic};
@@ -213,8 +214,8 @@ fn event_loop<B: ratatui::backend::Backend>(
                 .enumerate()
                 .rev()
                 .find(|(_, wrap)| {
-                    let byte_off = (wrap.as_ptr() as usize)
-                        .wrapping_sub(cursor_line_str.as_ptr() as usize);
+                    let byte_off =
+                        (wrap.as_ptr() as usize).wrapping_sub(cursor_line_str.as_ptr() as usize);
                     let char_start = cursor_line_str[..byte_off].chars().count();
                     cursor_col >= char_start
                 })
@@ -231,11 +232,9 @@ fn event_loop<B: ratatui::backend::Backend>(
                 let mut remaining = headroom;
                 let mut new_top = cursor_row;
                 while new_top > 0 {
-                    let prev_wraps = renderer::wrap_line(
-                        lines.get(new_top - 1).map_or("", |s| s.as_str()),
-                        cw,
-                    )
-                    .len();
+                    let prev_wraps =
+                        renderer::wrap_line(lines.get(new_top - 1).map_or("", |s| s.as_str()), cw)
+                            .len();
                     if prev_wraps > remaining {
                         break;
                     }
@@ -349,12 +348,9 @@ fn event_loop<B: ratatui::backend::Backend>(
                         // Click / drag: translate screen coords → logical doc coords
                         // so tui-textarea places the cursor on the correct line.
                         _ => {
-                            mouse.column =
-                                mouse.column.saturating_sub(last_editor_area.x);
-                            let rel_row =
-                                mouse.row.saturating_sub(last_editor_area.y) as usize;
-                            mouse.row =
-                                rel_row.saturating_add(app.scroll_top) as u16;
+                            mouse.column = mouse.column.saturating_sub(last_editor_area.x);
+                            let rel_row = mouse.row.saturating_sub(last_editor_area.y) as usize;
+                            mouse.row = rel_row.saturating_add(app.scroll_top) as u16;
                             app.textarea.input(Event::Mouse(mouse));
                         }
                     }

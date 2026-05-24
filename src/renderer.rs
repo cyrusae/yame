@@ -500,9 +500,9 @@ fn build_normal_status_bar(app: &App) -> Line<'static> {
     // Clean: light-coloured chip (text bg, dark fg).
     // Dirty: accent-coloured chip (accent bg, text fg) — colour alone signals the state.
     let (pill_bg, pill_fg) = if app.is_dirty {
-        (theme.accent, theme.bg)  // accent chip, dark text reads on purple
+        (theme.accent, theme.bg) // accent chip, dark text reads on purple
     } else {
-        (theme.text, theme.bg)    // text-colour chip, dark text reads on lavender
+        (theme.text, theme.bg) // text-colour chip, dark text reads on lavender
     };
     let dirty_marker = if app.is_dirty { " [*]" } else { "" };
     let path_str = shorten_path(&app.file_path, 3);
