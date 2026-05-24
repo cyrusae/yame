@@ -59,6 +59,17 @@ Declare all modules in `main.rs` with `mod foo;`. Each file can be empty `// stu
 
 **Acceptance:** `cargo build` succeeds. No logic yet.
 
+### Step 0.4 — CI pipeline
+
+Create `.github/workflows/ci.yml` (already written at project root). It runs two jobs on every push and PR:
+
+- **test**: `cargo test --all`
+- **lint**: `cargo fmt --check` + `cargo clippy -- -D warnings`
+
+Push the scaffold commit and confirm both jobs go green on GitHub Actions before writing any further code. A green baseline now means any future red is a real regression, not noise.
+
+**Acceptance:** Both CI jobs pass on the empty scaffold. The badge is green.
+
 ---
 
 ## Phase 1 — Terminal Lifecycle
@@ -125,30 +136,57 @@ Separate the raw TOML-deserialized `Config` from the computed `Theme` (resolved 
 
 ### Step 2.2 — `blend()` utility
 
-Implement exactly as specified in the design doc. Place in `config.rs`. Unit test it:
+**Write tests first.** Add a `#[cfg(test)]` block to `config.rs` with failing tests before writing the function body:
 
-- `blend((255,0,0), (0,0,0), 0.5)` → `(127, 0, 0)`
-- `blend(fg, bg, 0.0)` → `bg`
-- `blend(fg, bg, 1.0)` → `fg`
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test] fn blend_midpoint() { assert_eq!(blend((255,0,0),(0,0,0),0.5), (127,0,0)); }
+    #[test] fn blend_zero_is_bg() { assert_eq!(blend((255,0,0),(10,20,30),0.0), (10,20,30)); }
+    #[test] fn blend_one_is_fg() { assert_eq!(blend((255,0,0),(10,20,30),1.0), (255,0,0)); }
+}
+```
 
-**Acceptance:** Unit tests pass.
+Run `cargo test` — all three should fail with "unresolved function". Implement `blend()` exactly as specified in the design doc until they pass.
+
+**Acceptance:** All three tests pass. `cargo clippy` is clean.
 
 ### Step 2.3 — Color parsing
 
-Parse `#rrggbb` strings to `(u8, u8, u8)`. Return a `Result` with a clear error message including the field name. Convert the tuple to `ratatui::style::Color::Rgb(r, g, b)`.
+**Write tests first.**
 
-No external color-parsing crate needed — it is 6 hex digits.
+```rust
+#[test] fn parse_valid_color() { assert_eq!(parse_hex_color("#cba6f7"), Ok((203,166,247))); }
+#[test] fn parse_missing_hash() { assert!(parse_hex_color("cba6f7").is_err()); }
+#[test] fn parse_too_short() { assert!(parse_hex_color("#cba6f").is_err()); }
+#[test] fn parse_non_hex() { assert!(parse_hex_color("#zzzzzz").is_err()); }
+```
+
+Run `cargo test` — all four fail. Implement `parse_hex_color(s: &str) -> Result<(u8,u8,u8), String>`. No external color-parsing crate needed — it is 6 hex digits. Convert the tuple to `ratatui::style::Color::Rgb(r, g, b)` at the call site.
 
 ### Step 2.4 — Derived token computation
 
-Implement `Theme::from_palette(palette: &Palette, overrides: &ThemeOverrides, headings: &HeadingColors) -> Theme`. For each derived token:
+**Write tests first.** Using the Catppuccin Mocha default palette (hardcoded in the test), assert that a selection of derived tokens compute to their expected values:
 
-1. Check if an override exists in `ThemeOverrides`; if so, parse and use it
-2. Otherwise compute from the blend formulas in the design doc
+```rust
+#[test]
+fn derived_heading_bg() {
+    let theme = Theme::from_palette(&Palette::default(), &ThemeOverrides::default(), &HeadingColors::default());
+    // heading_bg = blend(accent #cba6f7, bg #1e1e2e, 0.15)
+    // Expected: blend((203,166,247), (30,30,46), 0.15) ≈ (55,49,72) as Rgb
+    assert!(matches!(theme.heading_bg, Color::Rgb(r, g, b) if r == 55 && g == 49 && b == 72));
+}
+#[test]
+fn override_takes_precedence() {
+    let mut overrides = ThemeOverrides::default();
+    overrides.bold_color = Some("#ff0000".into());
+    let theme = Theme::from_palette(&Palette::default(), &overrides, &HeadingColors::default());
+    assert_eq!(theme.bold_color, Color::Rgb(255, 0, 0));
+}
+```
 
-Add `selection_bg` and `selection_fg` to `Theme` here: derive as `blend(accent, bg, 0.6)` for `selection_bg` and `bg` for `selection_fg`.
-
-This function is called once at startup and produces the `Theme` used everywhere else.
+Run `cargo test` — fail. Implement `Theme::from_palette`. For each derived token: check override first, fall back to blend formula. Add `selection_bg` and `selection_fg`: derive as `blend(accent, bg, 0.6)` and `bg` respectively.
 
 ### Step 2.5 — Config file loading
 
@@ -172,9 +210,20 @@ Load sequence:
 2. If file exists but TOML parse fails → `eprintln!` warning, return `Config::default()`
 3. If individual color fields are invalid → skip them (use field default), queue a `StatusMessage` warning for display
 
+**Write tests first** for the XDG path logic (no filesystem needed — just env var manipulation):
+
+```rust
+#[test]
+fn xdg_config_home_used_when_set() {
+    std::env::set_var("XDG_CONFIG_HOME", "/tmp/custom");
+    assert_eq!(config_path(), PathBuf::from("/tmp/custom/yame/config.toml"));
+    std::env::remove_var("XDG_CONFIG_HOME");
+}
+```
+
 **Warning:** Config errors must not crash the editor. The user must be able to continue editing.
 
-**Acceptance:** `cargo test` covers blend, color parsing, and the XDG path fallback.
+**Acceptance:** All config tests pass. Manually verify: place an invalid TOML file at the config path, run yame, confirm it opens with defaults and no crash.
 
 ### Step 2.6 — Italic support detection
 
@@ -296,7 +345,33 @@ pub fn compute_layout(area: Rect, min_cols: u16) -> EditorLayout {
 
 The scrollbar occupies the 1 column immediately to the right of the editing column (within the right margin).
 
-**Acceptance:** Unit test `compute_layout` for: narrow terminal (width < min_cols → zero margins), wide terminal, and exact min_cols boundary.
+**Write tests first.**
+
+```rust
+#[test]
+fn layout_wide_terminal_has_margins() {
+    let area = Rect::new(0, 0, 200, 50);
+    let layout = compute_layout(area, 60);
+    assert!(layout.column.x > 0, "expected left margin");
+    assert_eq!(layout.column.width, 100); // 50% of 200
+}
+#[test]
+fn layout_narrow_terminal_fills_width() {
+    let area = Rect::new(0, 0, 40, 50);
+    let layout = compute_layout(area, 60); // min_cols > width
+    assert_eq!(layout.column.x, 0);
+    assert_eq!(layout.column.width, 40);
+}
+#[test]
+fn layout_always_has_status_and_info_rows() {
+    let area = Rect::new(0, 0, 80, 24);
+    let layout = compute_layout(area, 40);
+    assert_eq!(layout.status_bar.y, 23);
+    assert_eq!(layout.info_line.y, 22);
+}
+```
+
+Run `cargo test` — fail. Implement `compute_layout`. Acceptance: all tests pass.
 
 ### Step 4.2 — Scroll offset tracking
 
@@ -322,6 +397,28 @@ if cursor_row >= app.scroll_top + visible_rows {
 **Goal:** Status bar and info line render with real data. These use simple Ratatui widgets and can be built before the main editor renderer.
 
 ### Step 5.1 — `StatusLine` state in `status.rs`
+
+**Write tests first** for the timed-message and dismiss logic — these are pure state machines with no terminal dependency:
+
+```rust
+#[test]
+fn timed_message_expires() {
+    let mut s = StatusLine::default();
+    s.set_timed("Saved.", Duration::from_millis(1));
+    std::thread::sleep(Duration::from_millis(5));
+    s.tick();
+    assert!(matches!(s.mode, StatusMode::Normal));
+}
+#[test]
+fn dismissible_clears_on_dismiss() {
+    let mut s = StatusLine::default();
+    s.set_dismissible("warning");
+    s.dismiss();
+    assert!(matches!(s.mode, StatusMode::Normal));
+}
+```
+
+Run `cargo test` — fail. Implement the struct and methods until they pass.
 
 ```rust
 pub enum StatusMode {
@@ -383,6 +480,16 @@ Use `ratatui::widgets::Scrollbar` in vertical orientation in `EditorLayout::scro
 
 **Goal:** `build_decoration_map()` is implemented and produces correct styled spans for all v1 Markdown elements.
 
+**Testing discipline for this entire phase:** `build_decoration_map` is a pure function (text in, map out) with no terminal or UI dependency. Write a failing test before implementing each element sub-type in Step 6.4. Use `tests/fixtures/sample.md` as the reference input — it contains every element type. The pattern for each:
+
+```rust
+// 1. Write the test (it fails — the element isn't handled yet)
+// 2. cargo test → red
+// 3. Implement the element handler
+// 4. cargo test → green
+// 5. Move to next element
+```
+
 ### Step 6.1 — Types in `decoration.rs`
 
 ```rust
@@ -413,6 +520,30 @@ fn byte_to_line_char(line_starts: &[usize], text: &str, byte: usize) -> (usize, 
 
 Precompute `line_starts: Vec<usize>` by scanning `text` for `\n` byte positions (one pass, O(n)).
 
+**Write tests first:**
+
+```rust
+#[test]
+fn byte_mapping_single_line() {
+    let text = "hello";
+    let starts = line_start_bytes(text);
+    assert_eq!(byte_to_line_char(&starts, text, 3), (0, 3));
+}
+#[test]
+fn byte_mapping_second_line() {
+    let text = "hi\nworld";
+    let starts = line_start_bytes(text);
+    assert_eq!(byte_to_line_char(&starts, text, 4), (1, 1)); // 'o' in "world"
+}
+#[test]
+fn byte_mapping_multibyte() {
+    let text = "café\nok";
+    let starts = line_start_bytes(text);
+    // 'é' is 2 bytes; byte offset 5 = start of second line
+    assert_eq!(byte_to_line_char(&starts, text, 5), (1, 0));
+}
+```
+
 ### Step 6.3 — `build_decoration_map` signature
 
 ```rust
@@ -438,7 +569,21 @@ let parser = Parser::new_with_broken_link_callback(
 
 ### Step 6.4 — Implement each element
 
-Work through elements in this order (simpler to more complex):
+Work through elements in this order (simpler to more complex). Before implementing each one, write a test that asserts the correct span is present in the map. Use the fixture file or an inline string. Example pattern:
+
+```rust
+fn make_theme() -> Theme { Theme::from_palette(&Palette::default(), &Default::default(), &Default::default()) }
+
+#[test]
+fn heading_h1_has_full_line_bg() {
+    let text = "# Hello World";
+    let map = build_decoration_map(text, &make_theme(), true, 99);
+    let spans = map.get(&0).expect("line 0 should have spans");
+    assert!(spans.iter().any(|s| s.full_line_bg.is_some()));
+}
+```
+
+Write the equivalent for each element below before implementing it.
 
 **a. Headings (H1–H6)**
 
@@ -502,6 +647,19 @@ Work through elements in this order (simpler to more complex):
 
 ### Step 6.5 — Cursor line exclusion
 
+**Write test first:**
+
+```rust
+#[test]
+fn cursor_line_has_no_decoration() {
+    let text = "# Heading\nnormal line";
+    let map = build_decoration_map(text, &make_theme(), true, 0); // cursor on heading line
+    assert!(map.get(&0).map_or(true, |v| v.is_empty()),
+        "cursor line should have no decoration");
+    assert!(map.get(&1).is_some()); // non-cursor line unaffected (or absent if no decoration)
+}
+```
+
 After building the full map, remove the cursor line's entries:
 
 ```rust
@@ -511,6 +669,18 @@ map.remove(&cursor_line);
 This ensures raw Markdown syntax is visible while editing that line.
 
 ### Step 6.6 — Word count
+
+**Write test first:**
+
+```rust
+#[test]
+fn word_count_excludes_markdown_syntax() {
+    // "**hello**" is 1 word, not 3 (** should not be counted)
+    assert_eq!(count_words("**hello**"), 1);
+    assert_eq!(count_words("# Title\n\nTwo words."), 3);
+    assert_eq!(count_words(""), 0);
+}
+```
 
 Run a second pass (reuse the same debounce window — do not add a separate timer):
 
@@ -525,7 +695,7 @@ pub fn count_words(text: &str) -> usize {
 }
 ```
 
-**Acceptance:** Unit tests assert correct span presence for headings, bold, italic, inline code, and that the cursor line has no entries.
+**Acceptance:** All per-element tests written during Step 6.4 pass. Every element type in `tests/fixtures/sample.md` is covered by at least one test assertion. `cargo test` is green.
 
 ---
 
@@ -575,6 +745,33 @@ chars [span1.char_end..span2.char_start] → default style
 ...
 ```
 
+**Write tests first:**
+
+```rust
+#[test]
+fn span_split_no_spans_returns_whole_line() {
+    let result = split_into_spans("hello world", &[], Style::default());
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0].content, "hello world");
+}
+#[test]
+fn span_split_mid_span_correct_boundaries() {
+    let span = StyledSpan { char_start: 2, char_end: 5, style: bold_style(), ..Default::default() };
+    let result = split_into_spans("0123456789", &[span], Style::default());
+    assert_eq!(result[0].content, "01");   // unstyled prefix
+    assert_eq!(result[1].content, "234");  // styled span
+    assert_eq!(result[2].content, "56789"); // unstyled suffix
+}
+#[test]
+fn span_split_multibyte_safe() {
+    // 'é' is 2 bytes; char index 1 should split correctly
+    let span = StyledSpan { char_start: 1, char_end: 2, ..Default::default() };
+    let result = split_into_spans("café", &[span], Style::default());
+    assert_eq!(result[0].content, "c");
+    assert_eq!(result[1].content, "a");
+}
+```
+
 Use `str::char_indices()` to convert char ranges to byte slices for safe `&str` slicing. Spans must not overlap; if they do (shouldn't in v1), clip the later span's start to the prior span's end rather than panicking.
 
 ### Step 7.4 — Selection overlay
@@ -584,6 +781,34 @@ Get selection from `textarea.selection_range()`. For each character in the selec
 Apply selection after all other styling, as a final pass over the affected rows in `buf`.
 
 ### Step 7.5 — Soft-wrap
+
+**Write tests first:**
+
+```rust
+#[test]
+fn wrap_short_line_unchanged() {
+    assert_eq!(wrap_line("hello", 40), vec!["hello"]);
+}
+#[test]
+fn wrap_breaks_at_word_boundary() {
+    let result = wrap_line("one two three four five", 12);
+    assert!(result[0].len() <= 12);
+    assert!(result.iter().all(|s| s.len() <= 12));
+}
+#[test]
+fn wrap_hard_breaks_unbreakable_word() {
+    let long = "abcdefghijklmnop";
+    let result = wrap_line(long, 8);
+    assert_eq!(result[0], "abcdefgh");
+    assert_eq!(result[1], "ijklmnop");
+}
+#[test]
+fn wrap_multibyte_respects_char_width() {
+    // each kanji is 1 char; 4 kanji should fit in width=4
+    let result = wrap_line("日本語テ", 4);
+    assert_eq!(result.len(), 1);
+}
+```
 
 ```rust
 fn wrap_line<'a>(s: &'a str, width: usize) -> Vec<&'a str> {
@@ -780,32 +1005,48 @@ fn char_to_byte(s: &str, char_idx: usize) -> usize {
 
 ---
 
-## Phase 11 — Testing & Hardening
+## Phase 11 — Integration Test & Coverage Audit
 
-### Step 11.1 — Unit tests
+Unit tests for pure functions have been written alongside the code throughout Phases 2–7. CI has been running since Phase 0. This phase closes the gaps.
 
-| Module | Tests |
+### Step 11.1 — Audit unit test coverage
+
+Walk the test table below and confirm every row has at least one `#[cfg(test)]` test in the named module. Add any that were skipped during implementation:
+
+| Module | Must be covered |
 |---|---|
-| `config.rs` | `blend()`, color parse success/failure, XDG path, derived token computation |
-| `decoration.rs` | Each element type, cursor line exclusion, multi-byte chars in headings/bold |
-| `layout.rs` | `compute_layout` at: width < min_cols, width = min_cols, wide terminal |
-| `status.rs` | Timed message expiry, dismissible message clearing on keypress |
-| `renderer.rs` | Span boundary splitting, selection overlay, wrap_line |
+| `config.rs` | `blend()` boundary cases, color parse success/failure, XDG env var override, all derived tokens with default palette, override precedence |
+| `decoration.rs` | Every element in `sample.md`, cursor line exclusion, multi-byte chars in headings and bold, `count_words` excluding syntax |
+| `layout.rs` | Width < min_cols, width = min_cols, wide terminal, status/info row positions |
+| `status.rs` | Timed message expiry, dismissible clears on dismiss, normal mode after clear |
+| `renderer.rs` | `split_into_spans` boundaries and multi-byte safety, `wrap_line` word/hard/multibyte cases |
 
-### Step 11.2 — Integration smoke test
+### Step 11.2 — Integration test against the fixture file
 
-`tests/integration.rs`:
-1. Construct a Markdown string with headings, bold, links, fenced blocks
-2. Call `build_decoration_map` with a synthetic theme
-3. Assert heading lines have `full_line_bg` set
-4. Assert bold ranges include delimiter spans
-5. Assert `cursor_line` has no entries in the map
+`tests/integration.rs` — reads `tests/fixtures/sample.md` from disk and runs the full decoration pass:
 
-Runs in CI without a terminal.
+```rust
+#[test]
+fn fixture_decoration_roundtrip() {
+    let text = include_str!("fixtures/sample.md");
+    let theme = Theme::from_palette(&Palette::default(), &Default::default(), &Default::default());
+    let map = build_decoration_map(text, &theme, true, 9999); // cursor far away
 
-### Step 11.3 — CI setup
+    // Heading line 0 ("# Heading One") has full_line_bg
+    assert!(map[&0].iter().any(|s| s.full_line_bg.is_some()));
 
-`.github/workflows/ci.yml`: `cargo test`, `cargo clippy -- -D warnings`, `cargo fmt --check`. Use `ubuntu-latest`.
+    // A bold span exists somewhere in the file
+    assert!(map.values().flatten().any(|s| s.style.add_modifier.contains(Modifier::BOLD)));
+
+    // A blockquote span exists and has is_blockquote set
+    assert!(map.values().flatten().any(|s| s.is_blockquote));
+
+    // Word count is non-zero
+    assert!(count_words(text) > 100);
+}
+```
+
+**Acceptance:** `cargo test` is green. `cargo clippy -- -D warnings` produces no warnings. CI passes.
 
 ---
 
@@ -863,7 +1104,7 @@ Parse and store `[layout] allow_table_overflow = true`. Leave a `// TODO(v3): ta
 
 | Phase | Deliverable | Depends On |
 |---|---|---|
-| 0 | Compiling scaffold | — |
+| 0 | Compiling scaffold + CI pipeline green | — |
 | 1 | Terminal opens/closes cleanly | 0 |
 | 2 | Theme computes correctly | 0 |
 | 3 | Buffer is live-editable | 1, 2 |
@@ -874,7 +1115,7 @@ Parse and store `[layout] allow_table_overflow = true`. Leave a `// TODO(v3): ta
 | 8 | Debounce loop wired | 6, 7 |
 | 9 | Save/exit/clipboard work | 3, 5 |
 | 10 | Edge cases handled | 7, 9 |
-| 11 | Tests & CI | all |
+| 11 | Integration test + coverage audit | all |
 | 12 | README & publishing prep | all |
 
 ## Critical Files
