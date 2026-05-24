@@ -103,8 +103,11 @@ fn event_loop<B: ratatui::backend::Backend>(
         app.status.tick();
 
         terminal.draw(|f| {
-            let _layout = compute_layout(f.area(), min_cols);
-            // Renderer wired in Phase 7
+            let layout = compute_layout(f.area(), min_cols);
+            renderer::render_status_bar(f, layout.status_bar, app);
+            renderer::render_info_line(f, layout.info_line, app);
+            renderer::render_scrollbar(f, layout.scrollbar, app);
+            // Main editor column wired in Phase 7
         })?;
 
         if event::poll(POLL_TIMEOUT)? {
