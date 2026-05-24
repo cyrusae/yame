@@ -1,0 +1,22 @@
+[package]
+name = "yame"
+version = "0.1.0"
+edition = "2024"
+description = "A lightweight terminal Markdown editor"
+license = "MIT"
+keywords = ["markdown", "editor", "terminal", "tui"]
+categories = ["command-line-utilities", "text-editors"]
+exclude = [".chainlink", "_docs"]
+
+[dependencies]
+ratatui = "0.29"
+tui-textarea = { version = "0.7", features = ["crossterm"] }
+crossterm = "0.28"
+pulldown-cmark = { version = "0.12", default-features = false, features = ["html"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+arboard = "3"
+
+[profile.release]
+strip = true
+opt-level = 3
