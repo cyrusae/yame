@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Fixed
 
 ### Changed
+- fix: POSIX trailing newline, navigation dirty flag, mouse coordinate offset (#32)
 - Phase 11: Integration Test & Coverage Audit (#12)
 - Phase 10: Polish & Edge Cases (#11)
 - Phase 9: File Operations & Edit Behaviors (#10)

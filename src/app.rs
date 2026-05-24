@@ -36,11 +36,14 @@ impl App {
         config_warnings: Vec<String>,
     ) -> io::Result<Self> {
         let textarea = load_file(&file_path)?;
+        // Snapshot the initial content so recompute_dirty() has a baseline for both
+        // existing files (undo back to load state → clean) and new files (empty baseline).
+        let saved_content = Some(textarea.lines().to_vec());
         Ok(Self {
             textarea,
             file_path,
             is_dirty: false,
-            saved_content: None,
+            saved_content,
             theme,
             italic_support,
             last_keystroke: None,
@@ -52,10 +55,13 @@ impl App {
         })
     }
 
-    /// Mark that a keystroke occurred, triggering the debounce timer.
+    /// Record that a keystroke occurred: start the debounce timer and recompute
+    /// dirty state from the actual buffer content.  Comparing against the saved
+    /// baseline means pure navigation (arrows, Home/End…) never marks the file
+    /// dirty, while typed characters and paste do.
     pub fn mark_keystroke(&mut self) {
         self.last_keystroke = Some(Instant::now());
-        self.is_dirty = true;
+        self.recompute_dirty();
     }
 
     /// Recompute is_dirty by comparing current lines to saved_content.
@@ -99,13 +105,34 @@ mod tests {
     }
 
     #[test]
-    fn mark_keystroke_sets_dirty_and_timer() {
+    fn mark_keystroke_sets_timer() {
         let mut app = make_app();
-        assert!(!app.is_dirty, "app starts clean");
-        assert!(app.last_keystroke.is_none(), "no timer yet");
+        assert!(app.last_keystroke.is_none(), "no timer before keystroke");
         app.mark_keystroke();
-        assert!(app.is_dirty, "dirty after keystroke");
-        assert!(app.last_keystroke.is_some(), "timer started");
+        assert!(
+            app.last_keystroke.is_some(),
+            "timer started after keystroke"
+        );
+    }
+
+    #[test]
+    fn mark_keystroke_dirty_when_content_differs_from_saved() {
+        let mut app = make_app();
+        // saved = [""], current = ["hello"] → dirty
+        app.saved_content = Some(vec!["".to_string()]);
+        app.textarea = TextArea::new(vec!["hello".to_string()]);
+        app.mark_keystroke();
+        assert!(app.is_dirty, "modified content → dirty");
+    }
+
+    #[test]
+    fn mark_keystroke_clean_when_content_matches_saved() {
+        let mut app = make_app();
+        // saved and current both [""] → not dirty (navigation case)
+        let baseline: Vec<String> = app.textarea.lines().iter().map(|s| s.to_string()).collect();
+        app.saved_content = Some(baseline);
+        app.mark_keystroke();
+        assert!(!app.is_dirty, "navigation without content change → clean");
     }
 
     #[test]

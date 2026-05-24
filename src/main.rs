@@ -89,6 +89,10 @@ fn event_loop<B: ratatui::backend::Backend>(
 
     let min_cols = layout_config.min_cols.unwrap_or(DEFAULT_MIN_COLS);
 
+    // Persisted across frames so mouse events can translate screen-absolute
+    // coordinates to editor-relative (col, row) + scroll offset.
+    let mut last_editor_area = Rect::default();
+
     loop {
         // Fire decoration pass if debounce has elapsed.
         // TODO(v1.5): move to background thread — build_decoration_map and count_words
@@ -153,6 +157,9 @@ fn event_loop<B: ratatui::backend::Backend>(
             renderer::render_status_bar(f, layout.status_bar, app);
             renderer::render_info_line(f, layout.info_line, app);
             renderer::render_scrollbar(f, layout.scrollbar, app);
+
+            // Persist so the mouse handler can translate coordinates next frame.
+            last_editor_area = editor_area;
         })?;
 
         if event::poll(POLL_TIMEOUT)? {
@@ -209,7 +216,15 @@ fn event_loop<B: ratatui::backend::Backend>(
                         }
                     }
                 }
-                Event::Mouse(mouse) => {
+                Event::Mouse(mut mouse) => {
+                    // tui-textarea expects coordinates relative to its widget origin
+                    // and uses them as (logical_row, col).  Translate from
+                    // screen-absolute by subtracting the editor area's top-left and
+                    // adding the current scroll offset so clicks land on the correct
+                    // logical line regardless of centering margin or scroll position.
+                    mouse.column = mouse.column.saturating_sub(last_editor_area.x);
+                    let rel_row = mouse.row.saturating_sub(last_editor_area.y) as usize;
+                    mouse.row = rel_row.saturating_add(app.scroll_top) as u16;
                     app.textarea.input(Event::Mouse(mouse));
                 }
                 Event::Resize(_, _) => {
@@ -225,7 +240,10 @@ fn event_loop<B: ratatui::backend::Backend>(
 
 #[mutants::skip] // Calls std::fs::write — I/O side effect; status message logic tested in Phase 11.
 fn handle_save(app: &mut App) -> io::Result<()> {
-    let content = app.textarea.lines().join("\n");
+    // Always write a POSIX-compliant trailing newline.  Internally lines have no
+    // trailing newline; saved_content stores the same internal representation, so
+    // the dirty comparison is unaffected.
+    let content = app.textarea.lines().join("\n") + "\n";
     match std::fs::write(&app.file_path, &content) {
         Ok(()) => {
             app.saved_content = Some(app.textarea.lines().to_vec());
