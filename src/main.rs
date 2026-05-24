@@ -157,6 +157,15 @@ fn event_loop<B: ratatui::backend::Backend>(
                         (KeyModifiers::CONTROL, KeyCode::Char('v')) => {
                             clipboard::handle_paste(app);
                         }
+                        // Undo/redo: pass to tui-textarea then recompute dirty,
+                        // since undoing to the saved state should clear the flag.
+                        (KeyModifiers::CONTROL, KeyCode::Char('z'))
+                        | (KeyModifiers::CONTROL, KeyCode::Char('y')) => {
+                            app.status.dismiss();
+                            app.textarea.input(k);
+                            app.last_keystroke = Some(std::time::Instant::now());
+                            app.recompute_dirty();
+                        }
                         _ => {
                             // Handle exit prompt key intercepts
                             if matches!(app.status.mode, status::StatusMode::ExitPrompt) {

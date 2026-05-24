@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Fixed
 
 ### Changed
+- Phase 9: File Operations & Edit Behaviors (#10)
 - Phase 8: Debounce Loop (#9)
 - Phase 7: Custom Renderer (#8)
 - Wire MarkdownView into event loop draw call (#30)
