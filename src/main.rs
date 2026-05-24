@@ -305,7 +305,8 @@ fn event_loop<B: ratatui::backend::Backend>(
             match event::read()? {
                 Event::Key(k) => {
                     match (k.modifiers, k.code) {
-                        (KeyModifiers::CONTROL, KeyCode::Char('s')) => {
+                        (KeyModifiers::CONTROL, KeyCode::Char('s'))
+                        | (KeyModifiers::SUPER, KeyCode::Char('s')) => {
                             handle_save(app)?;
                         }
                         (KeyModifiers::CONTROL, KeyCode::Char('x'))
@@ -314,10 +315,12 @@ fn event_loop<B: ratatui::backend::Backend>(
                                 break;
                             }
                         }
-                        (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
+                        (KeyModifiers::CONTROL, KeyCode::Char('c'))
+                        | (KeyModifiers::SUPER, KeyCode::Char('c')) => {
                             yame::clipboard::handle_copy(app);
                         }
-                        (KeyModifiers::CONTROL, KeyCode::Char('v')) => {
+                        (KeyModifiers::CONTROL, KeyCode::Char('v'))
+                        | (KeyModifiers::SUPER, KeyCode::Char('v')) => {
                             yame::clipboard::handle_paste(app);
                         }
                         // Undo/redo: tui-textarea uses Ctrl+U/Ctrl+R internally,
