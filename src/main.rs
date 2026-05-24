@@ -18,7 +18,7 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::{Terminal, backend::CrosstermBackend};
+use ratatui::{Terminal, backend::CrosstermBackend, layout::Rect, style::Style, widgets::Paragraph};
 
 use app::App;
 use config::{Theme, load_config, supports_italic};
@@ -112,10 +112,32 @@ fn event_loop<B: ratatui::backend::Backend>(
         terminal.draw(|f| {
             let layout = compute_layout(f.area(), min_cols);
 
+            // Config warning banner — occupies the first row of the column when present.
+            // Dismissed on any keystroke (see event handling below).
+            let editor_area = if !app.config_warnings.is_empty() && layout.column.height > 0 {
+                let warn_area = Rect { height: 1, ..layout.column };
+                let msg = format!(
+                    " ⚠  {}  [any key to dismiss]",
+                    app.config_warnings[0]
+                );
+                f.render_widget(
+                    Paragraph::new(msg)
+                        .style(Style::default().fg(app.theme.warning).bg(app.theme.ui_bar)),
+                    warn_area,
+                );
+                Rect {
+                    y: layout.column.y + 1,
+                    height: layout.column.height.saturating_sub(1),
+                    ..layout.column
+                }
+            } else {
+                layout.column
+            };
+
             // Clamp scroll_top so the cursor stays visible after every keystroke,
-            // mouse click, or terminal resize — runs against the live layout each frame.
+            // mouse click, or terminal resize — runs against the live editor area each frame.
             let (cursor_row, _) = app.textarea.cursor();
-            let visible_rows = layout.column.height as usize;
+            let visible_rows = editor_area.height as usize;
             if cursor_row < app.scroll_top {
                 app.scroll_top = cursor_row;
             }
@@ -133,7 +155,7 @@ fn event_loop<B: ratatui::backend::Backend>(
                 italic_support: app.italic_support,
                 column_width: layout.column.width,
             };
-            f.render_widget(view, layout.column);
+            f.render_widget(view, editor_area);
             renderer::render_status_bar(f, layout.status_bar, app);
             renderer::render_info_line(f, layout.info_line, app);
             renderer::render_scrollbar(f, layout.scrollbar, app);
@@ -162,6 +184,7 @@ fn event_loop<B: ratatui::backend::Backend>(
                         (KeyModifiers::CONTROL, KeyCode::Char('z'))
                         | (KeyModifiers::CONTROL, KeyCode::Char('y')) => {
                             app.status.dismiss();
+                            app.config_warnings.clear();
                             app.textarea.input(k);
                             app.last_keystroke = Some(std::time::Instant::now());
                             app.recompute_dirty();
@@ -185,6 +208,7 @@ fn event_loop<B: ratatui::backend::Backend>(
                             } else {
                                 // Dismiss any dismissible message on any keypress
                                 app.status.dismiss();
+                                app.config_warnings.clear();
                                 app.textarea.input(k);
                                 app.mark_keystroke();
                             }
