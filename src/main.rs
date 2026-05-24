@@ -4,7 +4,8 @@ use std::time::Duration;
 
 use crossterm::{
     event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseEventKind,
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseButton,
+        MouseEventKind,
     },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
@@ -17,6 +18,7 @@ use tui_textarea::CursorMove;
 use yame::app::App;
 use yame::config::{LayoutConfig, Theme, load_config, supports_italic};
 use yame::decoration::{build_decoration_map, count_words};
+use yame::renderer;
 use yame::status::StatusMode;
 
 #[mutants::skip] // Installs a global panic hook — untestable side effect with no return value.
@@ -86,13 +88,47 @@ fn run(file_path: PathBuf) -> io::Result<()> {
 }
 
 #[mutants::skip] // Terminal event loop — requires a real terminal backend, not unit-testable.
+/// Map a screen-absolute (row, col) mouse position to a logical document
+/// (row, col) position, accounting for the editor gutter, scroll offset, and
+/// soft-wrapped lines.  Returns `None` if the click is outside the editor area.
+fn screen_to_doc(
+    screen_row: u16,
+    screen_col: u16,
+    editor_area: &Rect,
+    scroll_top: usize,
+    lines: &[String],
+) -> Option<(u16, u16)> {
+    if screen_row < editor_area.y || screen_col < editor_area.x {
+        return None;
+    }
+    let cw = (editor_area.width as usize)
+        .saturating_sub(2 * renderer::GUTTER as usize)
+        .max(1);
+    let click_vis_row = (screen_row - editor_area.y) as usize;
+    let click_col = screen_col.saturating_sub(editor_area.x + renderer::GUTTER) as usize;
+
+    let mut vis = 0usize;
+    for (li, line) in lines.iter().enumerate().skip(scroll_top) {
+        let wrapped = renderer::wrap_line(line, cw);
+        let seg_count = wrapped.len().max(1);
+        if vis + seg_count > click_vis_row {
+            let si = click_vis_row - vis;
+            let seg_start: usize = wrapped[..si].iter().map(|s| s.chars().count()).sum();
+            let doc_col = (seg_start + click_col).min(line.chars().count());
+            return Some((li as u16, doc_col as u16));
+        }
+        vis += seg_count;
+    }
+    // Click landed below all content — go to last line, column 0.
+    Some((lines.len().saturating_sub(1) as u16, 0))
+}
+
 fn event_loop<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
     layout_config: &LayoutConfig,
 ) -> io::Result<()> {
     use yame::layout::{DEFAULT_MIN_COLS, compute_layout};
-    use yame::renderer;
 
     const POLL_TIMEOUT: Duration = Duration::from_millis(16);
     const DEBOUNCE: Duration = Duration::from_millis(50);
@@ -117,6 +153,9 @@ fn event_loop<B: ratatui::backend::Backend>(
     // Persisted across frames so mouse events can translate screen-absolute
     // coordinates to editor-relative (col, row) + scroll offset.
     let mut last_editor_area = Rect::default();
+    // Set on the first Drag event after a Down so that start_selection() is
+    // called exactly once per drag gesture (subsequent Drag events just extend).
+    let mut drag_selecting = false;
 
     loop {
         // Fire decoration pass if debounce has elapsed.
@@ -317,7 +356,7 @@ fn event_loop<B: ratatui::backend::Backend>(
                         }
                     }
                 }
-                Event::Mouse(mut mouse) => {
+                Event::Mouse(mouse) => {
                     match mouse.kind {
                         // Scroll events are intercepted before tui-textarea to avoid
                         // two problems:
@@ -347,16 +386,48 @@ fn event_loop<B: ratatui::backend::Backend>(
                             // every tick.  The clamp corrects if this undershoots.
                             app.scroll_top = app.scroll_top.saturating_sub(SCROLL_LINES);
                         }
-                        // Click / drag: translate screen coords → logical doc coords
-                        // so tui-textarea places the cursor on the correct line.
-                        _ => {
-                            mouse.column = mouse
-                                .column
-                                .saturating_sub(last_editor_area.x + renderer::GUTTER);
-                            let rel_row = mouse.row.saturating_sub(last_editor_area.y) as usize;
-                            mouse.row = rel_row.saturating_add(app.scroll_top) as u16;
-                            app.textarea.input(Event::Mouse(mouse));
+                        // Click: reposition cursor. Drag: extend selection.
+                        //
+                        // tui-textarea's built-in mouse handling relies on knowing
+                        // the area it was rendered into (set via Widget::render). We
+                        // use a custom MarkdownView renderer so tui-textarea never
+                        // receives that area, making its internal mouse logic unreliable.
+                        // Instead we compute the document position ourselves and use
+                        // CursorMove::Jump, which correctly handles soft-wrap offsets
+                        // and our scroll_top.
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            drag_selecting = false;
+                            if let Some((doc_row, doc_col)) = screen_to_doc(
+                                mouse.row,
+                                mouse.column,
+                                &last_editor_area,
+                                app.scroll_top,
+                                app.textarea.lines(),
+                            ) {
+                                app.textarea.cancel_selection();
+                                app.textarea.move_cursor(CursorMove::Jump(doc_row, doc_col));
+                            }
                         }
+                        MouseEventKind::Drag(MouseButton::Left) => {
+                            if let Some((doc_row, doc_col)) = screen_to_doc(
+                                mouse.row,
+                                mouse.column,
+                                &last_editor_area,
+                                app.scroll_top,
+                                app.textarea.lines(),
+                            ) {
+                                if !drag_selecting {
+                                    // Anchor the selection at the Down position
+                                    // (cursor is already there from the Down handler).
+                                    app.textarea.start_selection();
+                                    drag_selecting = true;
+                                }
+                                // move_cursor preserves selection when
+                                // selection_start.is_some(), extending it to here.
+                                app.textarea.move_cursor(CursorMove::Jump(doc_row, doc_col));
+                            }
+                        }
+                        _ => {} // Up, Moved, etc. — nothing to do
                     }
                 }
                 Event::Resize(_, _) => {
