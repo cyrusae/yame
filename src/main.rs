@@ -1,3 +1,6 @@
+// Suppress dead_code during phased build-out; removed in Phase 11 when all modules are wired.
+#![allow(dead_code)]
+
 mod app;
 mod clipboard;
 mod config;
