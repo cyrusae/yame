@@ -106,3 +106,53 @@ std::process::exit(1);
 ```
 
 Maybe section of readme for "how to run `yame init` and then a separate file breaking down what the script actually is (for power users/suspicious minds and for people who want to replicate it for their own shell)?
+
+---
+
+## Review notes (pre-implementation)
+
+### What's working
+
+The tiered search strategy (MD-first → any file) is the right shape. `fzf --select-1 --exit-0` is correct — auto-selects on one match, silently exits on zero. `command yame` to bypass the wrapper is correct. The bones are solid; what follows is hardening, not rethinking.
+
+### Must-fix before shipping
+
+**1. No `fd`/`fzf` availability check**
+If either tool is missing the function silently falls through to creating a new file. Add a guard before the fuzzy tiers:
+```zsh
+if ! command -v fd &>/dev/null || ! command -v fzf &>/dev/null; then
+  command yame "$@"; return   # or warn and exit 1
+fi
+```
+
+**2. Hidden files won't be found**
+`fd` skips hidden and gitignored files by default, so `.gitignore`, `.env`, etc. can't be found in tier 2 — `yame giti` would fall through to silently creating a file named `giti`. The doc flags this as a known concern but doesn't resolve it. Options:
+- Add `--hidden` to tier 2 and tighten the `-E` exclusions (see below)
+- Or add a tier 2.5 explicit hidden-file pass
+
+**3. Fallback silently creates a new file**
+`yame readm` with no matches → creates a file literally named `readm`. Consider a prompt or at least a message before creating. Possible pattern:
+```zsh
+else
+  printf "yame: no file matching '%s' found. Open new file? [y/N] " "$1" >&2
+  read -r ans && [[ "$ans" =~ ^[Yy]$ ]] && command yame "$1"
+fi
+```
+
+**4. `-E "target/*"` glob syntax is wrong**
+`fd -E "target/*"` means "exclude files named target/*", not "exclude the target directory." The correct form is `-E "target"` — fd handles recursive exclusion from there. In practice this probably doesn't matter (fd respects `.gitignore` which already covers `target/`), but the intent is misleading.
+
+### Lower priority / design choices
+
+**`$SHELL` detects login shell, not running shell**
+If the user's login shell is bash but they're invoking this from zsh, `$SHELL` says bash and they get the wrong output. This is a known limitation of the `$SHELL`-based approach (zoxide has the same one). Mitigation: accept an explicit argument (`yame init zsh`, `yame init bash`) and use `$SHELL` only as a fallback.
+
+**Single function body works for both bash and zsh**
+The draft function is bash-compatible as written — `(( ))`, `[[ ]]`, `=~`, and `command` all work in both. You may not need separate bash/zsh output at all. `eval "$(yame init)"` works in both shells.
+
+### Docs structure recommendation
+
+- **README**: Short section — `eval "$(yame init)"` and add the output to your rc. Requires `fd` and `fzf`.
+- **`_docs/SHELL.md`** (new file): Full breakdown of what the script does, tier logic, how to replicate for Fish/Nu/etc.
+
+This matches the zoxide model (terse README, separate file for power users and suspicious minds).
