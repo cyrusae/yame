@@ -174,11 +174,15 @@ pub fn build_decoration_map(text: &str, theme: &Theme, italic_support: bool) -> 
                 // Blend heading color toward the heading background so the `#`
                 // delimiter reads as dimmer than the heading text without
                 // jarring contrast against the highlighted row.
-                let delim_style = Style::default().fg(blend_colors(
+                // Match the bold modifier so H1/H2 `#` weight stays consistent with the title.
+                let mut delim_style = Style::default().fg(blend_colors(
                     heading_color,
                     theme.heading_bg,
                     theme.delimiter_blend,
                 ));
+                if bold {
+                    delim_style = delim_style.add_modifier(Modifier::BOLD);
+                }
                 // Bottom border for H1–H3 (thin underline in heading color).
                 let border_bottom = matches!(
                     level,
