@@ -1,14 +1,3 @@
-// Suppress dead_code during phased build-out; removed in Phase 11 when all modules are wired.
-#![allow(dead_code)]
-
-mod app;
-mod clipboard;
-mod config;
-mod decoration;
-mod layout;
-mod renderer;
-mod status;
-
 use std::io;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -18,11 +7,14 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::{Terminal, backend::CrosstermBackend, layout::Rect, style::Style, widgets::Paragraph};
+use ratatui::{
+    Terminal, backend::CrosstermBackend, layout::Rect, style::Style, widgets::Paragraph,
+};
 
-use app::App;
-use config::{Theme, load_config, supports_italic};
-use decoration::{build_decoration_map, count_words};
+use yame::app::App;
+use yame::config::{LayoutConfig, Theme, load_config, supports_italic};
+use yame::decoration::{build_decoration_map, count_words};
+use yame::status::StatusMode;
 
 #[mutants::skip] // Installs a global panic hook — untestable side effect with no return value.
 fn setup_panic_hook() {
@@ -87,9 +79,10 @@ fn run(file_path: PathBuf) -> io::Result<()> {
 fn event_loop<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
-    layout_config: &config::LayoutConfig,
+    layout_config: &LayoutConfig,
 ) -> io::Result<()> {
-    use layout::{DEFAULT_MIN_COLS, compute_layout};
+    use yame::layout::{DEFAULT_MIN_COLS, compute_layout};
+    use yame::renderer;
 
     const POLL_TIMEOUT: Duration = Duration::from_millis(16);
     const DEBOUNCE: Duration = Duration::from_millis(50);
@@ -103,7 +96,8 @@ fn event_loop<B: ratatui::backend::Backend>(
         if app.last_keystroke.is_some_and(|t| t.elapsed() >= DEBOUNCE) {
             let text = app.textarea.lines().join("\n");
             let cursor_line = app.textarea.cursor().0;
-            app.decoration_map = build_decoration_map(&text, &app.theme, app.italic_support, cursor_line);
+            app.decoration_map =
+                build_decoration_map(&text, &app.theme, app.italic_support, cursor_line);
             app.word_count = count_words(&text);
             app.last_keystroke = None;
         }
@@ -115,11 +109,11 @@ fn event_loop<B: ratatui::backend::Backend>(
             // Config warning banner — occupies the first row of the column when present.
             // Dismissed on any keystroke (see event handling below).
             let editor_area = if !app.config_warnings.is_empty() && layout.column.height > 0 {
-                let warn_area = Rect { height: 1, ..layout.column };
-                let msg = format!(
-                    " ⚠  {}  [any key to dismiss]",
-                    app.config_warnings[0]
-                );
+                let warn_area = Rect {
+                    height: 1,
+                    ..layout.column
+                };
+                let msg = format!(" ⚠  {}  [any key to dismiss]", app.config_warnings[0]);
                 f.render_widget(
                     Paragraph::new(msg)
                         .style(Style::default().fg(app.theme.warning).bg(app.theme.ui_bar)),
@@ -174,10 +168,10 @@ fn event_loop<B: ratatui::backend::Backend>(
                             }
                         }
                         (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
-                            clipboard::handle_copy(app);
+                            yame::clipboard::handle_copy(app);
                         }
                         (KeyModifiers::CONTROL, KeyCode::Char('v')) => {
-                            clipboard::handle_paste(app);
+                            yame::clipboard::handle_paste(app);
                         }
                         // Undo/redo: pass to tui-textarea then recompute dirty,
                         // since undoing to the saved state should clear the flag.
@@ -191,7 +185,7 @@ fn event_loop<B: ratatui::backend::Backend>(
                         }
                         _ => {
                             // Handle exit prompt key intercepts
-                            if matches!(app.status.mode, status::StatusMode::ExitPrompt) {
+                            if matches!(app.status.mode, StatusMode::ExitPrompt) {
                                 match k.code {
                                     KeyCode::Char('y') | KeyCode::Char('Y') => {
                                         handle_save(app)?;
@@ -201,7 +195,7 @@ fn event_loop<B: ratatui::backend::Backend>(
                                         break;
                                     }
                                     KeyCode::Esc | KeyCode::Char('c') | KeyCode::Char('C') => {
-                                        app.status.mode = status::StatusMode::Normal;
+                                        app.status.mode = StatusMode::Normal;
                                     }
                                     _ => {}
                                 }
@@ -248,10 +242,64 @@ fn handle_save(app: &mut App) -> io::Result<()> {
 /// Returns true if the app should exit.
 fn handle_exit(app: &mut App) -> bool {
     if app.is_dirty {
-        app.status.mode = status::StatusMode::ExitPrompt;
+        app.status.mode = StatusMode::ExitPrompt;
         false
     } else {
         true
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use tui_textarea::TextArea;
+
+    use yame::config::Theme;
+    use yame::decoration::DecorationMap;
+    use yame::status::{StatusLine, StatusMode};
+
+    fn make_app() -> App {
+        App {
+            textarea: TextArea::default(),
+            file_path: PathBuf::from("test.md"),
+            is_dirty: false,
+            saved_content: None,
+            theme: Theme::default_theme(),
+            italic_support: false,
+            last_keystroke: None,
+            decoration_map: DecorationMap::default(),
+            word_count: 0,
+            status: StatusLine::default(),
+            config_warnings: vec![],
+            scroll_top: 0,
+        }
+    }
+
+    #[test]
+    fn handle_exit_clean_returns_true() {
+        let mut app = make_app();
+        app.is_dirty = false;
+        assert!(handle_exit(&mut app), "clean file should exit immediately");
+        assert!(
+            matches!(app.status.mode, StatusMode::Normal),
+            "status unchanged for clean exit"
+        );
+    }
+
+    #[test]
+    fn handle_exit_dirty_returns_false_and_prompts() {
+        let mut app = make_app();
+        app.is_dirty = true;
+        assert!(!handle_exit(&mut app), "dirty file must not exit");
+        assert!(
+            matches!(app.status.mode, StatusMode::ExitPrompt),
+            "dirty exit must show ExitPrompt"
+        );
     }
 }
 

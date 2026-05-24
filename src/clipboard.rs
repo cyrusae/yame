@@ -46,7 +46,11 @@ fn get_copy_text(app: &App) -> String {
                 }
                 let chars: Vec<char> = lines[row].chars().collect();
                 let start = if row == row_start { col_start } else { 0 };
-                let end = if row == row_end { col_end.min(chars.len()) } else { chars.len() };
+                let end = if row == row_end {
+                    col_end.min(chars.len())
+                } else {
+                    chars.len()
+                };
                 result.extend(&chars[start..end]);
                 if row < row_end {
                     result.push('\n');

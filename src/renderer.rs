@@ -51,7 +51,11 @@ pub fn format_thousands(n: usize) -> String {
 /// `spans` need not be sorted or non-overlapping; this function sorts by
 /// `char_start` and clips any later span that overlaps a prior one.
 /// All indices are char indices (not byte indices).
-pub fn split_into_spans(line: &str, spans: &[StyledSpan], default_style: Style) -> Vec<Span<'static>> {
+pub fn split_into_spans(
+    line: &str,
+    spans: &[StyledSpan],
+    default_style: Style,
+) -> Vec<Span<'static>> {
     let chars: Vec<(usize, char)> = line.char_indices().collect();
     let char_count = chars.len();
 
@@ -82,13 +86,23 @@ pub fn split_into_spans(line: &str, spans: &[StyledSpan], default_style: Style) 
         if char_pos < s_start {
             let byte_start = chars[char_pos].0;
             let byte_end = chars[s_start].0;
-            result.push(Span::styled(line[byte_start..byte_end].to_owned(), default_style));
+            result.push(Span::styled(
+                line[byte_start..byte_end].to_owned(),
+                default_style,
+            ));
         }
 
         // Styled span content
         let byte_start = chars[s_start].0;
-        let byte_end = if s_end < char_count { chars[s_end].0 } else { line.len() };
-        result.push(Span::styled(line[byte_start..byte_end].to_owned(), span.style));
+        let byte_end = if s_end < char_count {
+            chars[s_end].0
+        } else {
+            line.len()
+        };
+        result.push(Span::styled(
+            line[byte_start..byte_end].to_owned(),
+            span.style,
+        ));
 
         char_pos = s_end;
     }
@@ -232,8 +246,7 @@ impl Widget for MarkdownView<'_> {
                 }
 
                 // --- Compute this visual row's char range within the logical line ---
-                let byte_off = (row_str.as_ptr() as usize)
-                    .wrapping_sub(line.as_ptr() as usize);
+                let byte_off = (row_str.as_ptr() as usize).wrapping_sub(line.as_ptr() as usize);
                 let char_start = line[..byte_off].chars().count();
                 let char_len = row_str.chars().count();
                 let char_end = char_start + char_len;
@@ -241,15 +254,13 @@ impl Widget for MarkdownView<'_> {
                 // --- Cursor tracking ---
                 if log_row == cursor_log_row {
                     let is_last_wrap = wrap_idx + 1 == wrapped.len();
-                    let in_range = cursor_log_col >= char_start
-                        && (cursor_log_col < char_end || is_last_wrap);
+                    let in_range =
+                        cursor_log_col >= char_start && (cursor_log_col < char_end || is_last_wrap);
                     if in_range {
                         let col_in_row = (cursor_log_col.saturating_sub(char_start))
                             .min(width.saturating_sub(1));
-                        cursor_buf_pos = Some((
-                            area.x + col_in_row as u16,
-                            area.y + visual_row as u16,
-                        ));
+                        cursor_buf_pos =
+                            Some((area.x + col_in_row as u16, area.y + visual_row as u16));
                     }
                 }
 
@@ -270,10 +281,7 @@ impl Widget for MarkdownView<'_> {
                     .unwrap_or_default();
 
                 // --- Full-line background (headings, fenced blocks) ---
-                let line_bg = row_spans
-                    .iter()
-                    .find_map(|s| s.full_line_bg)
-                    .unwrap_or(bg);
+                let line_bg = row_spans.iter().find_map(|s| s.full_line_bg).unwrap_or(bg);
 
                 let y = area.y + visual_row as u16;
 
@@ -309,7 +317,9 @@ impl Widget for MarkdownView<'_> {
 
         // 4. Cursor cell — always on top.
         if let Some((cx, cy)) = cursor_buf_pos {
-            buf[(cx, cy)].set_fg(self.theme.bg).set_bg(self.theme.accent);
+            buf[(cx, cy)]
+                .set_fg(self.theme.bg)
+                .set_bg(self.theme.accent);
         }
     }
 }
@@ -348,8 +358,7 @@ fn apply_selection_overlay(
                 break;
             }
 
-            let byte_off = (row_str.as_ptr() as usize)
-                .wrapping_sub(line.as_ptr() as usize);
+            let byte_off = (row_str.as_ptr() as usize).wrapping_sub(line.as_ptr() as usize);
             let char_start = line[..byte_off].chars().count();
             let char_len = row_str.chars().count();
             let char_end = char_start + char_len;
@@ -523,7 +532,29 @@ pub fn render_scrollbar(f: &mut Frame, area: Rect, app: &App) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
+    use tui_textarea::TextArea;
+
+    use crate::config::Theme;
+    use crate::decoration::DecorationMap;
+    use crate::status::StatusLine;
+
+    fn make_app() -> App {
+        App {
+            textarea: TextArea::default(),
+            file_path: PathBuf::from("notes/foo.md"),
+            is_dirty: false,
+            saved_content: None,
+            theme: Theme::default_theme(),
+            italic_support: false,
+            last_keystroke: None,
+            decoration_map: DecorationMap::default(),
+            word_count: 0,
+            status: StatusLine::default(),
+            config_warnings: vec![],
+            scroll_top: 0,
+        }
+    }
 
     // --- shorten_path ---
 
@@ -597,8 +628,8 @@ mod tests {
             ..Default::default()
         };
         let result = split_into_spans("0123456789", &[span], Style::default());
-        assert_eq!(result[0].content, "01");    // unstyled prefix
-        assert_eq!(result[1].content, "234");   // styled span
+        assert_eq!(result[0].content, "01"); // unstyled prefix
+        assert_eq!(result[1].content, "234"); // styled span
         assert_eq!(result[2].content, "56789"); // unstyled suffix
     }
 
@@ -640,8 +671,17 @@ mod tests {
     fn span_split_overlapping_clips_later_span() {
         // Two overlapping spans: first covers 0..5, second covers 3..8
         // Second should be clipped to start at 5
-        let s1 = StyledSpan { char_start: 0, char_end: 5, style: bold_style(), ..Default::default() };
-        let s2 = StyledSpan { char_start: 3, char_end: 8, ..Default::default() };
+        let s1 = StyledSpan {
+            char_start: 0,
+            char_end: 5,
+            style: bold_style(),
+            ..Default::default()
+        };
+        let s2 = StyledSpan {
+            char_start: 3,
+            char_end: 8,
+            ..Default::default()
+        };
         let result = split_into_spans("0123456789", &[s1, s2], Style::default());
         // s1: 0..5 = "01234"
         // s2 clipped: 5..8 = "567"
@@ -697,5 +737,39 @@ mod tests {
         let result = wrap_line("abcdef", 4);
         assert_eq!(result[0], "abcd");
         assert_eq!(result[1], "ef");
+    }
+
+    // --- build_normal_status_bar ---
+
+    #[test]
+    fn status_bar_clean_has_no_dirty_flag() {
+        let app = make_app();
+        let line = build_normal_status_bar(&app, 80);
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(!text.contains("[*]"), "clean file must not show [*]");
+    }
+
+    #[test]
+    fn status_bar_dirty_shows_flag() {
+        let mut app = make_app();
+        app.is_dirty = true;
+        let line = build_normal_status_bar(&app, 80);
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(text.contains("[*]"), "dirty file must show [*]");
+    }
+
+    #[test]
+    fn status_bar_includes_path() {
+        let app = make_app();
+        let line = build_normal_status_bar(&app, 80);
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(text.contains("foo.md"), "status bar must include filename");
+    }
+
+    #[test]
+    fn status_bar_zero_width_no_panic() {
+        let app = make_app();
+        // Must not panic even at zero width (saturating arithmetic).
+        let _ = build_normal_status_bar(&app, 0);
     }
 }

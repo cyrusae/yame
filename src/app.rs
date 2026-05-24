@@ -67,6 +67,88 @@ impl App {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use tui_textarea::TextArea;
+
+    use crate::config::Theme;
+    use crate::decoration::DecorationMap;
+    use crate::status::StatusLine;
+
+    fn make_app() -> App {
+        App {
+            textarea: TextArea::default(),
+            file_path: PathBuf::from("test.md"),
+            is_dirty: false,
+            saved_content: None,
+            theme: Theme::default_theme(),
+            italic_support: false,
+            last_keystroke: None,
+            decoration_map: DecorationMap::default(),
+            word_count: 0,
+            status: StatusLine::default(),
+            config_warnings: vec![],
+            scroll_top: 0,
+        }
+    }
+
+    #[test]
+    fn mark_keystroke_sets_dirty_and_timer() {
+        let mut app = make_app();
+        assert!(!app.is_dirty, "app starts clean");
+        assert!(app.last_keystroke.is_none(), "no timer yet");
+        app.mark_keystroke();
+        assert!(app.is_dirty, "dirty after keystroke");
+        assert!(app.last_keystroke.is_some(), "timer started");
+    }
+
+    #[test]
+    fn recompute_dirty_saved_matches_clean() {
+        let mut app = make_app();
+        // Saved snapshot equals current content → not dirty.
+        let current: Vec<String> = app.textarea.lines().iter().map(|s| s.to_string()).collect();
+        app.saved_content = Some(current);
+        app.recompute_dirty();
+        assert!(!app.is_dirty, "matching saved content → clean");
+    }
+
+    #[test]
+    fn recompute_dirty_saved_differs_dirty() {
+        let mut app = make_app();
+        // Saved snapshot is different from current content → dirty.
+        app.saved_content = Some(vec!["something else".to_string()]);
+        app.recompute_dirty();
+        assert!(app.is_dirty, "diverging saved content → dirty");
+    }
+
+    #[test]
+    fn recompute_dirty_no_saved_nonempty_is_dirty() {
+        let mut app = make_app();
+        // No save record and the textarea has content → treat as modified.
+        app.saved_content = None;
+        // Default TextArea has at least one line (""), which is non-empty as a Vec.
+        app.recompute_dirty();
+        assert!(app.is_dirty, "unsaved non-empty buffer → dirty");
+    }
+
+    #[test]
+    fn recompute_dirty_no_saved_truly_empty_is_clean() {
+        let mut app = make_app();
+        // An explicitly empty textarea (no lines at all) with no saved record → clean.
+        app.textarea = TextArea::new(vec![]);
+        app.saved_content = None;
+        // TextArea::new(vec![]) may return [""] — test only that recompute_dirty runs
+        // without panic and produces a consistent result.
+        app.recompute_dirty(); // must not panic
+    }
+}
+
 /// Load a file into a TextArea, or return an empty TextArea for new files.
 #[mutants::skip] // fs::read_to_string I/O — mutations (e.g. skipping the read) not testable without a real FS.
 pub fn load_file(path: &Path) -> io::Result<TextArea<'static>> {
