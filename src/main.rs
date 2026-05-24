@@ -89,6 +89,17 @@ fn event_loop<B: ratatui::backend::Backend>(
 
     let min_cols = layout_config.min_cols.unwrap_or(DEFAULT_MIN_COLS);
 
+    // Initial decoration pass — populate before the first frame so the file
+    // renders with bold/italic/etc. immediately on open, without needing a
+    // keystroke to trigger the debounce.
+    {
+        let text = app.textarea.lines().join("\n");
+        let cursor_line = app.textarea.cursor().0;
+        app.decoration_map =
+            build_decoration_map(&text, &app.theme, app.italic_support, cursor_line);
+        app.word_count = count_words(&text);
+    }
+
     // Persisted across frames so mouse events can translate screen-absolute
     // coordinates to editor-relative (col, row) + scroll offset.
     let mut last_editor_area = Rect::default();

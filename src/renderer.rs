@@ -4,7 +4,7 @@ use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Widget},
+    widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Widget},
 };
 
 use crate::app::App;
@@ -190,6 +190,10 @@ pub fn wrap_line(s: &str, width: usize) -> Vec<&str> {
     result
 }
 
+/// Blank columns on each side of the text content within the editor column.
+/// Keeps text from running flush against the background boundary.
+const GUTTER: u16 = 1;
+
 // ---------------------------------------------------------------------------
 // Step 7.1 — MarkdownView widget
 // ---------------------------------------------------------------------------
@@ -215,7 +219,8 @@ pub struct MarkdownView<'a> {
 impl Widget for MarkdownView<'_> {
     #[mutants::skip] // Writes into ratatui Buffer — void, not testable via return value.
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let width = self.column_width as usize;
+        // Content area is inset by GUTTER on each side within the column.
+        let content_width = (self.column_width as usize).saturating_sub(2 * GUTTER as usize);
         let visible = area.height as usize;
         let bg = self.theme.bg;
         let default_style = Style::default().fg(self.theme.text).bg(bg);
@@ -237,7 +242,7 @@ impl Widget for MarkdownView<'_> {
 
         while visual_row < visible && log_row < total {
             let line = &self.lines[log_row];
-            let wrapped = wrap_line(line, width.max(1));
+            let wrapped = wrap_line(line, content_width.max(1));
             let line_decs = self.decoration_map.get(&log_row);
 
             for (wrap_idx, &row_str) in wrapped.iter().enumerate() {
@@ -258,9 +263,11 @@ impl Widget for MarkdownView<'_> {
                         cursor_log_col >= char_start && (cursor_log_col < char_end || is_last_wrap);
                     if in_range {
                         let col_in_row = (cursor_log_col.saturating_sub(char_start))
-                            .min(width.saturating_sub(1));
-                        cursor_buf_pos =
-                            Some((area.x + col_in_row as u16, area.y + visual_row as u16));
+                            .min(content_width.saturating_sub(1));
+                        cursor_buf_pos = Some((
+                            area.x + GUTTER + col_in_row as u16,
+                            area.y + visual_row as u16,
+                        ));
                     }
                 }
 
@@ -293,10 +300,10 @@ impl Widget for MarkdownView<'_> {
                 // --- Write character cells ---
                 let row_default = default_style.bg(line_bg);
                 let segments = split_into_spans(row_str, &row_spans, row_default);
-                let mut x = area.x;
+                let mut x = area.x + GUTTER; // start after left gutter
                 for span in &segments {
                     for ch in span.content.chars() {
-                        if (x.saturating_sub(area.x)) as usize >= width {
+                        if (x.saturating_sub(area.x + GUTTER)) as usize >= content_width {
                             break;
                         }
                         buf[(x, y)].set_char(ch).set_style(span.style);
@@ -335,7 +342,7 @@ fn apply_selection_overlay(
     selection: ((usize, usize), (usize, usize)),
 ) {
     let ((sel_row_start, sel_col_start), (sel_row_end, sel_col_end)) = selection;
-    let width = view.column_width as usize;
+    let content_width = (view.column_width as usize).saturating_sub(2 * GUTTER as usize);
     let visible = area.height as usize;
     let total = view.lines.len();
     let sel_fg = view.theme.selection_fg;
@@ -351,7 +358,7 @@ fn apply_selection_overlay(
         }
 
         let line = &view.lines[log_row];
-        let wrapped = wrap_line(line, width.max(1));
+        let wrapped = wrap_line(line, content_width.max(1));
 
         for row_str in &wrapped {
             if visual_row >= visible {
@@ -382,9 +389,9 @@ fn apply_selection_overlay(
 
                 if row_sel_start < row_sel_end {
                     let y = area.y + visual_row as u16;
-                    let x_start = area.x + (row_sel_start - char_start) as u16;
-                    let x_end = (area.x + (row_sel_end - char_start) as u16)
-                        .min(area.x + view.column_width);
+                    let x_start = area.x + GUTTER + (row_sel_start - char_start) as u16;
+                    let x_end = (area.x + GUTTER + (row_sel_end - char_start) as u16)
+                        .min(area.x + GUTTER + content_width as u16);
                     for x in x_start..x_end {
                         buf[(x, y)].set_fg(sel_fg).set_bg(sel_bg);
                     }
@@ -487,21 +494,35 @@ fn build_normal_status_bar(app: &App, width: u16) -> Line<'static> {
 // ---------------------------------------------------------------------------
 
 /// Render the second-to-last row: cursor position and word count.
+/// Only the text itself gets a background rectangle; the rest of the row
+/// shows the editor background so the bar doesn't span the full terminal.
 #[mutants::skip] // Writes into ratatui Buffer — void, not testable via return value.
 pub fn render_info_line(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
+
+    // Clear full row with editor background first.
+    f.render_widget(
+        Paragraph::new("").style(Style::default().bg(theme.bg)),
+        area,
+    );
+
     let (row, col) = app.textarea.cursor();
-    // Display 1-indexed
     let text = format!(
-        " Ln {}, Col {} · {} words",
+        " Ln {}, Col {} · {} words ",
         format_thousands(row + 1),
         format_thousands(col + 1),
         format_thousands(app.word_count),
     );
-    let para = Paragraph::new(text)
-        .style(Style::default().fg(theme.muted).bg(theme.ui_bg))
-        .block(Block::default());
-    f.render_widget(para, area);
+    // Render only as wide as the text content (char count ≈ display width for ASCII + ·).
+    let text_width = (text.chars().count() as u16).min(area.width);
+    let text_area = Rect {
+        width: text_width,
+        ..area
+    };
+    f.render_widget(
+        Paragraph::new(text).style(Style::default().fg(theme.muted).bg(theme.ui_bg)),
+        text_area,
+    );
 }
 
 // ---------------------------------------------------------------------------

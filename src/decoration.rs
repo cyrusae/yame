@@ -456,11 +456,11 @@ pub fn build_decoration_map(
                 let (marker_line, marker_char) = byte_to_line_char(&line_starts, text, range.start);
 
                 if checked {
-                    // Apply muted+CROSSED_OUT to the entire item line
+                    // Apply muted colour to the entire item line.
+                    // Strikethrough is intentionally absent: real ~~strikethrough~~ syntax
+                    // exists in Markdown and should remain visually distinct.
                     let line_len = line_char_len(&line_starts, text, marker_line);
-                    let style = Style::default()
-                        .fg(theme.muted)
-                        .add_modifier(Modifier::CROSSED_OUT);
+                    let style = Style::default().fg(theme.muted);
                     push_span(&mut map, marker_line, make_span(0, line_len, style));
                 } else {
                     // Style [ and ] in accent, leave space between as normal
@@ -828,15 +828,22 @@ mod tests {
     }
 
     #[test]
-    fn todo_checked_has_strikethrough() {
+    fn todo_checked_is_muted_no_strikethrough() {
         let text = "- [x] done item";
-        let map = build_decoration_map(text, &make_theme(), true, 99);
+        let theme = make_theme();
+        let map = build_decoration_map(text, &theme, true, 99);
         let spans = map.get(&0).expect("line 0 should have spans");
+        // Must be muted colour.
         assert!(
-            spans
+            spans.iter().any(|s| s.style.fg == Some(theme.muted)),
+            "checked todo must use muted colour"
+        );
+        // Must NOT have strikethrough — that is reserved for real ~~syntax~~.
+        assert!(
+            !spans
                 .iter()
                 .any(|s| s.style.add_modifier.contains(Modifier::CROSSED_OUT)),
-            "checked todo must have CROSSED_OUT modifier"
+            "checked todo must not have CROSSED_OUT"
         );
     }
 

@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Fixed
 
 ### Changed
+- fix: initial decoration pass, gutter, todo muted, info line width (#33)
 - fix: POSIX trailing newline, navigation dirty flag, mouse coordinate offset (#32)
 - Phase 11: Integration Test & Coverage Audit (#12)
 - Phase 10: Polish & Edge Cases (#11)
