@@ -7,8 +7,6 @@ pub struct EditorLayout {
     pub full: Rect,
     /// Centered editing column.
     pub column: Rect,
-    /// 1-column scrollbar immediately right of the editing column.
-    pub scrollbar: Rect,
     /// Second-to-last row (cursor position / word count info).
     pub info_line: Rect,
     /// Last row (status bar / hint line).
@@ -25,8 +23,6 @@ pub const DEFAULT_MIN_COLS: u16 = 60;
 /// - Column is horizontally centered with equal margins.
 /// - `status_bar` = last row, `info_line` = second-to-last row.
 /// - `column.height` = total height - 2 (info_line + status_bar).
-/// - Scrollbar: 1 column wide, immediately right of the editing column,
-///   same height as the column.
 pub fn compute_layout(area: Rect, min_cols: u16) -> EditorLayout {
     let col_width = (area.width / 2).max(min_cols).min(area.width);
     let margin = area.width.saturating_sub(col_width) / 2;
@@ -36,15 +32,6 @@ pub fn compute_layout(area: Rect, min_cols: u16) -> EditorLayout {
         x: area.x + margin,
         y: area.y,
         width: col_width,
-        height: content_height,
-    };
-
-    // Scrollbar sits immediately right of the editing column (inside the right margin).
-    let scrollbar_x = column.x + col_width;
-    let scrollbar = Rect {
-        x: scrollbar_x.min(area.x + area.width.saturating_sub(1)),
-        y: area.y,
-        width: 1,
         height: content_height,
     };
 
@@ -65,7 +52,6 @@ pub fn compute_layout(area: Rect, min_cols: u16) -> EditorLayout {
     EditorLayout {
         full: area,
         column,
-        scrollbar,
         info_line,
         status_bar,
     }
@@ -111,14 +97,6 @@ mod tests {
         assert_eq!(layout.column.width, 60);
         // Column should be centered: margin = (100-60)/2 = 20
         assert_eq!(layout.column.x, 20);
-    }
-
-    #[test]
-    fn layout_scrollbar_is_right_of_column() {
-        let area = Rect::new(0, 0, 120, 30);
-        let layout = compute_layout(area, 60);
-        assert_eq!(layout.scrollbar.x, layout.column.x + layout.column.width);
-        assert_eq!(layout.scrollbar.width, 1);
     }
 
     #[test]

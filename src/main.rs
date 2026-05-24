@@ -167,7 +167,6 @@ fn event_loop<B: ratatui::backend::Backend>(
             f.render_widget(view, editor_area);
             renderer::render_status_bar(f, layout.status_bar, app);
             renderer::render_info_line(f, layout.info_line, app);
-            renderer::render_scrollbar(f, layout.scrollbar, app);
 
             // Persist so the mouse handler can translate coordinates next frame.
             last_editor_area = editor_area;

@@ -4,7 +4,7 @@ use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Widget},
+    widgets::{Paragraph, Widget},
 };
 
 use crate::app::App;
@@ -523,27 +523,6 @@ pub fn render_info_line(f: &mut Frame, area: Rect, app: &App) {
         Paragraph::new(text).style(Style::default().fg(theme.muted).bg(theme.ui_bg)),
         text_area,
     );
-}
-
-// ---------------------------------------------------------------------------
-// Step 5.4 — Scrollbar
-// ---------------------------------------------------------------------------
-
-/// Render the vertical scrollbar in `area`.
-#[mutants::skip] // Writes into ratatui Buffer — void, not testable via return value.
-pub fn render_scrollbar(f: &mut Frame, area: Rect, app: &App) {
-    let theme = &app.theme;
-    let total_lines = app.textarea.lines().len();
-
-    let mut state = ScrollbarState::new(total_lines).position(app.scroll_top);
-
-    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-        .track_style(Style::default().fg(theme.ui_bar))
-        .thumb_style(Style::default().fg(theme.accent))
-        .begin_symbol(None)
-        .end_symbol(None);
-
-    f.render_stateful_widget(scrollbar, area, &mut state);
 }
 
 // ---------------------------------------------------------------------------
