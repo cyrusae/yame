@@ -34,6 +34,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Italic default color now matches text color (not accent blend) (#60)
 
 ### Changed
+- Split decoration.rs: extract parser helpers and move tests to submodule (#74)
+- Research: file size audit before refactor decision (#93)
 - Strikethrough text color: match blockquote blend; tildes stay muted (#92)
 - v1.5: cache arboard::Clipboard instance in App (#38)
 - v1.5: fix O(N2) char counting and allocation hot-paths in renderer (#37)
