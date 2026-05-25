@@ -612,4 +612,51 @@ mod tests {
         }
         assert!(result);
     }
+
+    // --- DEFAULT_CONFIG_TEMPLATE ---
+
+    /// The scaffold template written on first run must be valid TOML so the
+    /// next Ctrl+R doesn't fail with a parse error.
+    #[test]
+    fn default_template_is_valid_toml() {
+        let result = toml::from_str::<Config>(DEFAULT_CONFIG_TEMPLATE);
+        assert!(
+            result.is_ok(),
+            "DEFAULT_CONFIG_TEMPLATE failed to parse as Config: {:?}",
+            result.err()
+        );
+    }
+
+    /// The palette values embedded in the template must match Config::default()
+    /// so that scaffolded configs produce the same theme as no config at all.
+    #[test]
+    fn default_template_palette_matches_defaults() {
+        let cfg: Config =
+            toml::from_str(DEFAULT_CONFIG_TEMPLATE).expect("template must be valid TOML");
+        let defaults = Config::default();
+        assert_eq!(
+            cfg.palette.text, defaults.palette.text,
+            "template palette.text differs from Config::default()"
+        );
+        assert_eq!(
+            cfg.palette.accent, defaults.palette.accent,
+            "template palette.accent differs from Config::default()"
+        );
+        assert_eq!(
+            cfg.palette.bg, defaults.palette.bg,
+            "template palette.bg differs from Config::default()"
+        );
+        assert_eq!(
+            cfg.palette.muted, defaults.palette.muted,
+            "template palette.muted differs from Config::default()"
+        );
+        assert_eq!(
+            cfg.palette.code, defaults.palette.code,
+            "template palette.code differs from Config::default()"
+        );
+        assert_eq!(
+            cfg.palette.warning, defaults.palette.warning,
+            "template palette.warning differs from Config::default()"
+        );
+    }
 }
