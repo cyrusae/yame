@@ -21,6 +21,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - v1 polish: italic startup warning, `delimiter_blend` config token, parent-dir creation on save (#35)
 
 ### Fixed
+- Free-scroll jitters and snaps back due to blanket free_scroll reset on every event (#99)
+- Coloring of italic+bold non-adjacent nesting shows muted (#98)
 - Three rendering regressions: scroll flicker, H1/H2 delimiter bold, bold+italic adjacency false-positive (#97)
 - Fix nested bold+italic rendering (***text*** shows as bold only) (#50)
 - Heading # delimiters not bold to match heading style (#91)

@@ -187,8 +187,8 @@ pub(super) fn event_loop<B: ratatui::backend::Backend>(
                 pre_layout.column
             };
             // Clamp is skipped while the user is free-scrolling (mouse wheel or
-            // Ctrl+Up/Down).  free_scroll persists across frames until any non-scroll
-            // event clears it at the top of the event-poll block below.
+            // Ctrl+Up/Down).  free_scroll persists until a key press, mouse click,
+            // drag, or terminal resize clears it (scroll and hover events do not).
             if !app.free_scroll {
                 clamp_scroll(
                     app,
@@ -252,11 +252,12 @@ pub(super) fn event_loop<B: ratatui::backend::Backend>(
         execute!(io::stdout(), EndSynchronizedUpdate)?;
 
         if event::poll(POLL_TIMEOUT)? {
-            // Any event re-engages cursor-clamping scroll, except scroll events
-            // themselves which immediately set free_scroll = true below.
-            app.free_scroll = false;
             match event::read()? {
                 Event::Key(k) => {
+                    // Any key press re-engages cursor-clamping scroll.
+                    // Ctrl+Up/Down (viewport scroll keys) immediately override this
+                    // below by setting free_scroll = true again.
+                    app.free_scroll = false;
                     if matches!(app.status.mode, StatusMode::ExitPrompt) {
                         match k.code {
                             KeyCode::Char('y') | KeyCode::Char('Y') => {
@@ -371,6 +372,8 @@ pub(super) fn event_loop<B: ratatui::backend::Backend>(
                         app.free_scroll = true;
                     }
                     MouseEventKind::Down(MouseButton::Left) => {
+                        // Click re-engages cursor-clamping scroll.
+                        app.free_scroll = false;
                         drag_selecting = false;
                         if let Some((doc_row, doc_col)) = screen_to_doc(
                             mouse.row,
@@ -384,6 +387,8 @@ pub(super) fn event_loop<B: ratatui::backend::Backend>(
                         }
                     }
                     MouseEventKind::Drag(MouseButton::Left) => {
+                        // Drag moves the cursor, so re-engage cursor-clamping scroll.
+                        app.free_scroll = false;
                         if let Some((doc_row, doc_col)) = screen_to_doc(
                             mouse.row,
                             mouse.column,
@@ -400,8 +405,16 @@ pub(super) fn event_loop<B: ratatui::backend::Backend>(
                     }
                     _ => {}
                 },
-                Event::Resize(_, _) => {}
-                _ => {}
+                Event::Resize(_, _) => {
+                    // Viewport geometry changed — re-engage cursor-clamping scroll
+                    // so the cursor is guaranteed visible after the resize.
+                    app.free_scroll = false;
+                }
+                _ => {
+                    // Unknown events (FocusGained, FocusLost, mouse hover, …) do
+                    // NOT clear free_scroll — they are background events that should
+                    // not interrupt an explicit scroll the user initiated.
+                }
             }
         }
     }
