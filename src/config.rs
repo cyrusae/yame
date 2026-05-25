@@ -72,6 +72,8 @@ pub struct HeadingColors {
 #[serde(default)]
 pub struct LayoutConfig {
     pub min_cols: Option<u16>,
+    /// Number of spaces to substitute for each `\t` on file load. Default 4.
+    pub tab_width: Option<u16>,
 }
 
 #[derive(Debug, Default, Deserialize)]

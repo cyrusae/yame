@@ -54,7 +54,8 @@ fn run(file_path: PathBuf) -> io::Result<()> {
         &mut warnings,
     );
 
-    let mut app = App::new(file_path, theme, italic_support, warnings)?;
+    let tab_width = config.layout.tab_width.unwrap_or(4) as usize;
+    let mut app = App::new(file_path, theme, italic_support, warnings, tab_width)?;
 
     if !italic_support {
         app.status.set_dismissible(

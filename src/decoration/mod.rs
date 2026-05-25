@@ -28,8 +28,14 @@ pub struct StyledSpan {
     /// End char index within the line (exclusive).
     pub char_end: usize,
     pub style: Style,
-    /// True for blockquote lines — renderer indents continuation visual rows.
+    /// True for blockquote lines — kept for test compatibility; continuation
+    /// indent uses `continuation_indent` instead.
     pub is_blockquote: bool,
+    /// When non-zero, continuation visual rows (wrap_idx > 0) of the logical
+    /// line are indented by this many terminal columns.  Used by blockquotes
+    /// (indent 2, aligning with text after `> `) and list items (indent =
+    /// bullet width + 1 space, aligning with item text).
+    pub continuation_indent: u8,
     /// When set, renderer expands this span's background to fill the full column width.
     pub full_line_bg: Option<Color>,
     /// When set, renderer draws a full-width underline in this color after the row.
@@ -436,6 +442,9 @@ pub fn build_decoration_map(
                             char_end: 1,
                             style: indicator_style,
                             is_blockquote: true,
+                            // Continuation visual rows indent 2 cols to align
+                            // with text start after `> `.
+                            continuation_indent: 2,
                             ..Default::default()
                         },
                     );
@@ -449,6 +458,7 @@ pub fn build_decoration_map(
                                 char_end: line_len,
                                 style: content_style,
                                 is_blockquote: true,
+                                continuation_indent: 2,
                                 ..Default::default()
                             },
                         );
@@ -554,10 +564,19 @@ pub fn build_decoration_map(
                 } else {
                     item_char + 1
                 };
+                // continuation_indent = bullet_end + 1 so that soft-wrapped
+                // continuation rows align with the item text (past bullet + space).
+                let ci = (bullet_end + 1).min(255) as u8;
                 push_span(
                     &mut map,
                     item_line,
-                    make_span(item_char, bullet_end, bullet_style),
+                    StyledSpan {
+                        char_start: item_char,
+                        char_end: bullet_end,
+                        style: bullet_style,
+                        continuation_indent: ci,
+                        ..Default::default()
+                    },
                 );
             }
 
@@ -1356,6 +1375,62 @@ mod tests {
         assert!(
             spans.iter().any(|s| s.is_blockquote && s.char_start >= 1),
             "blockquote content span must have is_blockquote=true"
+        );
+    }
+
+    // ---- Continuation indent (#39 blockquote, #59 list) ----
+
+    #[test]
+    fn blockquote_indicator_span_has_continuation_indent_2() {
+        let text = "> quoted text";
+        let map = build_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.is_blockquote && s.char_start == 0 && s.continuation_indent == 2),
+            "blockquote indicator span must have continuation_indent=2"
+        );
+    }
+
+    #[test]
+    fn blockquote_content_span_has_continuation_indent_2() {
+        let text = "> quoted text";
+        let map = build_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.is_blockquote && s.char_start >= 1 && s.continuation_indent == 2),
+            "blockquote content span must have continuation_indent=2"
+        );
+    }
+
+    #[test]
+    fn unordered_list_bullet_has_continuation_indent_2() {
+        // "- item": bullet at char 0, bullet_end = 1, ci = bullet_end + 1 = 2
+        let text = "- item text";
+        let map = build_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.char_start == 0 && s.char_end == 1 && s.continuation_indent == 2),
+            "unordered bullet span must have continuation_indent=2"
+        );
+    }
+
+    #[test]
+    fn ordered_list_bullet_has_continuation_indent_3() {
+        // "1. item": bullet at char 0, finds '.', bullet_end = 2, ci = 3
+        let text = "1. item text";
+        let map = build_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.char_start == 0 && s.continuation_indent == 3),
+            "ordered bullet span (1.) must have continuation_indent=3"
         );
     }
 

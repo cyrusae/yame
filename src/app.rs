@@ -46,12 +46,13 @@ impl App {
         theme: Theme,
         italic_support: bool,
         config_warnings: Vec<String>,
+        tab_width: usize,
     ) -> io::Result<Self> {
         // Detect whether the file is empty/new before loading, so handle_save can
         // preserve the 0-byte state instead of growing the file to a bare newline.
         let initial_file_empty =
             !file_path.exists() || std::fs::metadata(&file_path).is_ok_and(|m| m.len() == 0);
-        let textarea = load_file(&file_path)?;
+        let textarea = load_file(&file_path, tab_width)?;
         // Snapshot the initial content so recompute_dirty() has a baseline for both
         // existing files (undo back to load state → clean) and new files (empty baseline).
         let saved_content = Some(textarea.lines().to_vec());
@@ -92,12 +93,44 @@ impl App {
     }
 }
 
+/// Expand tab characters in a line to spaces.
+///
+/// Each `\t` is replaced with enough spaces to reach the next multiple of
+/// `tab_width`. This is the standard "visual tab stop" expansion used by most
+/// editors. Pure function — no I/O.
+pub fn expand_tabs(line: &str, tab_width: usize) -> String {
+    if !line.contains('\t') {
+        return line.to_string();
+    }
+    let tab_width = tab_width.max(1);
+    let mut result = String::with_capacity(line.len() + 8);
+    let mut col = 0usize;
+    for ch in line.chars() {
+        if ch == '\t' {
+            let spaces = tab_width - (col % tab_width);
+            for _ in 0..spaces {
+                result.push(' ');
+            }
+            col += spaces;
+        } else {
+            result.push(ch);
+            col += 1;
+        }
+    }
+    result
+}
+
 /// Load a file into a TextArea, or return an empty TextArea for new files.
+/// Tabs are expanded to spaces using `tab_width` (default 4 if 0 is passed).
 #[mutants::skip] // fs::read_to_string I/O — mutations (e.g. skipping the read) not testable without a real FS.
-pub fn load_file(path: &Path) -> io::Result<TextArea<'static>> {
+pub fn load_file(path: &Path, tab_width: usize) -> io::Result<TextArea<'static>> {
+    let tw = if tab_width == 0 { 4 } else { tab_width };
     if path.exists() {
         let content = std::fs::read_to_string(path)?;
-        let lines: Vec<String> = content.lines().map(String::from).collect();
+        let lines: Vec<String> = content
+            .lines()
+            .map(|l| expand_tabs(l, tw))
+            .collect();
         Ok(TextArea::new(lines))
     } else {
         Ok(TextArea::default())
@@ -113,6 +146,47 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
     use tui_textarea::TextArea;
+
+    // --- expand_tabs ---
+
+    #[test]
+    fn expand_tabs_no_tabs_unchanged() {
+        assert_eq!(expand_tabs("hello world", 4), "hello world");
+    }
+
+    #[test]
+    fn expand_tabs_leading_tab_becomes_spaces() {
+        // \t at col 0 with width 4 → 4 spaces
+        assert_eq!(expand_tabs("\thello", 4), "    hello");
+    }
+
+    #[test]
+    fn expand_tabs_mid_line_aligns_to_stop() {
+        // "ab\t" at col 2 with width 4 → 2 spaces to reach col 4
+        assert_eq!(expand_tabs("ab\thello", 4), "ab  hello");
+    }
+
+    #[test]
+    fn expand_tabs_at_exact_stop_gives_full_width() {
+        // "abcd\t" at col 4 (already at stop) → 4 spaces to next stop
+        assert_eq!(expand_tabs("abcd\t", 4), "abcd    ");
+    }
+
+    #[test]
+    fn expand_tabs_multiple_tabs() {
+        // Two tabs: first fills to col 4, second fills to col 8
+        assert_eq!(expand_tabs("\t\t", 4), "        ");
+    }
+
+    #[test]
+    fn expand_tabs_tab_width_two() {
+        assert_eq!(expand_tabs("\t", 2), "  ");
+    }
+
+    #[test]
+    fn expand_tabs_empty_string() {
+        assert_eq!(expand_tabs("", 4), "");
+    }
 
     use crate::config::Theme;
     use crate::decoration::DecorationMap;

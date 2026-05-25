@@ -158,22 +158,8 @@ impl Widget for MarkdownView<'_> {
 
                 let char_end = char_start + char_len;
 
-                // Cursor tracking
-                if log_row == cursor_log_row {
-                    let is_last_wrap = wrap_idx + 1 == wrapped.len();
-                    let in_range = cursor_log_col >= char_start
-                        && (cursor_log_col < char_end || is_last_wrap);
-                    if in_range {
-                        let col_in_row = (cursor_log_col.saturating_sub(char_start))
-                            .min(content_width.saturating_sub(1));
-                        cursor_buf_pos = Some((
-                            area.x + GUTTER + col_in_row as u16,
-                            area.y + visual_row as u16,
-                        ));
-                    }
-                }
-
-                // Adjust decoration spans to this visual row's char range
+                // Adjust decoration spans to this visual row's char range.
+                // Built first so continuation_indent is available for cursor tracking.
                 let row_spans: Vec<StyledSpan> = line_decs
                     .map(|decs| {
                         decs.iter()
@@ -183,6 +169,7 @@ impl Widget for MarkdownView<'_> {
                                 char_end: s.char_end.saturating_sub(char_start).min(char_len),
                                 style: s.style,
                                 is_blockquote: s.is_blockquote,
+                                continuation_indent: s.continuation_indent,
                                 full_line_bg: s.full_line_bg,
                                 border_bottom: s.border_bottom,
                                 is_rule: s.is_rule,
@@ -190,6 +177,33 @@ impl Widget for MarkdownView<'_> {
                             .collect()
                     })
                     .unwrap_or_default();
+
+                // Continuation rows (wrap_idx > 0) of blockquote/list lines are
+                // indented to align with the text start after the `> ` / bullet prefix.
+                let continuation_indent: u16 = if wrap_idx > 0 {
+                    row_spans
+                        .iter()
+                        .map(|s| s.continuation_indent)
+                        .max()
+                        .unwrap_or(0) as u16
+                } else {
+                    0
+                };
+
+                // Cursor tracking
+                if log_row == cursor_log_row {
+                    let is_last_wrap = wrap_idx + 1 == wrapped.len();
+                    let in_range = cursor_log_col >= char_start
+                        && (cursor_log_col < char_end || is_last_wrap);
+                    if in_range {
+                        let col_in_row = (cursor_log_col.saturating_sub(char_start))
+                            .min(content_width.saturating_sub(1));
+                        cursor_buf_pos = Some((
+                            area.x + GUTTER + continuation_indent + col_in_row as u16,
+                            area.y + visual_row as u16,
+                        ));
+                    }
+                }
 
                 let line_bg = row_spans.iter().find_map(|s| s.full_line_bg).unwrap_or(bg);
                 let border_color = row_spans.iter().find_map(|s| s.border_bottom);
@@ -214,7 +228,7 @@ impl Widget for MarkdownView<'_> {
                 } else {
                     let row_default = default_style.bg(line_bg);
                     let segments = split_into_spans(row_str, &row_spans, row_default);
-                    let mut x = area.x + GUTTER;
+                    let mut x = area.x + GUTTER + continuation_indent;
                     for span in &segments {
                         for ch in span.content.chars() {
                             if (x.saturating_sub(area.x + GUTTER)) as usize >= content_width {
@@ -289,12 +303,30 @@ fn apply_selection_overlay(
         let wrapped = wrap_line(line, content_width.max(1));
 
         let char_ranges = wrap_char_ranges(line, &wrapped);
-        for (_row_str, &(char_start, char_len)) in wrapped.iter().zip(char_ranges.iter()) {
+        for (wrap_idx, (_row_str, &(char_start, char_len))) in
+            wrapped.iter().zip(char_ranges.iter()).enumerate()
+        {
             if visual_row >= visible {
                 break;
             }
 
             let char_end = char_start + char_len;
+
+            // Mirror the continuation_indent logic from render() so selection
+            // highlighting respects the same left-margin indent.
+            let continuation_indent: u16 = if wrap_idx > 0 {
+                view.decoration_map
+                    .get(&log_row)
+                    .map(|decs| {
+                        decs.iter()
+                            .map(|s| s.continuation_indent)
+                            .max()
+                            .unwrap_or(0)
+                    })
+                    .unwrap_or(0) as u16
+            } else {
+                0
+            };
 
             if log_row >= sel_row_start && log_row <= sel_row_end {
                 let line_sel_start = if log_row == sel_row_start {
@@ -313,7 +345,10 @@ fn apply_selection_overlay(
 
                 if row_sel_start < row_sel_end {
                     let y = area.y + visual_row as u16;
-                    let x_start = area.x + GUTTER + (row_sel_start - char_start) as u16;
+                    let x_start = area.x
+                        + GUTTER
+                        + continuation_indent
+                        + (row_sel_start - char_start) as u16;
                     let x_end = (area.x + GUTTER + (row_sel_end - char_start) as u16)
                         .min(area.x + GUTTER + content_width as u16);
                     for x in x_start..x_end {

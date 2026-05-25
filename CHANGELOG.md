@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- v1.5: blockquote continuation indent on soft-wrapped lines (#39)
+- v1.5: tab character expansion on load (#40)
 - v1.5: smart pair wrapping (wrap selection with bracket/quote) (#43)
 - v1.5: Ctrl+R config reload (#42)
 - Wrap terminal.draw() with synchronized output protocol to eliminate Enter/Backspace flicker (#78)
@@ -18,6 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - v1 polish: italic startup warning, `delimiter_blend` config token, parent-dir creation on save (#35)
 
 ### Fixed
+- Soft-wrap list items with continuation indent (#59)
 - Soft-wrap space skip causes decoration spans to be off-by-1 char (#90)
 - Fix decoration flash on Enter/Backspace: force immediate redecorate on structural keystrokes (#79)
 - Cmd+C (forwarded as Ctrl+C) cuts/deletes selected text instead of copying (#73)
