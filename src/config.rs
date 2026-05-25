@@ -229,7 +229,11 @@ impl Theme {
         let bold_color = resolve(&overrides.bold_color, text, warnings);
         // Italic defaults to plain text color (same as bold) — independently overridable.
         let italic_color = resolve(&overrides.italic_color, text, warnings);
-        let strikethrough_color = resolve(&overrides.strikethrough_color, blend(muted, text, 0.5), warnings);
+        let strikethrough_color = resolve(
+            &overrides.strikethrough_color,
+            blend(muted, text, 0.5),
+            warnings,
+        );
         let blockquote_color = resolve(
             &overrides.blockquote_color,
             blend(muted, text, 0.5),

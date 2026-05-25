@@ -11,9 +11,7 @@ mod words;
 pub use spans::{byte_to_line_char, line_start_bytes};
 pub use words::count_words;
 
-use self::spans::{
-    SpanParams, add_byte_range_span, line_char_len, make_span, push_span,
-};
+use self::spans::{SpanParams, add_byte_range_span, line_char_len, make_span, push_span};
 use self::words::{count_chars_in, link_split_char_idx};
 
 // ---------------------------------------------------------------------------
@@ -106,8 +104,7 @@ pub fn build_decoration_map(
                 )
                 .then_some(heading_color);
 
-                let (start_line, start_char) =
-                    byte_to_line_char(&line_starts, text, range.start);
+                let (start_line, start_char) = byte_to_line_char(&line_starts, text, range.start);
 
                 let level_num = match level {
                     HeadingLevel::H1 => 1usize,
@@ -157,10 +154,8 @@ pub fn build_decoration_map(
 
             // ---- b. Bold ----
             Event::Start(Tag::Strong) => {
-                let (start_line, start_char) =
-                    byte_to_line_char(&line_starts, text, range.start);
-                let (end_line, end_char_excl) =
-                    byte_to_line_char(&line_starts, text, range.end);
+                let (start_line, start_char) = byte_to_line_char(&line_starts, text, range.start);
+                let (end_line, end_char_excl) = byte_to_line_char(&line_starts, text, range.end);
 
                 if start_line == end_line {
                     let span_len = end_char_excl.saturating_sub(start_char);
@@ -198,10 +193,8 @@ pub fn build_decoration_map(
 
             // ---- c. Italic ----
             Event::Start(Tag::Emphasis) => {
-                let (start_line, start_char) =
-                    byte_to_line_char(&line_starts, text, range.start);
-                let (end_line, end_char_excl) =
-                    byte_to_line_char(&line_starts, text, range.end);
+                let (start_line, start_char) = byte_to_line_char(&line_starts, text, range.start);
+                let (end_line, end_char_excl) = byte_to_line_char(&line_starts, text, range.end);
 
                 if start_line == end_line {
                     let span_len = end_char_excl.saturating_sub(start_char);
@@ -243,10 +236,8 @@ pub fn build_decoration_map(
             // ---- d. Inline code ----
             Event::Code(s) => {
                 word_count += s.split_whitespace().count();
-                let (start_line, start_char) =
-                    byte_to_line_char(&line_starts, text, range.start);
-                let (end_line, end_char_excl) =
-                    byte_to_line_char(&line_starts, text, range.end);
+                let (start_line, start_char) = byte_to_line_char(&line_starts, text, range.start);
+                let (end_line, end_char_excl) = byte_to_line_char(&line_starts, text, range.end);
                 let code_style = Style::default().fg(theme.code_color).bg(theme.code_bg);
                 // Backtick delimiters blend toward muted (same standard as `*`, `[]()` etc.)
                 let delim_style = Style::default()
@@ -468,10 +459,8 @@ pub fn build_decoration_map(
 
             // ---- g. Links ----
             Event::Start(Tag::Link { .. }) => {
-                let (start_line, start_char) =
-                    byte_to_line_char(&line_starts, text, range.start);
-                let (end_line, end_char_excl) =
-                    byte_to_line_char(&line_starts, text, range.end);
+                let (start_line, start_char) = byte_to_line_char(&line_starts, text, range.start);
+                let (end_line, end_char_excl) = byte_to_line_char(&line_starts, text, range.end);
 
                 // Only handle single-line links in v1
                 if start_line == end_line {
@@ -546,8 +535,7 @@ pub fn build_decoration_map(
                 in_ordered_list = false;
             }
             Event::Start(Tag::Item) => {
-                let (item_line, item_char) =
-                    byte_to_line_char(&line_starts, text, range.start);
+                let (item_line, item_char) = byte_to_line_char(&line_starts, text, range.start);
 
                 let bullet_style = Style::default().fg(theme.accent);
                 let bullet_end = if in_ordered_list {
@@ -557,8 +545,7 @@ pub fn build_decoration_map(
                     line_text[scan_start..]
                         .find(['.', ')'])
                         .map(|i| {
-                            item_char
-                                + count_chars_in(&line_text[scan_start..scan_start + i + 1])
+                            item_char + count_chars_in(&line_text[scan_start..scan_start + i + 1])
                         })
                         .unwrap_or(item_char + 2)
                 } else {
@@ -582,8 +569,20 @@ pub fn build_decoration_map(
 
             // ---- i. Todo items ----
             Event::TaskListMarker(checked) => {
-                let (marker_line, marker_char) =
-                    byte_to_line_char(&line_starts, text, range.start);
+                let (marker_line, marker_char) = byte_to_line_char(&line_starts, text, range.start);
+
+                // The full task-list glyph is `- [ ] ` / `- [x] ` (marker_char chars
+                // before `[`, then `[`, one char, `]`, space = 4 more chars).
+                // Upgrade the bullet span's continuation_indent so that soft-wrapped
+                // continuation rows align with the item text, not just the `- ` prefix.
+                let task_ci = (marker_char + 4).min(255) as u8;
+                if let Some(spans) = map.get_mut(&marker_line) {
+                    for span in spans.iter_mut() {
+                        if span.continuation_indent > 0 {
+                            span.continuation_indent = task_ci;
+                        }
+                    }
+                }
 
                 if checked {
                     let line_len = line_char_len(&line_starts, text, marker_line);
@@ -602,11 +601,7 @@ pub fn build_decoration_map(
                         push_span(
                             &mut map,
                             marker_line,
-                            make_span(
-                                marker_char + 1,
-                                (marker_char + 2).min(bracket_end),
-                                x_style,
-                            ),
+                            make_span(marker_char + 1, (marker_char + 2).min(bracket_end), x_style),
                         );
                     }
                     // `]`
@@ -622,11 +617,7 @@ pub fn build_decoration_map(
                         push_span(
                             &mut map,
                             marker_line,
-                            make_span(
-                                bracket_end,
-                                line_len,
-                                Style::default().fg(theme.todo_done),
-                            ),
+                            make_span(bracket_end, line_len, Style::default().fg(theme.todo_done)),
                         );
                     }
                 } else {
@@ -695,10 +686,8 @@ pub fn build_decoration_map(
 
             // ---- k. Strikethrough ----
             Event::Start(Tag::Strikethrough) => {
-                let (start_line, start_char) =
-                    byte_to_line_char(&line_starts, text, range.start);
-                let (end_line, end_char_excl) =
-                    byte_to_line_char(&line_starts, text, range.end);
+                let (start_line, start_char) = byte_to_line_char(&line_starts, text, range.start);
+                let (end_line, end_char_excl) = byte_to_line_char(&line_starts, text, range.end);
 
                 if start_line == end_line {
                     let span_len = end_char_excl.saturating_sub(start_char);
@@ -775,8 +764,8 @@ mod tests {
 
     use crate::config::{Theme, blend_colors};
 
-    use super::*;
     use super::words::link_split_char_idx;
+    use super::*;
 
     fn make_theme() -> Theme {
         Theme::default_theme()
@@ -858,6 +847,54 @@ mod tests {
                 .iter()
                 .all(|s| s.style.add_modifier.contains(Modifier::BOLD)),
             "H3 should not be bold"
+        );
+    }
+
+    #[test]
+    fn heading_h1_delimiter_span_is_bold() {
+        // The `# ` prefix span (0..2) must carry BOLD to match the content style.
+        let text = "# Heading";
+        let map = build_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        let delim = spans
+            .iter()
+            .find(|s| s.char_start == 0 && s.char_end == 2)
+            .expect("H1 delimiter span must exist at 0..2");
+        assert!(
+            delim.style.add_modifier.contains(Modifier::BOLD),
+            "H1 delimiter span must be BOLD"
+        );
+    }
+
+    #[test]
+    fn heading_h2_delimiter_span_is_bold() {
+        // The `## ` prefix span (0..3) must carry BOLD.
+        let text = "## Heading";
+        let map = build_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        let delim = spans
+            .iter()
+            .find(|s| s.char_start == 0 && s.char_end == 3)
+            .expect("H2 delimiter span must exist at 0..3");
+        assert!(
+            delim.style.add_modifier.contains(Modifier::BOLD),
+            "H2 delimiter span must be BOLD"
+        );
+    }
+
+    #[test]
+    fn heading_h3_delimiter_span_not_bold() {
+        // H3 content is not bold, so its delimiter should also not be bold.
+        let text = "### Heading Three";
+        let map = build_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        let delim = spans
+            .iter()
+            .find(|s| s.char_start == 0 && s.char_end == 4)
+            .expect("H3 delimiter span must exist at 0..4");
+        assert!(
+            !delim.style.add_modifier.contains(Modifier::BOLD),
+            "H3 delimiter span must NOT be bold (H3 content is not bold)"
         );
     }
 
@@ -1232,7 +1269,10 @@ mod tests {
         let has_delim = spans.iter().any(|s| s.char_start == 0 && s.char_end == 2);
         let has_content = spans.iter().any(|s| s.char_start == 2);
         assert!(has_delim, "H1 should have a delimiter span at 0..2");
-        assert!(has_content, "H1 should have a content span starting at char 2");
+        assert!(
+            has_content,
+            "H1 should have a content span starting at char 2"
+        );
         let delim_span = spans
             .iter()
             .find(|s| s.char_start == 0 && s.char_end == 2)
@@ -1431,6 +1471,41 @@ mod tests {
                 .iter()
                 .any(|s| s.char_start == 0 && s.continuation_indent == 3),
             "ordered bullet span (1.) must have continuation_indent=3"
+        );
+    }
+
+    #[test]
+    fn todo_unchecked_continuation_indent_is_6() {
+        // "- [ ] todo": marker `[` is at char 2, so task_ci = 2 + 4 = 6.
+        // Continuation rows align with text start after the full `- [ ] ` glyph.
+        let text = "- [ ] todo item";
+        let map = build_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        let max_ci = spans
+            .iter()
+            .map(|s| s.continuation_indent)
+            .max()
+            .unwrap_or(0);
+        assert_eq!(
+            max_ci, 6,
+            "unchecked todo item must have max continuation_indent=6 (past `- [ ] `)"
+        );
+    }
+
+    #[test]
+    fn todo_checked_continuation_indent_is_6() {
+        // "- [x] done": same marker position as unchecked → task_ci = 6.
+        let text = "- [x] done item";
+        let map = build_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        let max_ci = spans
+            .iter()
+            .map(|s| s.continuation_indent)
+            .max()
+            .unwrap_or(0);
+        assert_eq!(
+            max_ci, 6,
+            "checked todo item must have max continuation_indent=6 (past `- [x] `)"
         );
     }
 

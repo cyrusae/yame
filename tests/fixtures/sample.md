@@ -74,6 +74,7 @@ Ordered:
 - [ ] Another unchecked item with **bold** content
 - [x] Another completed item
 - [x] What about a really, really, really, really, really, really, really, `really` long to-do item?
+    - [ ] what about nesting a to-do item? A really, really, really, really long to-do item? Nice!
 
 Test entry
 

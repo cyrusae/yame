@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- Todo items: indent continuation to text-start after full [ ] marker (#95)
 - v1.5: blockquote continuation indent on soft-wrapped lines (#39)
 - v1.5: tab character expansion on load (#40)
 - v1.5: smart pair wrapping (wrap selection with bracket/quote) (#43)
@@ -20,6 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - v1 polish: italic startup warning, `delimiter_blend` config token, parent-dir creation on save (#35)
 
 ### Fixed
+- Heading # delimiters not bold to match heading style (#91)
 - Soft-wrap list items with continuation indent (#59)
 - Soft-wrap space skip causes decoration spans to be off-by-1 char (#90)
 - Fix decoration flash on Enter/Backspace: force immediate redecorate on structural keystrokes (#79)
@@ -37,6 +39,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Italic default color now matches text color (not accent blend) (#60)
 
 ### Changed
+- Replace Powerline glyph with universally-renderable separator (#54)
 - ROADMAP.md maintenance pass: prune done items, update issue index (#94)
 - Split decoration.rs: extract parser helpers and move tests to submodule (#74)
 - Research: file size audit before refactor decision (#93)

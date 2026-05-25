@@ -246,7 +246,10 @@ mod tests {
         app.textarea.move_cursor(tui_textarea::CursorMove::Down);
         app.textarea.move_cursor(tui_textarea::CursorMove::End);
         let text = get_selection_text(&app).unwrap_or_default();
-        assert!(text.contains('\n'), "multiline selection must include newline");
+        assert!(
+            text.contains('\n'),
+            "multiline selection must include newline"
+        );
         assert!(text.starts_with("abc"), "first line preserved");
     }
 

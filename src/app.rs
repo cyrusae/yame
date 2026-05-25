@@ -127,10 +127,7 @@ pub fn load_file(path: &Path, tab_width: usize) -> io::Result<TextArea<'static>>
     let tw = if tab_width == 0 { 4 } else { tab_width };
     if path.exists() {
         let content = std::fs::read_to_string(path)?;
-        let lines: Vec<String> = content
-            .lines()
-            .map(|l| expand_tabs(l, tw))
-            .collect();
+        let lines: Vec<String> = content.lines().map(|l| expand_tabs(l, tw)).collect();
         Ok(TextArea::new(lines))
     } else {
         Ok(TextArea::default())

@@ -1,7 +1,4 @@
-use ratatui::{
-    style::Style,
-    text::Span,
-};
+use ratatui::{style::Style, text::Span};
 
 use crate::decoration::StyledSpan;
 

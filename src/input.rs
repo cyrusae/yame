@@ -2,9 +2,7 @@ use std::io;
 use std::time::Duration;
 
 use crossterm::{
-    event::{
-        self, Event, KeyCode, KeyModifiers, MouseButton, MouseEventKind,
-    },
+    event::{self, Event, KeyCode, KeyModifiers, MouseButton, MouseEventKind},
     execute,
     terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate},
 };
@@ -173,17 +171,22 @@ pub(super) fn event_loop<B: ratatui::backend::Backend>(
             let term_size = terminal.size()?;
             let term_area = Rect::new(0, 0, term_size.width, term_size.height);
             let pre_layout = compute_layout(term_area, min_cols);
-            let pre_editor_area =
-                if !app.config_warnings.is_empty() && pre_layout.column.height > 0 {
-                    Rect {
-                        y: pre_layout.column.y + 1,
-                        height: pre_layout.column.height.saturating_sub(1),
-                        ..pre_layout.column
-                    }
-                } else {
-                    pre_layout.column
-                };
-            clamp_scroll(app, pre_editor_area, pre_layout.column.width, BOTTOM_PADDING);
+            let pre_editor_area = if !app.config_warnings.is_empty() && pre_layout.column.height > 0
+            {
+                Rect {
+                    y: pre_layout.column.y + 1,
+                    height: pre_layout.column.height.saturating_sub(1),
+                    ..pre_layout.column
+                }
+            } else {
+                pre_layout.column
+            };
+            clamp_scroll(
+                app,
+                pre_editor_area,
+                pre_layout.column.width,
+                BOTTOM_PADDING,
+            );
         }
 
         execute!(io::stdout(), BeginSynchronizedUpdate)?;
@@ -334,50 +337,48 @@ pub(super) fn event_loop<B: ratatui::backend::Backend>(
                         }
                     }
                 }
-                Event::Mouse(mouse) => {
-                    match mouse.kind {
-                        MouseEventKind::ScrollDown => {
-                            for _ in 0..SCROLL_LINES {
-                                app.textarea.move_cursor(CursorMove::Down);
-                            }
+                Event::Mouse(mouse) => match mouse.kind {
+                    MouseEventKind::ScrollDown => {
+                        for _ in 0..SCROLL_LINES {
+                            app.textarea.move_cursor(CursorMove::Down);
                         }
-                        MouseEventKind::ScrollUp => {
-                            for _ in 0..SCROLL_LINES {
-                                app.textarea.move_cursor(CursorMove::Up);
-                            }
-                            app.scroll_top = app.scroll_top.saturating_sub(SCROLL_LINES);
-                        }
-                        MouseEventKind::Down(MouseButton::Left) => {
-                            drag_selecting = false;
-                            if let Some((doc_row, doc_col)) = screen_to_doc(
-                                mouse.row,
-                                mouse.column,
-                                &last_editor_area,
-                                app.scroll_top,
-                                app.textarea.lines(),
-                            ) {
-                                app.textarea.cancel_selection();
-                                app.textarea.move_cursor(CursorMove::Jump(doc_row, doc_col));
-                            }
-                        }
-                        MouseEventKind::Drag(MouseButton::Left) => {
-                            if let Some((doc_row, doc_col)) = screen_to_doc(
-                                mouse.row,
-                                mouse.column,
-                                &last_editor_area,
-                                app.scroll_top,
-                                app.textarea.lines(),
-                            ) {
-                                if !drag_selecting {
-                                    app.textarea.start_selection();
-                                    drag_selecting = true;
-                                }
-                                app.textarea.move_cursor(CursorMove::Jump(doc_row, doc_col));
-                            }
-                        }
-                        _ => {}
                     }
-                }
+                    MouseEventKind::ScrollUp => {
+                        for _ in 0..SCROLL_LINES {
+                            app.textarea.move_cursor(CursorMove::Up);
+                        }
+                        app.scroll_top = app.scroll_top.saturating_sub(SCROLL_LINES);
+                    }
+                    MouseEventKind::Down(MouseButton::Left) => {
+                        drag_selecting = false;
+                        if let Some((doc_row, doc_col)) = screen_to_doc(
+                            mouse.row,
+                            mouse.column,
+                            &last_editor_area,
+                            app.scroll_top,
+                            app.textarea.lines(),
+                        ) {
+                            app.textarea.cancel_selection();
+                            app.textarea.move_cursor(CursorMove::Jump(doc_row, doc_col));
+                        }
+                    }
+                    MouseEventKind::Drag(MouseButton::Left) => {
+                        if let Some((doc_row, doc_col)) = screen_to_doc(
+                            mouse.row,
+                            mouse.column,
+                            &last_editor_area,
+                            app.scroll_top,
+                            app.textarea.lines(),
+                        ) {
+                            if !drag_selecting {
+                                app.textarea.start_selection();
+                                drag_selecting = true;
+                            }
+                            app.textarea.move_cursor(CursorMove::Jump(doc_row, doc_col));
+                        }
+                    }
+                    _ => {}
+                },
                 Event::Resize(_, _) => {}
                 _ => {}
             }

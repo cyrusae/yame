@@ -180,11 +180,20 @@ impl Widget for MarkdownView<'_> {
 
                 // Continuation rows (wrap_idx > 0) of blockquote/list lines are
                 // indented to align with the text start after the `> ` / bullet prefix.
+                //
+                // IMPORTANT: read from `line_decs` (all logical-line spans), NOT from
+                // `row_spans` (filtered to visual-row char range).  The bullet/indicator
+                // span covers chars 0..1, which is outside the char range of any
+                // continuation row — so it would be stripped from `row_spans` and the
+                // indent would compute to zero.
                 let continuation_indent: u16 = if wrap_idx > 0 {
-                    row_spans
-                        .iter()
-                        .map(|s| s.continuation_indent)
-                        .max()
+                    line_decs
+                        .map(|decs| {
+                            decs.iter()
+                                .map(|s| s.continuation_indent)
+                                .max()
+                                .unwrap_or(0)
+                        })
                         .unwrap_or(0) as u16
                 } else {
                     0
@@ -193,8 +202,8 @@ impl Widget for MarkdownView<'_> {
                 // Cursor tracking
                 if log_row == cursor_log_row {
                     let is_last_wrap = wrap_idx + 1 == wrapped.len();
-                    let in_range = cursor_log_col >= char_start
-                        && (cursor_log_col < char_end || is_last_wrap);
+                    let in_range =
+                        cursor_log_col >= char_start && (cursor_log_col < char_end || is_last_wrap);
                     if in_range {
                         let col_in_row = (cursor_log_col.saturating_sub(char_start))
                             .min(content_width.saturating_sub(1));
@@ -345,10 +354,8 @@ fn apply_selection_overlay(
 
                 if row_sel_start < row_sel_end {
                     let y = area.y + visual_row as u16;
-                    let x_start = area.x
-                        + GUTTER
-                        + continuation_indent
-                        + (row_sel_start - char_start) as u16;
+                    let x_start =
+                        area.x + GUTTER + continuation_indent + (row_sel_start - char_start) as u16;
                     let x_end = (area.x + GUTTER + (row_sel_end - char_start) as u16)
                         .min(area.x + GUTTER + content_width as u16);
                     for x in x_start..x_end {
@@ -380,8 +387,8 @@ mod tests {
     use crate::decoration::{DecorationMap, StyledSpan};
     use crate::status::StatusLine;
 
-    use super::*;
     use super::status::build_normal_status_bar;
+    use super::*;
 
     fn make_app() -> App {
         App {
