@@ -15,6 +15,57 @@ use self::spans::{SpanParams, add_byte_range_span, line_char_len, make_span, pus
 use self::words::{count_chars_in, link_split_char_idx};
 
 // ---------------------------------------------------------------------------
+// Span-emission helpers
+// ---------------------------------------------------------------------------
+
+/// Emit a styled span in segments over `[range_start, range_end)`, skipping
+/// any char-ranges that are already decorated in `map` for the given line.
+///
+/// This lets an *outer* inline tag (e.g. Emphasis) coexist with *inner* tags
+/// (e.g. Strong, Code) that were processed first.  Without this, a single
+/// large outer content span would swallow every inner span in `split_into_spans`.
+fn emit_content_around_existing(
+    map: &mut DecorationMap,
+    line: usize,
+    range_start: usize,
+    range_end: usize,
+    style: Style,
+) {
+    if range_start >= range_end {
+        return;
+    }
+
+    // Collect existing blocked char-ranges inside [range_start, range_end).
+    // We clone the ranges out so the immutable borrow on `map` is released
+    // before we call push_span (which needs a mutable borrow).
+    let mut blocked: Vec<(usize, usize)> = map
+        .get(&line)
+        .map(|spans| {
+            spans
+                .iter()
+                .filter(|s| s.char_end > range_start && s.char_start < range_end)
+                .map(|s| (s.char_start.max(range_start), s.char_end.min(range_end)))
+                .collect()
+        })
+        .unwrap_or_default();
+    blocked.sort_by_key(|&(start, _)| start);
+
+    // Emit content in the gaps between blocked regions.
+    let mut pos = range_start;
+    for (block_start, block_end) in blocked {
+        if pos < block_start {
+            push_span(map, line, make_span(pos, block_start, style));
+        }
+        if block_end > pos {
+            pos = block_end;
+        }
+    }
+    if pos < range_end {
+        push_span(map, line, make_span(pos, range_end, style));
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Bold+italic combined helper
 // ---------------------------------------------------------------------------
 
@@ -26,6 +77,7 @@ use self::words::{count_chars_in, link_split_char_idx};
 /// pulldown-cmark nests `***text***` as `Emphasis { Strong { text } }`, so the
 /// outer delimiter is 1 char (`*`) and the inner is 2 chars (`**`).
 /// `**_text_**` nests as `Strong { Emphasis { text } }`, with outer = 2 and inner = 1.
+#[allow(clippy::too_many_arguments)]
 fn emit_bold_italic_spans(
     map: &mut DecorationMap,
     line_starts: &[usize],
@@ -246,25 +298,38 @@ pub fn build_decoration_map(
             }
 
             // ---- b/c end: emit bold, italic, or combined bold+italic ----
+            //
+            // Combined bold+italic is only triggered when the two tags are
+            // *directly adjacent* (delimiters touch with no intervening text).
+            // For `***text***`: Emphasis(0..N) wraps Strong(1..N-1) →
+            //   emph.start + 1 == strong.start  AND  strong.end + 1 == emph.end.
+            // For `**_text_**`: Strong(0..N) wraps Emphasis(2..N-2) →
+            //   strong.start + 2 == emph.start  AND  emph.end + 2 == strong.end.
+            //
+            // Non-adjacent nesting (`*italic **bold** rest*`) is two independent
+            // decorations; the outer tag's state is left in place for its own End.
             Event::End(TagEnd::Strong) => {
-                let strong = in_strong.take();
-                let emph = in_emphasis.take();
-                match (emph, strong) {
-                    (Some(outer), Some(inner)) => {
-                        // Emphasis(outer) contains Strong(inner): ***text*** or _**t**_
+                if let Some(strong_range) = in_strong.take() {
+                    // Peek at in_emphasis to check adjacency without consuming it.
+                    let adjacent = in_emphasis.as_ref().is_some_and(|emph| {
+                        emph.start + 1 == strong_range.start && strong_range.end + 1 == emph.end
+                    });
+                    if adjacent {
+                        // Emphasis(outer) wraps Strong(inner) with touching delimiters.
+                        let outer = in_emphasis.take().unwrap();
                         emit_bold_italic_spans(
                             &mut map,
                             &line_starts,
                             text,
                             outer,
-                            inner,
+                            strong_range,
                             true, // inner_is_strong
                             theme,
                             italic_support,
                         );
-                    }
-                    (None, Some(strong_range)) => {
-                        // Plain bold — no nesting.
+                    } else {
+                        // Plain bold — non-adjacent or no Emphasis context at all.
+                        // Leave in_emphasis in place so its own End(Emphasis) fires later.
                         let (start_line, start_char) =
                             byte_to_line_char(&line_starts, text, strong_range.start);
                         let (end_line, end_char_excl) =
@@ -283,13 +348,13 @@ pub fn build_decoration_map(
                                     start_line,
                                     make_span(start_char, start_char + 2, delim_style),
                                 );
-                                if start_char + 2 < end_char_excl.saturating_sub(2) {
-                                    push_span(
-                                        &mut map,
-                                        start_line,
-                                        make_span(start_char + 2, end_char_excl - 2, content_style),
-                                    );
-                                }
+                                emit_content_around_existing(
+                                    &mut map,
+                                    start_line,
+                                    start_char + 2,
+                                    end_char_excl.saturating_sub(2),
+                                    content_style,
+                                );
                                 push_span(
                                     &mut map,
                                     end_line,
@@ -298,29 +363,30 @@ pub fn build_decoration_map(
                             }
                         }
                     }
-                    _ => {} // both None: already handled by combined path
                 }
             }
 
             Event::End(TagEnd::Emphasis) => {
-                let emph = in_emphasis.take();
-                let strong = in_strong.take();
-                match (strong, emph) {
-                    (Some(outer), Some(inner)) => {
-                        // Strong(outer) contains Emphasis(inner): **_text_** or **_t_**
+                if let Some(emph_range) = in_emphasis.take() {
+                    // Peek at in_strong to check adjacency without consuming it.
+                    let adjacent = in_strong.as_ref().is_some_and(|strong| {
+                        strong.start + 2 == emph_range.start && emph_range.end + 2 == strong.end
+                    });
+                    if adjacent {
+                        // Strong(outer) wraps Emphasis(inner) with touching delimiters.
+                        let outer = in_strong.take().unwrap();
                         emit_bold_italic_spans(
                             &mut map,
                             &line_starts,
                             text,
                             outer,
-                            inner,
+                            emph_range,
                             false, // inner_is_strong = false (inner is Emphasis, 1-char delim)
                             theme,
                             italic_support,
                         );
-                    }
-                    (None, Some(emph_range)) => {
-                        // Plain italic — no nesting.
+                    } else {
+                        // Plain italic — non-adjacent or no Strong context at all.
                         let (start_line, start_char) =
                             byte_to_line_char(&line_starts, text, emph_range.start);
                         let (end_line, end_char_excl) =
@@ -342,13 +408,13 @@ pub fn build_decoration_map(
                                     start_line,
                                     make_span(start_char, start_char + 1, delim_style),
                                 );
-                                if start_char + 1 < end_char_excl.saturating_sub(1) {
-                                    push_span(
-                                        &mut map,
-                                        start_line,
-                                        make_span(start_char + 1, end_char_excl - 1, content_style),
-                                    );
-                                }
+                                emit_content_around_existing(
+                                    &mut map,
+                                    start_line,
+                                    start_char + 1,
+                                    end_char_excl.saturating_sub(1),
+                                    content_style,
+                                );
                                 push_span(
                                     &mut map,
                                     end_line,
@@ -357,7 +423,6 @@ pub fn build_decoration_map(
                             }
                         }
                     }
-                    _ => {} // both None: already handled by combined path
                 }
             }
 
@@ -1154,6 +1219,97 @@ mod tests {
         assert!(
             content.style.add_modifier.contains(Modifier::ITALIC),
             "**_hi_** content must be italic"
+        );
+    }
+
+    #[test]
+    fn bold_italic_non_adjacent_italic_wrapping_bold_is_not_combined() {
+        // *italic and **nested bold*** — bold is nested inside italic, but not adjacent.
+        // A false-positive combined decoration would produce a span with BOTH BOLD and
+        // ITALIC on the content. The correct result is independent bold + italic spans.
+        let text = "*italic and **nested bold***";
+        let map = build_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        let has_combined = spans.iter().any(|s| {
+            s.style.add_modifier.contains(Modifier::BOLD)
+                && s.style.add_modifier.contains(Modifier::ITALIC)
+        });
+        assert!(
+            !has_combined,
+            "non-adjacent nesting must not produce combined BOLD+ITALIC spans"
+        );
+        // The bold portion must still be decorated.
+        assert!(
+            spans.iter().any(|s| s.style.add_modifier.contains(Modifier::BOLD)),
+            "bold content span must exist independently"
+        );
+    }
+
+    #[test]
+    fn bold_italic_non_adjacent_bold_wrapping_italic_is_not_combined() {
+        // **bold and *nested italic* inside bold** — italic inside bold, but not adjacent.
+        let text = "**bold and *nested italic* inside bold**";
+        let map = build_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        let has_combined = spans.iter().any(|s| {
+            s.style.add_modifier.contains(Modifier::BOLD)
+                && s.style.add_modifier.contains(Modifier::ITALIC)
+        });
+        assert!(
+            !has_combined,
+            "non-adjacent nesting must not produce combined BOLD+ITALIC spans"
+        );
+    }
+
+    #[test]
+    fn nested_bold_inside_italic_uses_bold_color_not_italic_color() {
+        // *italic and **nested bold*** — "nested bold" must have bold_color, not italic_color.
+        // The bug (before emit_content_around_existing) was that the outer italic content
+        // span swallowed the inner bold spans in split_into_spans, making "nested bold"
+        // render with italic_color.
+        let text = "*italic and **nested bold***";
+        let theme = make_theme();
+        let map = build_map(text, &theme, true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+
+        // "nested bold" content span must use bold_color.
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.style.fg == Some(theme.bold_color)
+                    && !s.style.add_modifier.contains(Modifier::ITALIC)),
+            "bold content inside italic must use bold_color (not italic_color)"
+        );
+
+        // The italic prefix ("italic and ") must also have italic_color.
+        assert!(
+            spans.iter().any(|s| s.style.fg == Some(theme.italic_color)),
+            "italic prefix before bold must use italic_color"
+        );
+    }
+
+    #[test]
+    fn nested_italic_inside_bold_uses_italic_color_not_bold_color() {
+        // **bold and *nested italic* inside bold** — "nested italic" must have italic_color.
+        // Outer bold content must have bold_color in the regions outside the italic.
+        let text = "**bold and *nested italic* inside bold**";
+        let theme = make_theme();
+        let map = build_map(text, &theme, true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+
+        // "nested italic" must use italic_color.
+        assert!(
+            spans.iter().any(|s| s.style.fg == Some(theme.italic_color)),
+            "italic content inside bold must use italic_color"
+        );
+
+        // Outer bold regions ("bold and " and " inside bold") must use bold_color.
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.style.fg == Some(theme.bold_color)
+                    && s.style.add_modifier.contains(Modifier::BOLD)),
+            "outer bold content must use bold_color with BOLD modifier"
         );
     }
 

@@ -186,9 +186,9 @@ pub(super) fn event_loop<B: ratatui::backend::Backend>(
             } else {
                 pre_layout.column
             };
-            // Skip the clamp for one frame when the user is free-scrolling
-            // (mouse wheel or Ctrl+Up/Down).  The next keyboard/edit event
-            // leaves free_scroll false and clamp re-engages automatically.
+            // Clamp is skipped while the user is free-scrolling (mouse wheel or
+            // Ctrl+Up/Down).  free_scroll persists across frames until any non-scroll
+            // event clears it at the top of the event-poll block below.
             if !app.free_scroll {
                 clamp_scroll(
                     app,
@@ -197,7 +197,6 @@ pub(super) fn event_loop<B: ratatui::backend::Backend>(
                     BOTTOM_PADDING,
                 );
             }
-            app.free_scroll = false;
         }
 
         execute!(io::stdout(), BeginSynchronizedUpdate)?;
@@ -253,6 +252,9 @@ pub(super) fn event_loop<B: ratatui::backend::Backend>(
         execute!(io::stdout(), EndSynchronizedUpdate)?;
 
         if event::poll(POLL_TIMEOUT)? {
+            // Any event re-engages cursor-clamping scroll, except scroll events
+            // themselves which immediately set free_scroll = true below.
+            app.free_scroll = false;
             match event::read()? {
                 Event::Key(k) => {
                     if matches!(app.status.mode, StatusMode::ExitPrompt) {

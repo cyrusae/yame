@@ -621,6 +621,88 @@ mod tests {
     }
 
     #[test]
+    fn heading_delimiter_bold_survives_split_into_spans() {
+        // Verify that Modifier::BOLD on a StyledSpan passes through split_into_spans
+        // to the resulting ratatui Span — confirming the renderer pipeline carries BOLD.
+        let delim_span = StyledSpan {
+            char_start: 0,
+            char_end: 2,
+            style: Style::default()
+                .fg(ratatui::style::Color::Rgb(100, 150, 200))
+                .add_modifier(Modifier::BOLD),
+            ..Default::default()
+        };
+        let segments = split_into_spans("# Hello", &[delim_span], Style::default());
+        let hash_span = segments
+            .iter()
+            .find(|s| s.content.starts_with('#'))
+            .expect("span starting with # must exist");
+        assert!(
+            hash_span.style.add_modifier.contains(Modifier::BOLD),
+            "BOLD modifier must survive split_into_spans for heading delimiter"
+        );
+    }
+
+    #[test]
+    fn heading_delimiter_bold_reaches_buffer() {
+        // End-to-end: render a decorated H1 line into a ratatui Buffer and confirm
+        // that the `#` cell carries Modifier::BOLD.  This catches any renderer path
+        // that might silently drop the modifier before it hits the terminal.
+        use ratatui::buffer::Buffer;
+        use ratatui::widgets::Widget;
+
+        let area = ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width: 40,
+            height: 3,
+        };
+        let mut buf = Buffer::empty(area);
+
+        let theme = crate::config::Theme::default_theme();
+        let mut deco = DecorationMap::default();
+        deco.insert(
+            0,
+            vec![
+                StyledSpan {
+                    char_start: 0,
+                    char_end: 2, // "# "
+                    style: Style::default()
+                        .fg(theme.headings.h1)
+                        .add_modifier(Modifier::BOLD),
+                    ..Default::default()
+                },
+                StyledSpan {
+                    char_start: 2,
+                    char_end: 7, // "Hello"
+                    style: Style::default()
+                        .fg(theme.headings.h1)
+                        .add_modifier(Modifier::BOLD),
+                    ..Default::default()
+                },
+            ],
+        );
+
+        let view = MarkdownView {
+            lines: &["# Hello".to_string()],
+            decoration_map: &deco,
+            scroll_top: 0,
+            cursor: (0, 0),
+            selection: None,
+            theme: &theme,
+            column_width: 40,
+        };
+        view.render(area, &mut buf);
+
+        // The `#` char is at x = GUTTER (= 1), y = 0.
+        let cell = buf.cell((GUTTER, 0)).expect("cell must exist");
+        assert!(
+            cell.modifier.contains(Modifier::BOLD),
+            "H1 # character must carry Modifier::BOLD in the rendered ratatui buffer"
+        );
+    }
+
+    #[test]
     fn heading_delimiter_fg_survives_split_into_spans() {
         use ratatui::style::Color;
         let green = Color::Rgb(166, 227, 161);

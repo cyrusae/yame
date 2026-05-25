@@ -16,6 +16,8 @@ renderer's line-wrapping logic and continuation indentation.
 
 Mixed: **bold and *nested italic* inside bold** — pulldown-cmark handles this correctly.
 
+What about *italic and **nested bold***?
+
 ---
 
 ## Inline Elements
