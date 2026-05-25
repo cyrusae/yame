@@ -28,6 +28,10 @@ pub struct App {
     pub status: StatusLine,
     pub config_warnings: Vec<String>,
     pub scroll_top: usize,
+    /// Lazily-initialised system clipboard handle. `None` until the first copy/paste,
+    /// then reused for the session to avoid reconnecting on every operation (expensive
+    /// on Wayland where arboard opens a new display-server connection each time).
+    pub clipboard: Option<arboard::Clipboard>,
     /// True when the file was 0 bytes (or did not exist) at load time.
     /// Prevents handle_save from growing a 0-byte file to a 1-byte bare newline
     /// when the buffer is still empty.  Reset to false after any non-empty save.
@@ -65,6 +69,7 @@ impl App {
             status: StatusLine::default(),
             config_warnings,
             scroll_top: 0,
+            clipboard: None,
             initial_file_empty,
         })
     }
@@ -128,6 +133,7 @@ mod tests {
             status: StatusLine::default(),
             config_warnings: vec![],
             scroll_top: 0,
+            clipboard: None,
             initial_file_empty: false,
         }
     }

@@ -137,14 +137,20 @@ fn add_byte_range_span(
 // Step 6.3 — build_decoration_map
 // ---------------------------------------------------------------------------
 
-/// Build the full decoration map from `text`.
+/// Build the full decoration map from `text` and simultaneously count words.
 ///
+/// Returns `(DecorationMap, word_count)` so callers avoid a second parser pass.
 /// Pure function — no terminal or UI side effects. This is the v1.5 migration seam:
 /// when moving to a background thread, only the call site changes.
 #[mutants::skip]
-pub fn build_decoration_map(text: &str, theme: &Theme, italic_support: bool) -> DecorationMap {
+pub fn build_decoration_map(
+    text: &str,
+    theme: &Theme,
+    italic_support: bool,
+) -> (DecorationMap, usize) {
     let line_starts = line_start_bytes(text);
     let mut map: DecorationMap = HashMap::new();
+    let mut word_count = 0usize;
 
     let options =
         Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS | Options::ENABLE_STRIKETHROUGH;
@@ -325,7 +331,8 @@ pub fn build_decoration_map(text: &str, theme: &Theme, italic_support: bool) -> 
             }
 
             // ---- d. Inline code ----
-            Event::Code(_) => {
+            Event::Code(s) => {
+                word_count += s.split_whitespace().count();
                 let (start_line, start_char) = byte_to_line_char(&line_starts, text, range.start);
                 let (end_line, end_char_excl) = byte_to_line_char(&line_starts, text, range.end);
                 let code_style = Style::default().fg(theme.code_color).bg(theme.code_bg);
@@ -815,11 +822,17 @@ pub fn build_decoration_map(text: &str, theme: &Theme, italic_support: bool) -> 
                 );
             }
 
+            // ---- m. Word count — accumulate plain text events ----
+            // (Event::Code is handled above in its decoration arm)
+            Event::Text(s) => {
+                word_count += s.split_whitespace().count();
+            }
+
             _ => {}
         }
     }
 
-    map
+    (map, word_count)
 }
 
 // ---------------------------------------------------------------------------
@@ -878,6 +891,12 @@ mod tests {
         Theme::default_theme()
     }
 
+    /// Convenience wrapper: run build_decoration_map and discard the word count.
+    /// Keeps test call-sites terse now that the function returns a tuple.
+    fn build_map(text: &str, theme: &Theme, italic_support: bool) -> DecorationMap {
+        build_decoration_map(text, theme, italic_support).0
+    }
+
     // ---- Step 6.2 tests ----
 
     #[test]
@@ -926,7 +945,7 @@ mod tests {
     #[test]
     fn heading_h1_has_full_line_bg() {
         let text = "# Hello World";
-        let map = build_decoration_map(text, &make_theme(), true);
+        let map = build_map(text, &make_theme(), true);
         let spans = map.get(&0).expect("line 0 should have spans");
         assert!(
             spans.iter().any(|s| s.full_line_bg.is_some()),
@@ -937,7 +956,7 @@ mod tests {
     #[test]
     fn heading_h1_is_bold() {
         let text = "# Heading";
-        let map = build_decoration_map(text, &make_theme(), true);
+        let map = build_map(text, &make_theme(), true);
         let spans = map.get(&0).expect("line 0 should have spans");
         assert!(
             spans
@@ -950,7 +969,7 @@ mod tests {
     #[test]
     fn heading_h3_not_bold() {
         let text = "### Heading Three";
-        let map = build_decoration_map(text, &make_theme(), true);
+        let map = build_map(text, &make_theme(), true);
         let spans = map.get(&0).expect("line 0 should have spans");
         // H3+ should not have bold modifier
         assert!(
@@ -965,7 +984,7 @@ mod tests {
     #[test]
     fn bold_span_exists() {
         let text = "Text **bold content** here";
-        let map = build_decoration_map(text, &make_theme(), true);
+        let map = build_map(text, &make_theme(), true);
         let spans = map.get(&0).expect("line 0 should have spans");
         assert!(
             spans
@@ -978,7 +997,7 @@ mod tests {
     #[test]
     fn bold_delimiter_has_blended_color() {
         let text = "**hi**";
-        let map = build_decoration_map(text, &make_theme(), true);
+        let map = build_map(text, &make_theme(), true);
         let spans = map.get(&0).expect("line 0 should have spans");
         // There should be 3 spans: delim, content, delim
         assert!(spans.len() >= 2, "bold should produce multiple spans");
@@ -988,7 +1007,7 @@ mod tests {
     #[test]
     fn italic_span_with_support() {
         let text = "*italic text*";
-        let map = build_decoration_map(text, &make_theme(), true);
+        let map = build_map(text, &make_theme(), true);
         let spans = map.get(&0).expect("line 0 should have spans");
         assert!(
             spans
@@ -1001,7 +1020,7 @@ mod tests {
     #[test]
     fn italic_span_without_support_no_modifier() {
         let text = "*italic text*";
-        let map = build_decoration_map(text, &make_theme(), false);
+        let map = build_map(text, &make_theme(), false);
         let spans = map.get(&0).expect("line 0 should have spans");
         assert!(
             !spans
@@ -1015,7 +1034,7 @@ mod tests {
     #[test]
     fn inline_code_has_code_bg() {
         let text = "text `code` text";
-        let map = build_decoration_map(text, &make_theme(), true);
+        let map = build_map(text, &make_theme(), true);
         let spans = map.get(&0).expect("line 0 should have spans");
         assert!(
             spans.iter().any(|s| s.style.bg.is_some()),
@@ -1027,7 +1046,7 @@ mod tests {
     #[test]
     fn fenced_code_block_has_bg_on_all_lines() {
         let text = "before\n```\ncode line 1\ncode line 2\n```\nafter";
-        let map = build_decoration_map(text, &make_theme(), true);
+        let map = build_map(text, &make_theme(), true);
         // The fenced block spans lines 1-4 (the ``` delimiters + content)
         // At least lines 2 and 3 (code content) should have fenced_bg
         let has_fenced = map
@@ -1041,7 +1060,7 @@ mod tests {
         // ``` delimiter lines must use the blended (dimmed) colour, not raw code_color.
         let text = "before\n```\ncode\n```\nafter";
         let theme = make_theme();
-        let map = build_decoration_map(text, &theme, true);
+        let map = build_map(text, &theme, true);
         let expected_fg = blend_colors(theme.code_color, theme.muted, theme.delimiter_blend);
         // Opening fence is line 1, closing fence is line 3.
         let opening = map.get(&1).expect("opening fence line must have spans");
@@ -1061,7 +1080,7 @@ mod tests {
         // The ` chars around inline code must be dimmed; content uses code_color.
         let text = "text `hello` text";
         let theme = make_theme();
-        let map = build_decoration_map(text, &theme, true);
+        let map = build_map(text, &theme, true);
         let spans = map.get(&0).expect("line 0 must have spans");
         let expected_delim = blend_colors(theme.code_color, theme.muted, theme.delimiter_blend);
         // Opening ` at char 5, closing ` at char 11 — both must be dimmed.
@@ -1091,7 +1110,7 @@ mod tests {
         // Language tag is accent blended toward muted — hue pop without full brightness.
         let text = "before\n```rust\nlet x = 1;\n```\nafter";
         let theme = make_theme();
-        let map = build_decoration_map(text, &theme, true);
+        let map = build_map(text, &theme, true);
         let expected = blend_colors(theme.accent, theme.muted, theme.delimiter_blend);
         // Opening fence with language tag is line 1.
         let opening = map.get(&1).expect("opening fence line must have spans");
@@ -1105,7 +1124,7 @@ mod tests {
     #[test]
     fn blockquote_has_indicator_span() {
         let text = "> quoted text";
-        let map = build_decoration_map(text, &make_theme(), true);
+        let map = build_map(text, &make_theme(), true);
         let spans = map.get(&0).expect("line 0 should have spans");
         assert!(
             spans
@@ -1118,7 +1137,7 @@ mod tests {
     #[test]
     fn blockquote_sets_is_blockquote_flag() {
         let text = "> A blockquote";
-        let map = build_decoration_map(text, &make_theme(), true);
+        let map = build_map(text, &make_theme(), true);
         let spans = map.get(&0).expect("line 0 should have spans");
         assert!(
             spans.iter().any(|s| s.is_blockquote),
@@ -1130,7 +1149,7 @@ mod tests {
     #[test]
     fn link_text_has_underline() {
         let text = "[example](https://example.com)";
-        let map = build_decoration_map(text, &make_theme(), true);
+        let map = build_map(text, &make_theme(), true);
         let spans = map.get(&0).expect("line 0 should have spans");
         assert!(
             spans
@@ -1151,7 +1170,7 @@ mod tests {
     #[test]
     fn list_bullet_has_accent_color() {
         let text = "- item one\n- item two";
-        let map = build_decoration_map(text, &make_theme(), true);
+        let map = build_map(text, &make_theme(), true);
         let theme = make_theme();
         // At least one span should have accent color on line 0
         let spans = map.get(&0).expect("line 0 should have spans");
@@ -1165,7 +1184,7 @@ mod tests {
     #[test]
     fn todo_unchecked_bracket_has_accent() {
         let text = "- [ ] todo item";
-        let map = build_decoration_map(text, &make_theme(), true);
+        let map = build_map(text, &make_theme(), true);
         let theme = make_theme();
         let spans = map.get(&0).expect("line 0 should have spans");
         assert!(
@@ -1178,7 +1197,7 @@ mod tests {
     fn todo_checked_is_muted_no_strikethrough() {
         let text = "- [x] done item";
         let theme = make_theme();
-        let map = build_decoration_map(text, &theme, true);
+        let map = build_map(text, &theme, true);
         let spans = map.get(&0).expect("line 0 should have spans");
         // Item text after the bracket must use todo_done colour.
         assert!(
@@ -1203,7 +1222,7 @@ mod tests {
     #[test]
     fn table_pipes_have_muted_color() {
         let text = "| A | B |\n| - | - |\n| 1 | 2 |";
-        let map = build_decoration_map(text, &make_theme(), true);
+        let map = build_map(text, &make_theme(), true);
         let theme = make_theme();
         let has_pipe_spans = map
             .values()
@@ -1215,7 +1234,7 @@ mod tests {
     #[test]
     fn table_header_is_bold() {
         let text = "| Head A | Head B |\n| --- | --- |\n| cell | cell |";
-        let map = build_decoration_map(text, &make_theme(), true);
+        let map = build_map(text, &make_theme(), true);
         let has_bold = map
             .values()
             .flatten()
@@ -1242,7 +1261,7 @@ mod tests {
     fn heading_with_multibyte_chars() {
         let text = "# Café résumé";
         // Should not panic
-        let map = build_decoration_map(text, &make_theme(), true);
+        let map = build_map(text, &make_theme(), true);
         assert!(map.contains_key(&0));
     }
 
@@ -1250,7 +1269,7 @@ mod tests {
     fn bold_with_multibyte_chars() {
         let text = "**café**";
         // Should not panic
-        let _map = build_decoration_map(text, &make_theme(), true);
+        let _map = build_map(text, &make_theme(), true);
     }
 
     // Full fixture smoke test (subset — full integration test in Phase 11)
@@ -1258,7 +1277,7 @@ mod tests {
     fn fixture_produces_nonempty_map() {
         let text = include_str!("../tests/fixtures/sample.md");
         let theme = make_theme();
-        let map = build_decoration_map(text, &theme, true);
+        let map = build_map(text, &theme, true);
         assert!(!map.is_empty(), "fixture should produce decorations");
     }
 
@@ -1266,7 +1285,7 @@ mod tests {
     fn fixture_has_heading_bg() {
         let text = include_str!("../tests/fixtures/sample.md");
         let theme = make_theme();
-        let map = build_decoration_map(text, &theme, true);
+        let map = build_map(text, &theme, true);
         // Line 0 is `# Heading One`
         let spans = map.get(&0).expect("line 0 should have heading spans");
         assert!(spans.iter().any(|s| s.full_line_bg.is_some()));
@@ -1276,7 +1295,7 @@ mod tests {
     fn fixture_has_blockquote() {
         let text = include_str!("../tests/fixtures/sample.md");
         let theme = make_theme();
-        let map = build_decoration_map(text, &theme, true);
+        let map = build_map(text, &theme, true);
         assert!(
             map.values().flatten().any(|s| s.is_blockquote),
             "fixture should have blockquote spans"
@@ -1293,7 +1312,7 @@ mod tests {
     #[test]
     fn strikethrough_has_crossed_out_modifier() {
         let text = "normal ~~struck~~ normal";
-        let map = build_decoration_map(text, &make_theme(), true);
+        let map = build_map(text, &make_theme(), true);
         let spans = map.get(&0).expect("line 0 should have spans");
         assert!(
             spans
@@ -1306,7 +1325,7 @@ mod tests {
     #[test]
     fn strikethrough_delimiters_are_blended() {
         let text = "~~hi~~";
-        let map = build_decoration_map(text, &make_theme(), true);
+        let map = build_map(text, &make_theme(), true);
         let spans = map.get(&0).expect("line 0 should have spans");
         // Should produce at least delimiter + content spans
         assert!(
@@ -1320,7 +1339,7 @@ mod tests {
     fn horizontal_rule_sets_is_rule_flag() {
         // A `---` line surrounded by blank lines is a thematic break in pulldown-cmark
         let text = "above\n\n---\n\nbelow";
-        let map = build_decoration_map(text, &make_theme(), true);
+        let map = build_map(text, &make_theme(), true);
         assert!(
             map.values().flatten().any(|s| s.is_rule),
             "horizontal rule must set is_rule=true on its line"
@@ -1332,7 +1351,7 @@ mod tests {
     fn heading_h1_delimiter_is_blended() {
         let text = "# Hello";
         let theme = make_theme();
-        let map = build_decoration_map(text, &theme, true);
+        let map = build_map(text, &theme, true);
         let spans = map.get(&0).expect("line 0 should have spans");
         // Should have both delimiter span (char 0..2) and content span (char 2..)
         let has_delim = spans.iter().any(|s| s.char_start == 0 && s.char_end == 2);
@@ -1360,7 +1379,7 @@ mod tests {
     #[test]
     fn heading_h2_delimiter_is_three_chars() {
         let text = "## Title";
-        let map = build_decoration_map(text, &make_theme(), true);
+        let map = build_map(text, &make_theme(), true);
         let spans = map.get(&0).expect("line 0 should have spans");
         // `## ` = 3 chars: delimiter at 0..3
         let has_delim = spans.iter().any(|s| s.char_start == 0 && s.char_end == 3);
@@ -1370,7 +1389,7 @@ mod tests {
     #[test]
     fn heading_h1_has_border_bottom() {
         let text = "# Heading One";
-        let map = build_decoration_map(text, &make_theme(), true);
+        let map = build_map(text, &make_theme(), true);
         let spans = map.get(&0).expect("line 0 should have spans");
         assert!(
             spans.iter().any(|s| s.border_bottom.is_some()),
@@ -1381,7 +1400,7 @@ mod tests {
     #[test]
     fn heading_h4_no_border_bottom() {
         let text = "#### Heading Four";
-        let map = build_decoration_map(text, &make_theme(), true);
+        let map = build_map(text, &make_theme(), true);
         let spans = map.get(&0).expect("line 0 should have spans");
         assert!(
             !spans.iter().any(|s| s.border_bottom.is_some()),
@@ -1397,7 +1416,7 @@ mod tests {
         // The inner c_start < c_end guard must prevent an empty span being emitted.
         // If that guard becomes c_start <= c_end, a zero-width span at (2..2) appears.
         let text = "# ";
-        let map = build_decoration_map(text, &make_theme(), true);
+        let map = build_map(text, &make_theme(), true);
         let spans = map.get(&0).expect("line 0 should have spans");
         assert!(
             !spans.iter().any(|s| s.char_start == s.char_end),
@@ -1412,7 +1431,7 @@ mod tests {
         // Deleting full_line_bg from the delimiter StyledSpan must be caught even
         // when the content span still carries it.
         let text = "# Hello";
-        let map = build_decoration_map(text, &make_theme(), true);
+        let map = build_map(text, &make_theme(), true);
         let spans = map.get(&0).expect("line 0 should have spans");
         assert!(
             spans
@@ -1427,7 +1446,7 @@ mod tests {
         // Deleting border_bottom from the delimiter StyledSpan must be caught even
         // when the content span still carries it.
         let text = "# Hello";
-        let map = build_decoration_map(text, &make_theme(), true);
+        let map = build_map(text, &make_theme(), true);
         let spans = map.get(&0).expect("line 0 should have spans");
         assert!(
             spans
@@ -1443,7 +1462,7 @@ mod tests {
         // which won't match the blended delimiter fg.
         let text = "# Hello";
         let theme = make_theme();
-        let map = build_decoration_map(text, &theme, true);
+        let map = build_map(text, &theme, true);
         let spans = map.get(&0).expect("line 0 should have spans");
         let delim = spans
             .iter()
@@ -1467,7 +1486,7 @@ mod tests {
     fn heading_content_span_char_end_reaches_line_end() {
         // Deleting char_end from the content StyledSpan makes it default to 0.
         let text = "# Hello"; // 7 chars
-        let map = build_decoration_map(text, &make_theme(), true);
+        let map = build_map(text, &make_theme(), true);
         let spans = map.get(&0).expect("line 0 should have spans");
         let content = spans
             .iter()
@@ -1484,7 +1503,7 @@ mod tests {
         // Deleting border_bottom from the content StyledSpan must be caught even
         // when the delimiter span still carries it.
         let text = "# Hello";
-        let map = build_decoration_map(text, &make_theme(), true);
+        let map = build_map(text, &make_theme(), true);
         let spans = map.get(&0).expect("line 0 should have spans");
         let content = spans
             .iter()
@@ -1503,7 +1522,7 @@ mod tests {
         // The indicator span (0..1) already has is_blockquote=true.
         // This test ensures the content span (char_start >= 1) also carries it.
         let text = "> quoted text";
-        let map = build_decoration_map(text, &make_theme(), true);
+        let map = build_map(text, &make_theme(), true);
         let spans = map.get(&0).expect("line 0 should have spans");
         assert!(
             spans.iter().any(|s| s.is_blockquote && s.char_start >= 1),
@@ -1517,7 +1536,7 @@ mod tests {
     fn strikethrough_opening_delimiter_boundary() {
         // "~~hi~~": opening ~~ must occupy exactly chars 0..2.
         let text = "~~hi~~";
-        let map = build_decoration_map(text, &make_theme(), true);
+        let map = build_map(text, &make_theme(), true);
         let spans = map.get(&0).expect("line 0 should have spans");
         assert!(
             spans.iter().any(|s| s.char_start == 0 && s.char_end == 2),
@@ -1529,7 +1548,7 @@ mod tests {
     fn strikethrough_content_boundary_and_modifier() {
         // "~~hi~~": content must be at chars 2..4 with CROSSED_OUT.
         let text = "~~hi~~";
-        let map = build_decoration_map(text, &make_theme(), true);
+        let map = build_map(text, &make_theme(), true);
         let spans = map.get(&0).expect("line 0 should have spans");
         assert!(
             spans.iter().any(|s| {
@@ -1545,7 +1564,7 @@ mod tests {
     fn strikethrough_closing_delimiter_boundary() {
         // "~~hi~~": closing ~~ must occupy exactly chars 4..6.
         let text = "~~hi~~";
-        let map = build_decoration_map(text, &make_theme(), true);
+        let map = build_map(text, &make_theme(), true);
         let spans = map.get(&0).expect("line 0 should have spans");
         assert!(
             spans.iter().any(|s| s.char_start == 4 && s.char_end == 6),
@@ -1558,7 +1577,7 @@ mod tests {
     #[test]
     fn horizontal_rule_span_char_start_is_zero() {
         let text = "above\n\n---\n\nbelow";
-        let map = build_decoration_map(text, &make_theme(), true);
+        let map = build_map(text, &make_theme(), true);
         let rule = map
             .values()
             .flatten()
@@ -1570,7 +1589,7 @@ mod tests {
     #[test]
     fn horizontal_rule_span_char_end_covers_line() {
         let text = "above\n\n---\n\nbelow";
-        let map = build_decoration_map(text, &make_theme(), true);
+        let map = build_map(text, &make_theme(), true);
         let rule = map
             .values()
             .flatten()
@@ -1583,7 +1602,7 @@ mod tests {
     fn horizontal_rule_span_has_rule_color() {
         let text = "above\n\n---\n\nbelow";
         let theme = make_theme();
-        let map = build_decoration_map(text, &theme, true);
+        let map = build_map(text, &theme, true);
         let rule = map
             .values()
             .flatten()
@@ -1603,7 +1622,7 @@ mod tests {
         // byte offset of ](, placing the ] span one position too late.
         let text = "[héllo](url)";
         let theme = make_theme();
-        let map = build_decoration_map(text, &theme, true);
+        let map = build_map(text, &theme, true);
         let spans = map.get(&0).expect("line 0 must have spans");
 
         // Opening [  must sit at char 0
@@ -1633,7 +1652,7 @@ mod tests {
         // Ensure start_char is derived from byte_to_line_char, not raw range.start.
         let text = "héllo [world](url)";
         let theme = make_theme();
-        let map = build_decoration_map(text, &theme, true);
+        let map = build_map(text, &theme, true);
         let spans = map.get(&0).expect("line 0 must have spans");
 
         // [ is at char 6 (h=0 é=1 l=2 l=3 o=4 ' '=5 [=6)

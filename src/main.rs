@@ -20,7 +20,7 @@ use tui_textarea::CursorMove;
 
 use yame::app::App;
 use yame::config::{LayoutConfig, Theme, load_config, supports_italic};
-use yame::decoration::{build_decoration_map, count_words};
+use yame::decoration::build_decoration_map;
 use yame::renderer;
 use yame::status::StatusMode;
 
@@ -173,8 +173,9 @@ fn event_loop<B: ratatui::backend::Backend>(
     // keystroke to trigger the debounce.
     {
         let text = app.textarea.lines().join("\n");
-        app.decoration_map = build_decoration_map(&text, &app.theme, app.italic_support);
-        app.word_count = count_words(&text);
+        let (map, wc) = build_decoration_map(&text, &app.theme, app.italic_support);
+        app.decoration_map = map;
+        app.word_count = wc;
     }
 
     // Persisted across frames so mouse events can translate screen-absolute
@@ -190,8 +191,9 @@ fn event_loop<B: ratatui::backend::Backend>(
         // are pure functions; swap this block for tx.send(text) + rx.try_recv() when ready.
         if app.force_redecorate || app.last_keystroke.is_some_and(|t| t.elapsed() >= DEBOUNCE) {
             let text = app.textarea.lines().join("\n");
-            app.decoration_map = build_decoration_map(&text, &app.theme, app.italic_support);
-            app.word_count = count_words(&text);
+            let (map, wc) = build_decoration_map(&text, &app.theme, app.italic_support);
+            app.decoration_map = map;
+            app.word_count = wc;
             app.last_keystroke = None;
             app.force_redecorate = false;
         }
@@ -519,20 +521,23 @@ fn clamp_scroll(app: &mut App, editor_area: Rect, col_width: u16, bottom_padding
         .sum();
 
     // Find which visual sub-row within cursor_row the cursor sits on.
-    // Mirrors the renderer's pointer-arithmetic cursor-tracking logic.
+    // Iterates forward, tracking char_start incrementally — O(line_length) total
+    // instead of the O(N * line_length) pointer-arithmetic + chars().count() approach.
     let cursor_line_str = lines.get(cursor_row).map_or("", |s| s.as_str());
     let cursor_wraps = renderer::wrap_line(cursor_line_str, cw);
-    let cursor_subrow = cursor_wraps
-        .iter()
-        .enumerate()
-        .rev()
-        .find(|(_, wrap)| {
-            let byte_off =
-                (wrap.as_ptr() as usize).wrapping_sub(cursor_line_str.as_ptr() as usize);
-            let char_start = cursor_line_str[..byte_off].chars().count();
-            cursor_col >= char_start
-        })
-        .map_or(0, |(i, _)| i);
+    let cursor_subrow = {
+        let mut char_start = 0usize;
+        let mut subrow = 0usize;
+        for (i, wrap) in cursor_wraps.iter().enumerate() {
+            let char_end = char_start + wrap.chars().count();
+            if cursor_col < char_end || i + 1 == cursor_wraps.len() {
+                subrow = i;
+                break;
+            }
+            char_start = char_end;
+        }
+        subrow
+    };
 
     let cursor_visual = above_visual + cursor_subrow;
 
@@ -608,6 +613,7 @@ mod tests {
             status: StatusLine::default(),
             config_warnings: vec![],
             scroll_top: 0,
+            clipboard: None,
             initial_file_empty: false,
         }
     }

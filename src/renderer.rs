@@ -138,13 +138,14 @@ pub fn wrap_line(s: &str, width: usize) -> Vec<&str> {
         return vec![s];
     }
 
-    let char_indices: Vec<(usize, char)> = s.char_indices().collect();
-    let total_chars = char_indices.len();
-
-    // Fits on a single row without wrapping
+    // Count chars before allocating — avoids the Vec heap allocation for the
+    // common case where the line fits within the column width.
+    let total_chars = s.chars().count();
     if total_chars <= width {
         return vec![s];
     }
+
+    let char_indices: Vec<(usize, char)> = s.char_indices().collect();
 
     let mut result: Vec<&str> = Vec::new();
     let mut char_start = 0usize;
@@ -243,15 +244,17 @@ impl Widget for MarkdownView<'_> {
             let wrapped = wrap_line(line, content_width.max(1));
             let line_decs = self.decoration_map.get(&log_row);
 
+            // Track char_start incrementally across wrap segments — O(line_length) total
+            // rather than the O(N × line_length) approach of rescanning from byte 0 each row.
+            let mut running_char_start = 0usize;
             for (wrap_idx, &row_str) in wrapped.iter().enumerate() {
                 if visual_row >= visible {
                     break;
                 }
 
                 // --- Compute this visual row's char range within the logical line ---
-                let byte_off = (row_str.as_ptr() as usize).wrapping_sub(line.as_ptr() as usize);
-                let char_start = line[..byte_off].chars().count();
                 let char_len = row_str.chars().count();
+                let char_start = running_char_start;
                 let char_end = char_start + char_len;
 
                 // --- Cursor tracking ---
@@ -348,6 +351,7 @@ impl Widget for MarkdownView<'_> {
                 }
 
                 visual_row += 1;
+                running_char_start = char_end;
             }
 
             log_row += 1;
@@ -396,14 +400,15 @@ fn apply_selection_overlay(
         let line = &view.lines[log_row];
         let wrapped = wrap_line(line, content_width.max(1));
 
+        // Track char_start incrementally — same O(line_length) fix as the main render loop.
+        let mut running_char_start = 0usize;
         for row_str in &wrapped {
             if visual_row >= visible {
                 break;
             }
 
-            let byte_off = (row_str.as_ptr() as usize).wrapping_sub(line.as_ptr() as usize);
-            let char_start = line[..byte_off].chars().count();
             let char_len = row_str.chars().count();
+            let char_start = running_char_start;
             let char_end = char_start + char_len;
 
             if log_row >= sel_row_start && log_row <= sel_row_end {
@@ -435,6 +440,7 @@ fn apply_selection_overlay(
             }
 
             visual_row += 1;
+            running_char_start = char_end;
         }
 
         log_row += 1;
@@ -591,6 +597,7 @@ mod tests {
             status: StatusLine::default(),
             config_warnings: vec![],
             scroll_top: 0,
+            clipboard: None,
             initial_file_empty: false,
         }
     }

@@ -5,19 +5,29 @@ use crate::app::App;
 #[mutants::skip] // Clipboard I/O — arboard calls not testable in a headless CI environment.
 pub fn handle_copy(app: &mut App) {
     let text = get_copy_text(app);
-    match copy_to_clipboard(&text) {
-        Ok(()) => {}
-        Err(e) => {
-            app.status
-                .set_dismissible(format!("⚠ Clipboard unavailable: {e}"));
-        }
+    ensure_clipboard(app);
+    let err = app
+        .clipboard
+        .as_mut()
+        .ok_or_else(|| "clipboard unavailable".to_string())
+        .and_then(|cb| cb.set_text(text).map_err(|e| e.to_string()))
+        .err();
+    if let Some(e) = err {
+        app.status
+            .set_dismissible(format!("⚠ Clipboard unavailable: {e}"));
     }
 }
 
 /// Paste from the system clipboard into the buffer.
 #[mutants::skip] // Clipboard I/O.
 pub fn handle_paste(app: &mut App) {
-    match paste_from_clipboard() {
+    ensure_clipboard(app);
+    let result = app
+        .clipboard
+        .as_mut()
+        .ok_or_else(|| "clipboard unavailable".to_string())
+        .and_then(|cb| cb.get_text().map_err(|e| e.to_string()));
+    match result {
         Ok(text) => {
             app.textarea.insert_str(&text);
             app.mark_keystroke();
@@ -26,6 +36,17 @@ pub fn handle_paste(app: &mut App) {
             app.status
                 .set_dismissible(format!("⚠ Clipboard unavailable: {e}"));
         }
+    }
+}
+
+/// Lazily initialise `app.clipboard` on first use.
+///
+/// Reuses the existing connection if already open — avoids reconnecting to the
+/// display server (expensive on Wayland) on every copy/paste operation.
+#[mutants::skip] // arboard::Clipboard I/O — not available in CI.
+fn ensure_clipboard(app: &mut App) {
+    if app.clipboard.is_none() {
+        app.clipboard = arboard::Clipboard::new().ok();
     }
 }
 
@@ -63,18 +84,4 @@ fn get_copy_text(app: &App) -> String {
         let (row, _) = app.textarea.cursor();
         app.textarea.lines().get(row).cloned().unwrap_or_default()
     }
-}
-
-#[mutants::skip] // arboard::Clipboard I/O — not available in CI (no display server).
-pub fn copy_to_clipboard(text: &str) -> Result<(), String> {
-    arboard::Clipboard::new()
-        .and_then(|mut cb| cb.set_text(text.to_owned()))
-        .map_err(|e| e.to_string())
-}
-
-#[mutants::skip] // arboard::Clipboard I/O.
-pub fn paste_from_clipboard() -> Result<String, String> {
-    arboard::Clipboard::new()
-        .and_then(|mut cb| cb.get_text())
-        .map_err(|e| e.to_string())
 }
