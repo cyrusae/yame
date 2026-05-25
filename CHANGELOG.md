@@ -21,6 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - v1 polish: italic startup warning, `delimiter_blend` config token, parent-dir creation on save (#35)
 
 ### Fixed
+- Fix nested bold+italic rendering (***text*** shows as bold only) (#50)
 - Heading # delimiters not bold to match heading style (#91)
 - Soft-wrap list items with continuation indent (#59)
 - Soft-wrap space skip causes decoration spans to be off-by-1 char (#90)

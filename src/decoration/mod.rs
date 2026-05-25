@@ -15,6 +15,86 @@ use self::spans::{SpanParams, add_byte_range_span, line_char_len, make_span, pus
 use self::words::{count_chars_in, link_split_char_idx};
 
 // ---------------------------------------------------------------------------
+// Bold+italic combined helper
+// ---------------------------------------------------------------------------
+
+/// Emit spans for a bold+italic region where `outer_range` is the enclosing
+/// tag's byte range and `inner_range` is the nested tag's byte range.
+/// `inner_is_strong` is true when the *inner* tag uses `**` (2-char delimiter);
+/// false when it uses `*`/`_` (1-char delimiter).
+///
+/// pulldown-cmark nests `***text***` as `Emphasis { Strong { text } }`, so the
+/// outer delimiter is 1 char (`*`) and the inner is 2 chars (`**`).
+/// `**_text_**` nests as `Strong { Emphasis { text } }`, with outer = 2 and inner = 1.
+fn emit_bold_italic_spans(
+    map: &mut DecorationMap,
+    line_starts: &[usize],
+    text: &str,
+    outer_range: std::ops::Range<usize>,
+    inner_range: std::ops::Range<usize>,
+    inner_is_strong: bool,
+    theme: &Theme,
+    italic_support: bool,
+) {
+    let inner_delim = if inner_is_strong { 2usize } else { 1 };
+
+    let (start_line, start_char) = byte_to_line_char(line_starts, text, outer_range.start);
+    let (end_line, end_char_excl) = byte_to_line_char(line_starts, text, outer_range.end);
+    if start_line != end_line {
+        return; // multi-line bold+italic not handled in v1
+    }
+
+    let (_, inner_start_char) = byte_to_line_char(line_starts, text, inner_range.start);
+    let (_, inner_end_char) = byte_to_line_char(line_starts, text, inner_range.end);
+
+    let content_start = inner_start_char + inner_delim;
+    let content_end = inner_end_char.saturating_sub(inner_delim);
+    if content_start > content_end || content_start >= end_char_excl {
+        return;
+    }
+
+    // Blend bold and italic colors at 50 % for the combined content colour.
+    let combined_color = blend_colors(theme.bold_color, theme.italic_color, 0.5);
+    let delim_color = blend_colors(combined_color, theme.muted, theme.delimiter_blend);
+
+    let delim_style = Style::default()
+        .fg(delim_color)
+        .add_modifier(Modifier::BOLD);
+
+    let mut content_style = Style::default()
+        .fg(combined_color)
+        .add_modifier(Modifier::BOLD);
+    if italic_support {
+        content_style = content_style.add_modifier(Modifier::ITALIC);
+    }
+
+    // Opening delimiter (`***` / `**_` / `_**` / `___`)
+    if content_start > start_char {
+        push_span(
+            map,
+            start_line,
+            make_span(start_char, content_start, delim_style),
+        );
+    }
+    // Content
+    if content_end > content_start {
+        push_span(
+            map,
+            start_line,
+            make_span(content_start, content_end, content_style),
+        );
+    }
+    // Closing delimiter
+    if end_char_excl > content_end {
+        push_span(
+            map,
+            end_line,
+            make_span(content_end, end_char_excl, delim_style),
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -72,6 +152,9 @@ pub fn build_decoration_map(
 
     // State tracking
     let mut in_ordered_list = false;
+    // Bold+italic nesting detection: set on Start, cleared on End.
+    let mut in_strong: Option<std::ops::Range<usize>> = None;
+    let mut in_emphasis: Option<std::ops::Range<usize>> = None;
 
     for (event, range) in parser {
         match event {
@@ -152,84 +235,129 @@ pub fn build_decoration_map(
                 }
             }
 
-            // ---- b. Bold ----
+            // ---- b. Bold — record range; emit on End(Strong) ----
             Event::Start(Tag::Strong) => {
-                let (start_line, start_char) = byte_to_line_char(&line_starts, text, range.start);
-                let (end_line, end_char_excl) = byte_to_line_char(&line_starts, text, range.end);
+                in_strong = Some(range.clone());
+            }
 
-                if start_line == end_line {
-                    let span_len = end_char_excl.saturating_sub(start_char);
-                    if span_len >= 4 {
-                        let delim_style = Style::default()
-                            .fg(blend_colors(theme.text, theme.muted, theme.delimiter_blend))
-                            .add_modifier(Modifier::BOLD);
-                        let content_style = Style::default()
-                            .fg(theme.bold_color)
-                            .add_modifier(Modifier::BOLD);
+            // ---- c. Italic — record range; emit on End(Emphasis) ----
+            Event::Start(Tag::Emphasis) => {
+                in_emphasis = Some(range.clone());
+            }
 
-                        // opening **
-                        push_span(
+            // ---- b/c end: emit bold, italic, or combined bold+italic ----
+            Event::End(TagEnd::Strong) => {
+                let strong = in_strong.take();
+                let emph = in_emphasis.take();
+                match (emph, strong) {
+                    (Some(outer), Some(inner)) => {
+                        // Emphasis(outer) contains Strong(inner): ***text*** or _**t**_
+                        emit_bold_italic_spans(
                             &mut map,
-                            start_line,
-                            make_span(start_char, start_char + 2, delim_style),
-                        );
-                        // content
-                        if start_char + 2 < end_char_excl.saturating_sub(2) {
-                            push_span(
-                                &mut map,
-                                start_line,
-                                make_span(start_char + 2, end_char_excl - 2, content_style),
-                            );
-                        }
-                        // closing **
-                        push_span(
-                            &mut map,
-                            end_line,
-                            make_span(end_char_excl - 2, end_char_excl, delim_style),
+                            &line_starts,
+                            text,
+                            outer,
+                            inner,
+                            true, // inner_is_strong
+                            theme,
+                            italic_support,
                         );
                     }
+                    (None, Some(strong_range)) => {
+                        // Plain bold — no nesting.
+                        let (start_line, start_char) =
+                            byte_to_line_char(&line_starts, text, strong_range.start);
+                        let (end_line, end_char_excl) =
+                            byte_to_line_char(&line_starts, text, strong_range.end);
+                        if start_line == end_line {
+                            let span_len = end_char_excl.saturating_sub(start_char);
+                            if span_len >= 4 {
+                                let delim_style = Style::default()
+                                    .fg(blend_colors(theme.text, theme.muted, theme.delimiter_blend))
+                                    .add_modifier(Modifier::BOLD);
+                                let content_style = Style::default()
+                                    .fg(theme.bold_color)
+                                    .add_modifier(Modifier::BOLD);
+                                push_span(
+                                    &mut map,
+                                    start_line,
+                                    make_span(start_char, start_char + 2, delim_style),
+                                );
+                                if start_char + 2 < end_char_excl.saturating_sub(2) {
+                                    push_span(
+                                        &mut map,
+                                        start_line,
+                                        make_span(start_char + 2, end_char_excl - 2, content_style),
+                                    );
+                                }
+                                push_span(
+                                    &mut map,
+                                    end_line,
+                                    make_span(end_char_excl - 2, end_char_excl, delim_style),
+                                );
+                            }
+                        }
+                    }
+                    _ => {} // both None: already handled by combined path
                 }
             }
 
-            // ---- c. Italic ----
-            Event::Start(Tag::Emphasis) => {
-                let (start_line, start_char) = byte_to_line_char(&line_starts, text, range.start);
-                let (end_line, end_char_excl) = byte_to_line_char(&line_starts, text, range.end);
-
-                if start_line == end_line {
-                    let span_len = end_char_excl.saturating_sub(start_char);
-                    if span_len >= 2 {
-                        let delim_style = Style::default().fg(blend_colors(
-                            theme.italic_color,
-                            theme.muted,
-                            theme.delimiter_blend,
-                        ));
-                        let mut content_style = Style::default().fg(theme.italic_color);
-                        if italic_support {
-                            content_style = content_style.add_modifier(Modifier::ITALIC);
-                        }
-
-                        // opening *
-                        push_span(
+            Event::End(TagEnd::Emphasis) => {
+                let emph = in_emphasis.take();
+                let strong = in_strong.take();
+                match (strong, emph) {
+                    (Some(outer), Some(inner)) => {
+                        // Strong(outer) contains Emphasis(inner): **_text_** or **_t_**
+                        emit_bold_italic_spans(
                             &mut map,
-                            start_line,
-                            make_span(start_char, start_char + 1, delim_style),
-                        );
-                        // content
-                        if start_char + 1 < end_char_excl.saturating_sub(1) {
-                            push_span(
-                                &mut map,
-                                start_line,
-                                make_span(start_char + 1, end_char_excl - 1, content_style),
-                            );
-                        }
-                        // closing *
-                        push_span(
-                            &mut map,
-                            end_line,
-                            make_span(end_char_excl - 1, end_char_excl, delim_style),
+                            &line_starts,
+                            text,
+                            outer,
+                            inner,
+                            false, // inner_is_strong = false (inner is Emphasis, 1-char delim)
+                            theme,
+                            italic_support,
                         );
                     }
+                    (None, Some(emph_range)) => {
+                        // Plain italic — no nesting.
+                        let (start_line, start_char) =
+                            byte_to_line_char(&line_starts, text, emph_range.start);
+                        let (end_line, end_char_excl) =
+                            byte_to_line_char(&line_starts, text, emph_range.end);
+                        if start_line == end_line {
+                            let span_len = end_char_excl.saturating_sub(start_char);
+                            if span_len >= 2 {
+                                let delim_style = Style::default().fg(blend_colors(
+                                    theme.italic_color,
+                                    theme.muted,
+                                    theme.delimiter_blend,
+                                ));
+                                let mut content_style = Style::default().fg(theme.italic_color);
+                                if italic_support {
+                                    content_style = content_style.add_modifier(Modifier::ITALIC);
+                                }
+                                push_span(
+                                    &mut map,
+                                    start_line,
+                                    make_span(start_char, start_char + 1, delim_style),
+                                );
+                                if start_char + 1 < end_char_excl.saturating_sub(1) {
+                                    push_span(
+                                        &mut map,
+                                        start_line,
+                                        make_span(start_char + 1, end_char_excl - 1, content_style),
+                                    );
+                                }
+                                push_span(
+                                    &mut map,
+                                    end_line,
+                                    make_span(end_char_excl - 1, end_char_excl, delim_style),
+                                );
+                            }
+                        }
+                    }
+                    _ => {} // both None: already handled by combined path
                 }
             }
 
@@ -946,6 +1074,125 @@ mod tests {
                 .iter()
                 .any(|s| s.style.add_modifier.contains(Modifier::ITALIC)),
             "should not apply ITALIC modifier when italic_support=false"
+        );
+    }
+
+    // ---- b+c. Bold+italic combined (***text***) ----
+
+    #[test]
+    fn bold_italic_has_both_modifiers_with_support() {
+        // ***hi*** — should produce BOLD | ITALIC on the content span.
+        let text = "***hi***";
+        let map = build_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        let content = spans.iter().find(|s| s.char_start == 3 && s.char_end == 5);
+        assert!(content.is_some(), "content span at chars 3..5 must exist");
+        let content = content.unwrap();
+        assert!(
+            content.style.add_modifier.contains(Modifier::BOLD),
+            "bold+italic content must have BOLD modifier"
+        );
+        assert!(
+            content.style.add_modifier.contains(Modifier::ITALIC),
+            "bold+italic content must have ITALIC modifier when italic_support=true"
+        );
+    }
+
+    #[test]
+    fn bold_italic_without_support_has_bold_not_italic() {
+        let text = "***hi***";
+        let map = build_map(text, &make_theme(), false);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        let content = spans.iter().find(|s| s.char_start == 3 && s.char_end == 5);
+        assert!(content.is_some(), "content span at 3..5 must exist even without italic support");
+        let content = content.unwrap();
+        assert!(
+            content.style.add_modifier.contains(Modifier::BOLD),
+            "BOLD must be applied regardless of italic_support"
+        );
+        assert!(
+            !content.style.add_modifier.contains(Modifier::ITALIC),
+            "ITALIC must not be applied when italic_support=false"
+        );
+    }
+
+    #[test]
+    fn bold_italic_delimiter_boundaries() {
+        // ***hi*** = chars 0..8; opening *** = 0..3, content = 3..5, closing *** = 5..8.
+        let text = "***hi***";
+        let map = build_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        assert!(
+            spans.iter().any(|s| s.char_start == 0 && s.char_end == 3),
+            "opening *** delimiter must be at chars 0..3"
+        );
+        assert!(
+            spans.iter().any(|s| s.char_start == 3 && s.char_end == 5),
+            "content must be at chars 3..5"
+        );
+        assert!(
+            spans.iter().any(|s| s.char_start == 5 && s.char_end == 8),
+            "closing *** delimiter must be at chars 5..8"
+        );
+    }
+
+    #[test]
+    fn bold_italic_alt_syntax_bold_then_italic() {
+        // **_text_** — Strong wraps Emphasis; outer=0..10, inner=2..8.
+        // Opening delim = 0..3 (**_), content = 3..7, closing = 7..10 (_**).
+        let text = "**_hi_**";
+        let map = build_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        // Content "hi" is at chars 3..5 (inner_start=2 + 1 = 3, inner_end=6 - 1 = 5).
+        let content = spans.iter().find(|s| s.char_start == 3 && s.char_end == 5);
+        assert!(content.is_some(), "content span must exist for **_hi_**");
+        let content = content.unwrap();
+        assert!(
+            content.style.add_modifier.contains(Modifier::BOLD),
+            "**_hi_** content must be bold"
+        );
+        assert!(
+            content.style.add_modifier.contains(Modifier::ITALIC),
+            "**_hi_** content must be italic"
+        );
+    }
+
+    #[test]
+    fn plain_bold_still_works_after_refactor() {
+        // Regression: **text** must still produce bold-only spans.
+        let text = "**bold**";
+        let map = build_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        // Content at 2..6, no ITALIC.
+        let content = spans.iter().find(|s| s.char_start == 2 && s.char_end == 6);
+        assert!(content.is_some(), "bold content span at 2..6 must exist");
+        let content = content.unwrap();
+        assert!(
+            content.style.add_modifier.contains(Modifier::BOLD),
+            "**bold** must have BOLD"
+        );
+        assert!(
+            !content.style.add_modifier.contains(Modifier::ITALIC),
+            "**bold** must NOT have ITALIC"
+        );
+    }
+
+    #[test]
+    fn plain_italic_still_works_after_refactor() {
+        // Regression: *text* must still produce italic-only spans.
+        let text = "*italic*";
+        let map = build_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        let content = spans.iter().find(|s| s.char_start == 1 && s.char_end == 7);
+        assert!(content.is_some(), "italic content span at 1..7 must exist");
+        let content = content.unwrap();
+        assert!(
+            content.style.add_modifier.contains(Modifier::ITALIC),
+            "*italic* must have ITALIC"
+        );
+        assert!(
+            !content.style.add_modifier.contains(Modifier::BOLD),
+            "*italic* must NOT have BOLD"
         );
     }
 
