@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- Wrap terminal.draw() with synchronized output protocol to eliminate Enter/Backspace flicker (#78)
 - Add no-args help output (suggest file path usage) (#88)
 - Color tweaks: heading # toward bg, ~~ revert to muted, checkbox brackets muted, fenced lang tag muted (#80)
 - Escape key exits (clean buffer) or prompts (dirty buffer), matching Ctrl+X (#66)
@@ -15,6 +16,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - v1 polish: italic startup warning, `delimiter_blend` config token, parent-dir creation on save (#35)
 
 ### Fixed
+- Fix decoration flash on Enter/Backspace: force immediate redecorate on structural keystrokes (#79)
+- Cmd+C (forwarded as Ctrl+C) cuts/deletes selected text instead of copying (#73)
 - Fix empty-file POSIX growth: saving empty buffer writes 1-byte newline (#84)
 - Fix screen_to_doc missing upper-bound boundary checks on mouse click (#82)
 - Fix exit-prompt Esc/Ctrl+C shadowed by outer key match arms (#81)
@@ -28,6 +31,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Italic default color now matches text color (not accent blend) (#60)
 
 ### Changed
+- Separate scroll clamping from terminal.draw closure (pure render) (#86)
 - Update DESIGN.md: remove stale scrollbar widget reference (#87)
 - split_into_spans: early-exit for undecorated lines to avoid heap alloc (#85)
 - Skip decoration rebuild on pure navigation keystrokes (#83)

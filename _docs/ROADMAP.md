@@ -1,7 +1,7 @@
 # `yame` Roadmap & Next Steps
 
-_Generated 2026-05-24. Decisions recorded same day._
-_Baseline: 93 tests green, clippy clean, Phases 0–11 complete._
+_Generated 2026-05-24. Last updated 2026-05-25._
+_Baseline: 122 tests green, clippy clean, Phases 0–11 complete._
 
 ---
 
@@ -21,10 +21,13 @@ _Baseline: 93 tests green, clippy clean, Phases 0–11 complete._
 
 ## Current State (v0.1 — Phase 12 pending)
 
-All planned v1 phases are implemented except the README (Phase 12, #13). The three
-critical bugs from the adversarial review have been fixed (POSIX newline, mouse
-coordinate offset, dirty-flag on navigation). Four live-testing UI issues fixed (initial
-decoration pass, gutter, todo muted-only, narrow info line). Scrollbar removed.
+All planned v1 phases are implemented except the README (Phase 12, #13). Full
+adversarial review (FEEDBACK-1) addressed: exit-prompt key shadowing fixed, mouse
+boundary checks added, nav-key decoration timer suppressed, empty-file POSIX growth
+fixed, split_into_spans hot-path allocation fixed, scroll clamping extracted from
+terminal.draw into a pure pre-draw step, synchronized output wrapping added, heading #
+delimiter color pipeline fixed, Cmd+C/S/V mapped for macOS. DESIGN.md updated (scrollbar
+removed). 122 tests passing.
 
 ---
 
@@ -286,26 +289,35 @@ comment is in `layout.rs`.
 
 | Item | Location | Issue | Notes |
 |---|---|---|---|
-| State mutation inside `terminal.draw` | `main.rs` | — | Scroll clamping in draw closure; architecturally should be in event handler. No correctness impact. Low priority. |
+| ~~State mutation inside `terminal.draw`~~ | ~~`main.rs`~~ | ~~#86~~ | ~~Resolved: clamp_scroll extracted as a named pre-draw function.~~ |
 | `#[mutants::skip]` on clipboard handlers | `clipboard.rs` | — | `handle_copy`/`handle_paste` skip mutation testing. Could be tested with mock. |
 
 ---
 
 ## Issue Index
 
-| Issue | Title | Sprint |
-|---|---|---|
-| #13 | Phase 12: README & Distribution | v1 |
-| #35 | v1 polish: italic warning, delimiter_blend, parent-dir, theme tokens + cleanup | v1 |
-| #36 | v1.5: merge count_words into build_decoration_map | 1.5-S1 |
-| #37 | v1.5: O(N²) char counting + allocation hot-paths | 1.5-S1 |
-| #38 | v1.5: cache arboard::Clipboard in App | 1.5-S1 |
-| #39 | v1.5: blockquote continuation indent | 1.5-S2 |
-| #40 | v1.5: tab character expansion on load | 1.5-S2 |
-| #41 | v1.5: CJK / wide character support | 1.5-S3 |
-| #42 | v1.5: Ctrl+R config reload | 1.5-S4 |
-| #43 | v1.5: smart pair wrapping | 1.5-S4 |
-| #44 | v1.5: syntect fenced code highlighting | 1.5-S5 |
-| #45 | v1.5: background decoration thread | 1.5-S5 |
-| #46 | v2: Ctrl+F search with regex | v2 |
-| #47 | v2: line numbers | v2 |
+| Issue | Title | Sprint | Status |
+|---|---|---|---|
+| #13 | Phase 12: README & Distribution | v1 | open |
+| ~~#35~~ | ~~v1 polish: italic warning, delimiter_blend, parent-dir, theme tokens + cleanup~~ | ~~v1~~ | done |
+| #36 | v1.5: merge count_words into build_decoration_map | 1.5-S1 | open |
+| #37 | v1.5: O(N²) char counting + allocation hot-paths | 1.5-S1 | partial (#85 done) |
+| #38 | v1.5: cache arboard::Clipboard in App | 1.5-S1 | open |
+| #39 | v1.5: blockquote continuation indent | 1.5-S2 | open |
+| #40 | v1.5: tab character expansion on load | 1.5-S2 | open |
+| #41 | v1.5: CJK / wide character support | 1.5-S3 | open |
+| #42 | v1.5: Ctrl+R config reload | 1.5-S4 | open |
+| #43 | v1.5: smart pair wrapping | 1.5-S4 | open |
+| #44 | v1.5: syntect fenced code highlighting | 1.5-S5 | open |
+| #45 | v1.5: background decoration thread | 1.5-S5 | open |
+| #46 | v2: Ctrl+F search with regex | v2 | open |
+| #47 | v2: line numbers | v2 | open |
+| #50 | Fix nested bold+italic rendering (***) | v1-bug | open |
+| #54 | Replace Powerline glyph with universal fallback | v1-polish | open |
+| #56 | Decouple scroll from cursor | v1.5 | open |
+| #59 | Soft-wrap list items with continuation indent | v1.5-S2 | open |
+| #71 | Wide char (CJK) scroll redraw artifact | bug | open |
+| #74 | Split decoration.rs into parser/renderer modules | refactor | open |
+| #76 | Rework status message display | polish | open |
+| #77 | In-app settings modal | v2 | open |
+| #89 | Integration test planning | testing | open |

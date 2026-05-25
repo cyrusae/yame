@@ -197,6 +197,29 @@ fn event_loop<B: ratatui::backend::Backend>(
         }
         app.status.tick();
 
+        // ── Pre-draw scroll clamp ─────────────────────────────────────────────
+        // Compute layout from the current terminal size so clamp_scroll can run
+        // before terminal.draw(), keeping the draw closure as a pure render.
+        // terminal.size() and f.area() inside draw() should agree; if a resize
+        // races between the two calls it will be corrected on the next iteration.
+        {
+            let term_size = terminal.size()?;
+            let term_area = Rect::new(0, 0, term_size.width, term_size.height);
+            let pre_layout = compute_layout(term_area, min_cols);
+            let pre_editor_area = if !app.config_warnings.is_empty()
+                && pre_layout.column.height > 0
+            {
+                Rect {
+                    y: pre_layout.column.y + 1,
+                    height: pre_layout.column.height.saturating_sub(1),
+                    ..pre_layout.column
+                }
+            } else {
+                pre_layout.column
+            };
+            clamp_scroll(app, pre_editor_area, pre_layout.column.width, BOTTOM_PADDING);
+        }
+
         execute!(io::stdout(), BeginSynchronizedUpdate)?;
         terminal.draw(|f| {
             let layout = compute_layout(f.area(), min_cols);
@@ -237,81 +260,6 @@ fn event_loop<B: ratatui::backend::Backend>(
             } else {
                 layout.column
             };
-
-            // Clamp scroll_top so the cursor stays visible after every keystroke,
-            // mouse click, or terminal resize.
-            //
-            // IMPORTANT: we track *visual* rows (after soft/hard wrap), not logical
-            // rows.  A logical line that wraps into N visual rows consumes N slots in
-            // the viewport, so a pure logical-row clamp lets the cursor drift off the
-            // bottom whenever wrapped lines sit between scroll_top and the cursor.
-            //
-            // BOTTOM_PADDING is applied by firing the scroll clamp BOTTOM_PADDING rows
-            // early — the viewport itself stays full height so all rows remain usable
-            // mid-document.  The renderer already draws canvas bg past end-of-content,
-            // so those virtual padding rows appear naturally.
-            //
-            // content_width must match the renderer's own calculation exactly so that
-            // wrap_line returns the same split as what gets drawn.
-            let (cursor_row, cursor_col) = app.textarea.cursor();
-            let visible_rows = editor_area.height as usize;
-            let lines = app.textarea.lines();
-            let cw = (layout.column.width as usize)
-                .saturating_sub(2 * renderer::GUTTER as usize)
-                .max(1);
-
-            // ── Scroll up: cursor above the viewport ──────────────────────────
-            if cursor_row < app.scroll_top {
-                app.scroll_top = cursor_row;
-            }
-
-            // ── Scroll down: check cursor's visual position ───────────────────
-            // Count visual rows occupied by logical lines [scroll_top, cursor_row).
-            let above_visual: usize = lines
-                .get(app.scroll_top..cursor_row.min(lines.len()))
-                .unwrap_or(&[])
-                .iter()
-                .map(|l| renderer::wrap_line(l, cw).len())
-                .sum();
-
-            // Find which visual sub-row within cursor_row the cursor sits on.
-            // Mirrors the renderer's cursor-tracking logic (pointer-arithmetic char_start).
-            let cursor_line_str = lines.get(cursor_row).map_or("", |s| s.as_str());
-            let cursor_wraps = renderer::wrap_line(cursor_line_str, cw);
-            let cursor_subrow = cursor_wraps
-                .iter()
-                .enumerate()
-                .rev()
-                .find(|(_, wrap)| {
-                    let byte_off =
-                        (wrap.as_ptr() as usize).wrapping_sub(cursor_line_str.as_ptr() as usize);
-                    let char_start = cursor_line_str[..byte_off].chars().count();
-                    cursor_col >= char_start
-                })
-                .map_or(0, |(i, _)| i);
-
-            let cursor_visual = above_visual + cursor_subrow;
-
-            // Fire BOTTOM_PADDING rows early so the cursor never sits flush at the
-            // very bottom of the viewport.
-            if cursor_visual + BOTTOM_PADDING >= visible_rows {
-                // Walk backward from cursor_row, accumulating visual rows, until we
-                // find a scroll_top that places the cursor at (last visible row − padding).
-                let headroom = visible_rows.saturating_sub(1 + cursor_subrow + BOTTOM_PADDING);
-                let mut remaining = headroom;
-                let mut new_top = cursor_row;
-                while new_top > 0 {
-                    let prev_wraps =
-                        renderer::wrap_line(lines.get(new_top - 1).map_or("", |s| s.as_str()), cw)
-                            .len();
-                    if prev_wraps > remaining {
-                        break;
-                    }
-                    remaining -= prev_wraps;
-                    new_top -= 1;
-                }
-                app.scroll_top = new_top;
-            }
 
             let view = renderer::MarkdownView {
                 lines: app.textarea.lines(),
@@ -540,6 +488,78 @@ fn handle_save(app: &mut App) -> io::Result<()> {
     Ok(())
 }
 
+/// Clamp `app.scroll_top` so the cursor remains visible within `editor_area`.
+///
+/// Extracted from the draw closure so that `terminal.draw` can be a pure render
+/// with no state mutations.  Call this with the pre-draw layout values (derived
+/// from `terminal.size()`) each iteration before invoking `terminal.draw`.
+///
+/// `col_width`      – full column width in terminal cells (includes gutters).
+/// `bottom_padding` – virtual empty rows to keep below the cursor.
+fn clamp_scroll(app: &mut App, editor_area: Rect, col_width: u16, bottom_padding: usize) {
+    let (cursor_row, cursor_col) = app.textarea.cursor();
+    let visible_rows = editor_area.height as usize;
+    let lines = app.textarea.lines();
+    let cw = (col_width as usize)
+        .saturating_sub(2 * renderer::GUTTER as usize)
+        .max(1);
+
+    // ── Scroll up: cursor above the viewport ──────────────────────────────────
+    if cursor_row < app.scroll_top {
+        app.scroll_top = cursor_row;
+    }
+
+    // ── Scroll down: check cursor's visual (post-wrap) position ───────────────
+    // Count visual rows occupied by logical lines [scroll_top, cursor_row).
+    let above_visual: usize = lines
+        .get(app.scroll_top..cursor_row.min(lines.len()))
+        .unwrap_or(&[])
+        .iter()
+        .map(|l| renderer::wrap_line(l, cw).len())
+        .sum();
+
+    // Find which visual sub-row within cursor_row the cursor sits on.
+    // Mirrors the renderer's pointer-arithmetic cursor-tracking logic.
+    let cursor_line_str = lines.get(cursor_row).map_or("", |s| s.as_str());
+    let cursor_wraps = renderer::wrap_line(cursor_line_str, cw);
+    let cursor_subrow = cursor_wraps
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, wrap)| {
+            let byte_off =
+                (wrap.as_ptr() as usize).wrapping_sub(cursor_line_str.as_ptr() as usize);
+            let char_start = cursor_line_str[..byte_off].chars().count();
+            cursor_col >= char_start
+        })
+        .map_or(0, |(i, _)| i);
+
+    let cursor_visual = above_visual + cursor_subrow;
+
+    // Fire `bottom_padding` rows early so the cursor never sits flush at the
+    // very bottom of the viewport.
+    if cursor_visual + bottom_padding >= visible_rows {
+        // Walk backward from cursor_row, accumulating visual rows, until we
+        // find a scroll_top that places the cursor at (last visible row − padding).
+        let headroom = visible_rows.saturating_sub(1 + cursor_subrow + bottom_padding);
+        let mut remaining = headroom;
+        let mut new_top = cursor_row;
+        while new_top > 0 {
+            let prev_wraps = renderer::wrap_line(
+                lines.get(new_top - 1).map_or("", |s| s.as_str()),
+                cw,
+            )
+            .len();
+            if prev_wraps > remaining {
+                break;
+            }
+            remaining -= prev_wraps;
+            new_top -= 1;
+        }
+        app.scroll_top = new_top;
+    }
+}
+
 /// Returns true if the app should exit.
 fn handle_exit(app: &mut App) -> bool {
     if app.is_dirty {
@@ -612,5 +632,59 @@ mod tests {
             matches!(app.status.mode, StatusMode::ExitPrompt),
             "dirty exit must show ExitPrompt"
         );
+    }
+
+    // ── clamp_scroll tests ────────────────────────────────────────────────────
+    // col_width=82 → cw = 82 - 2*GUTTER.  GUTTER=2 → cw=78.
+    // All test lines are short enough that wrap_line returns 1 segment each.
+    const TEST_COL: u16 = 82; // gives cw=78 with GUTTER=2
+
+    fn make_editor_area(height: u16) -> Rect {
+        Rect { x: 0, y: 0, width: TEST_COL, height }
+    }
+
+    fn make_app_with_lines(lines: &[&str]) -> App {
+        let mut app = make_app();
+        app.textarea = TextArea::new(lines.iter().map(|s| s.to_string()).collect());
+        app
+    }
+
+    #[test]
+    fn clamp_scroll_cursor_above_viewport_scrolls_up() {
+        // scroll_top=5, cursor at line 2 → must scroll up to 2.
+        let mut app = make_app_with_lines(&["a"; 20]);
+        app.scroll_top = 5;
+        app.textarea.move_cursor(tui_textarea::CursorMove::Jump(2, 0));
+        clamp_scroll(&mut app, make_editor_area(10), TEST_COL, 0);
+        assert_eq!(app.scroll_top, 2, "cursor above viewport → scroll_top = cursor_row");
+    }
+
+    #[test]
+    fn clamp_scroll_cursor_in_viewport_unchanged() {
+        // scroll_top=0, cursor at line 3, viewport height=10 → no change.
+        let mut app = make_app_with_lines(&["a"; 20]);
+        app.scroll_top = 0;
+        app.textarea.move_cursor(tui_textarea::CursorMove::Jump(3, 0));
+        clamp_scroll(&mut app, make_editor_area(10), TEST_COL, 0);
+        assert_eq!(app.scroll_top, 0, "cursor inside viewport → scroll_top unchanged");
+    }
+
+    #[test]
+    fn clamp_scroll_cursor_at_bottom_with_padding_scrolls_down() {
+        // 20 short lines, scroll_top=0, cursor at line 9, viewport=10, padding=3.
+        // cursor_visual=9, 9+3=12 >= 10 → must scroll down.
+        let mut app = make_app_with_lines(&["a"; 20]);
+        app.scroll_top = 0;
+        app.textarea.move_cursor(tui_textarea::CursorMove::Jump(9, 0));
+        clamp_scroll(&mut app, make_editor_area(10), TEST_COL, 3);
+        assert!(app.scroll_top > 0, "cursor near bottom with padding → scroll_top advances");
+    }
+
+    #[test]
+    fn clamp_scroll_zero_height_does_not_panic() {
+        // Degenerate case: zero-height editor (e.g. terminal too small).
+        let mut app = make_app_with_lines(&["a"; 5]);
+        clamp_scroll(&mut app, make_editor_area(0), TEST_COL, 3);
+        // Must not panic; scroll_top may be anything.
     }
 }
