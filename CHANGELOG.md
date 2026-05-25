@@ -34,6 +34,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Italic default color now matches text color (not accent blend) (#60)
 
 ### Changed
+- Strikethrough text color: match blockquote blend; tildes stay muted (#92)
 - v1.5: cache arboard::Clipboard instance in App (#38)
 - v1.5: fix O(N2) char counting and allocation hot-paths in renderer (#37)
 - v1.5: merge count_words into build_decoration_map (single-pass) (#36)
