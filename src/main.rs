@@ -56,7 +56,14 @@ fn run(file_path: PathBuf) -> io::Result<()> {
 
     let tab_width = config.layout.tab_width.unwrap_or(4) as usize;
     let powerline_glyphs = config.layout.powerline_glyphs.unwrap_or(false);
-    let mut app = App::new(file_path, theme, italic_support, powerline_glyphs, warnings, tab_width)?;
+    let mut app = App::new(
+        file_path,
+        theme,
+        italic_support,
+        powerline_glyphs,
+        warnings,
+        tab_width,
+    )?;
 
     if !italic_support {
         app.status.set_dismissible(
@@ -332,7 +339,10 @@ mod tests {
         app.free_scroll = true;
         let (cursor_after, _) = app.textarea.cursor();
         assert_eq!(app.scroll_top, 3, "scroll_top advanced by SCROLL_LINES");
-        assert_eq!(cursor_before, cursor_after, "cursor must not move on scroll");
+        assert_eq!(
+            cursor_before, cursor_after,
+            "cursor must not move on scroll"
+        );
         assert!(app.free_scroll, "free_scroll must be set");
     }
 
@@ -345,7 +355,10 @@ mod tests {
         app.free_scroll = true;
         let (cursor_after, _) = app.textarea.cursor();
         assert_eq!(app.scroll_top, 3, "scroll_top decreased by SCROLL_LINES");
-        assert_eq!(cursor_before, cursor_after, "cursor must not move on scroll");
+        assert_eq!(
+            cursor_before, cursor_after,
+            "cursor must not move on scroll"
+        );
         assert!(app.free_scroll, "free_scroll must be set");
     }
 
@@ -387,6 +400,9 @@ mod tests {
     fn plain_up_is_navigation_key() {
         // Regression: plain Up must still be navigation after is_navigation_key refactor.
         let k = make_key(KeyCode::Up);
-        assert!(is_navigation_key(&k), "plain Up must remain a navigation key");
+        assert!(
+            is_navigation_key(&k),
+            "plain Up must remain a navigation key"
+        );
     }
 }

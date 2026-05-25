@@ -63,8 +63,8 @@ pub(super) fn screen_to_doc(
 pub(super) fn is_navigation_key(k: &crossterm::event::KeyEvent) -> bool {
     use crossterm::event::KeyModifiers;
     // Ctrl+Up/Down are viewport-scroll keys — they don't edit content.
-    let ctrl_scroll = k.modifiers == KeyModifiers::CONTROL
-        && matches!(k.code, KeyCode::Up | KeyCode::Down);
+    let ctrl_scroll =
+        k.modifiers == KeyModifiers::CONTROL && matches!(k.code, KeyCode::Up | KeyCode::Down);
     ctrl_scroll
         || matches!(
             k.code,

@@ -18,6 +18,29 @@ use self::words::{count_chars_in, link_split_char_idx};
 // Span-emission helpers
 // ---------------------------------------------------------------------------
 
+/// Layer an additional `modifier` on top of all spans in `map[line]` that
+/// overlap `[range_start, range_end)`.
+///
+/// Used when an *outer* tag's End fires after the inner tag's spans are already
+/// committed.  For example, in `**bold and *italic* bold**` the Strong End fires
+/// after the Emphasis End has already placed italic spans; calling this with
+/// `Modifier::BOLD` ensures the overlap region ends up with both BOLD and ITALIC.
+fn add_modifier_to_existing(
+    map: &mut DecorationMap,
+    line: usize,
+    range_start: usize,
+    range_end: usize,
+    modifier: Modifier,
+) {
+    if let Some(spans) = map.get_mut(&line) {
+        for span in spans.iter_mut() {
+            if span.char_end > range_start && span.char_start < range_end {
+                span.style = span.style.add_modifier(modifier);
+            }
+        }
+    }
+}
+
 /// Emit a styled span in segments over `[range_start, range_end)`, skipping
 /// any char-ranges that are already decorated in `map` for the given line.
 ///
@@ -338,7 +361,11 @@ pub fn build_decoration_map(
                             let span_len = end_char_excl.saturating_sub(start_char);
                             if span_len >= 4 {
                                 let delim_style = Style::default()
-                                    .fg(blend_colors(theme.text, theme.muted, theme.delimiter_blend))
+                                    .fg(blend_colors(
+                                        theme.text,
+                                        theme.muted,
+                                        theme.delimiter_blend,
+                                    ))
                                     .add_modifier(Modifier::BOLD);
                                 let content_style = Style::default()
                                     .fg(theme.bold_color)
@@ -359,6 +386,15 @@ pub fn build_decoration_map(
                                     &mut map,
                                     end_line,
                                     make_span(end_char_excl - 2, end_char_excl, delim_style),
+                                );
+                                // Layer BOLD onto any inner spans (e.g. italic) in the
+                                // bold content region so the overlap has both modifiers.
+                                add_modifier_to_existing(
+                                    &mut map,
+                                    start_line,
+                                    start_char + 2,
+                                    end_char_excl.saturating_sub(2),
+                                    Modifier::BOLD,
                                 );
                             }
                         }
@@ -420,6 +456,17 @@ pub fn build_decoration_map(
                                     end_line,
                                     make_span(end_char_excl - 1, end_char_excl, delim_style),
                                 );
+                                // Layer ITALIC onto any inner spans (e.g. bold) in the
+                                // italic content region so the overlap has both modifiers.
+                                if italic_support {
+                                    add_modifier_to_existing(
+                                        &mut map,
+                                        start_line,
+                                        start_char + 1,
+                                        end_char_excl.saturating_sub(1),
+                                        Modifier::ITALIC,
+                                    );
+                                }
                             }
                         }
                     }
@@ -1169,7 +1216,10 @@ mod tests {
         let map = build_map(text, &make_theme(), false);
         let spans = map.get(&0).expect("line 0 should have spans");
         let content = spans.iter().find(|s| s.char_start == 3 && s.char_end == 5);
-        assert!(content.is_some(), "content span at 3..5 must exist even without italic support");
+        assert!(
+            content.is_some(),
+            "content span at 3..5 must exist even without italic support"
+        );
         let content = content.unwrap();
         assert!(
             content.style.add_modifier.contains(Modifier::BOLD),
@@ -1223,41 +1273,59 @@ mod tests {
     }
 
     #[test]
-    fn bold_italic_non_adjacent_italic_wrapping_bold_is_not_combined() {
-        // *italic and **nested bold*** — bold is nested inside italic, but not adjacent.
-        // A false-positive combined decoration would produce a span with BOTH BOLD and
-        // ITALIC on the content. The correct result is independent bold + italic spans.
+    fn bold_italic_non_adjacent_italic_wrapping_bold_overlap_has_bold_italic() {
+        // *italic and **nested bold*** — bold nested inside italic.
+        // The overlap region ("nested bold") must have BOTH BOLD+ITALIC so it renders
+        // as bold-italic in the terminal.  The prefix ("italic and ") must be
+        // ITALIC-only — no BOLD should bleed into text that is only italic.
         let text = "*italic and **nested bold***";
         let map = build_map(text, &make_theme(), true);
         let spans = map.get(&0).expect("line 0 should have spans");
-        let has_combined = spans.iter().any(|s| {
-            s.style.add_modifier.contains(Modifier::BOLD)
-                && s.style.add_modifier.contains(Modifier::ITALIC)
-        });
+
+        // Overlap must have both modifiers.
         assert!(
-            !has_combined,
-            "non-adjacent nesting must not produce combined BOLD+ITALIC spans"
+            spans
+                .iter()
+                .any(|s| s.style.add_modifier.contains(Modifier::BOLD)
+                    && s.style.add_modifier.contains(Modifier::ITALIC)),
+            "bold content nested inside italic must carry both BOLD+ITALIC modifiers"
         );
-        // The bold portion must still be decorated.
+
+        // The pure-italic prefix ("italic and ") must be ITALIC-only.
         assert!(
-            spans.iter().any(|s| s.style.add_modifier.contains(Modifier::BOLD)),
-            "bold content span must exist independently"
+            spans
+                .iter()
+                .any(|s| s.style.add_modifier.contains(Modifier::ITALIC)
+                    && !s.style.add_modifier.contains(Modifier::BOLD)),
+            "italic prefix before the bold region must be ITALIC-only (no BOLD)"
         );
     }
 
     #[test]
-    fn bold_italic_non_adjacent_bold_wrapping_italic_is_not_combined() {
-        // **bold and *nested italic* inside bold** — italic inside bold, but not adjacent.
+    fn bold_italic_non_adjacent_bold_wrapping_italic_overlap_has_bold_italic() {
+        // **bold and *nested italic* inside bold** — italic nested inside bold.
+        // The overlap region ("nested italic") must have BOTH BOLD+ITALIC.
+        // The pure-bold prefix ("bold and ") must be BOLD-only.
         let text = "**bold and *nested italic* inside bold**";
         let map = build_map(text, &make_theme(), true);
         let spans = map.get(&0).expect("line 0 should have spans");
-        let has_combined = spans.iter().any(|s| {
-            s.style.add_modifier.contains(Modifier::BOLD)
-                && s.style.add_modifier.contains(Modifier::ITALIC)
-        });
+
+        // Overlap must have both modifiers.
         assert!(
-            !has_combined,
-            "non-adjacent nesting must not produce combined BOLD+ITALIC spans"
+            spans
+                .iter()
+                .any(|s| s.style.add_modifier.contains(Modifier::BOLD)
+                    && s.style.add_modifier.contains(Modifier::ITALIC)),
+            "italic content nested inside bold must carry both BOLD+ITALIC modifiers"
+        );
+
+        // The pure-bold prefix ("bold and ") must be BOLD-only.
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.style.add_modifier.contains(Modifier::BOLD)
+                    && !s.style.add_modifier.contains(Modifier::ITALIC)),
+            "bold prefix before the italic region must be BOLD-only (no ITALIC)"
         );
     }
 
@@ -1272,13 +1340,12 @@ mod tests {
         let map = build_map(text, &theme, true);
         let spans = map.get(&0).expect("line 0 should have spans");
 
-        // "nested bold" content span must use bold_color.
+        // "nested bold" content span must use bold_color and carry BOLD.
+        // It will also carry ITALIC (layered by the outer italic span), which is correct.
         assert!(
-            spans
-                .iter()
-                .any(|s| s.style.fg == Some(theme.bold_color)
-                    && !s.style.add_modifier.contains(Modifier::ITALIC)),
-            "bold content inside italic must use bold_color (not italic_color)"
+            spans.iter().any(|s| s.style.fg == Some(theme.bold_color)
+                && s.style.add_modifier.contains(Modifier::BOLD)),
+            "bold content inside italic must use bold_color with BOLD modifier"
         );
 
         // The italic prefix ("italic and ") must also have italic_color.
@@ -1305,10 +1372,8 @@ mod tests {
 
         // Outer bold regions ("bold and " and " inside bold") must use bold_color.
         assert!(
-            spans
-                .iter()
-                .any(|s| s.style.fg == Some(theme.bold_color)
-                    && s.style.add_modifier.contains(Modifier::BOLD)),
+            spans.iter().any(|s| s.style.fg == Some(theme.bold_color)
+                && s.style.add_modifier.contains(Modifier::BOLD)),
             "outer bold content must use bold_color with BOLD modifier"
         );
     }
@@ -2058,6 +2123,69 @@ mod tests {
         assert_eq!(c1, "too");
         assert_eq!(r1.start, 17);
         assert_eq!(r1.end, 22);
+    }
+
+    // ---- Range diagnostics ----
+
+    #[test]
+    fn debug_pulldown_bold_italic_byte_ranges() {
+        use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
+
+        // (text, emph_start, strong_start, strong_end, emph_end)
+        // For `***text***` Emphasis wraps Strong, adjacent:
+        //   emph: 0..17, strong: 1..16 → emph.start+1==strong.start, strong.end+1==emph.end ✓
+        // For `**_text_**` Strong wraps Emphasis:
+        //   strong: 0..8, emph: 2..6 → strong.start+2==emph.start, emph.end+2==strong.end ✓
+        // For `*x and **y***` non-adjacent (italic wrapping bold):
+        //   emph: 0..N, strong: offset..N-1 → emph.start+1 ≠ strong.start ✓ (not adjacent)
+        let cases: &[(&str, usize, usize, usize, usize)] = &[
+            ("***bold-italic***", 0, 1, 16, 17),
+            ("**_bold-italic_**", 0, 0, 15, 15), // placeholder, overwritten below
+        ];
+        let _ = cases; // will not use the table form; just print and assert non-adjacent
+
+        let options =
+            Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS | Options::ENABLE_STRIKETHROUGH;
+
+        // Verify the adjacent case gives correct ranges.
+        {
+            let text = "***bold-italic***";
+            let mut emph = (0usize, 0usize);
+            let mut strong = (0usize, 0usize);
+            for (event, range) in Parser::new_ext(text, options).into_offset_iter() {
+                match event {
+                    Event::Start(Tag::Emphasis) => emph = (range.start, range.end),
+                    Event::Start(Tag::Strong) => strong = (range.start, range.end),
+                    _ => {}
+                }
+            }
+            assert_eq!(emph, (0, 17), "Emphasis range for ***bold-italic***");
+            assert_eq!(strong, (1, 16), "Strong range for ***bold-italic***");
+            // Adjacency: emph.start+1 == strong.start AND strong.end+1 == emph.end
+            assert_eq!(emph.0 + 1, strong.0, "adjacent: emph.start+1==strong.start");
+            assert_eq!(strong.1 + 1, emph.1, "adjacent: strong.end+1==emph.end");
+        }
+
+        // Verify non-adjacent case does NOT satisfy the adjacency check.
+        {
+            let text = "*italic and **nested bold***";
+            let mut emph = (0usize, 0usize);
+            let mut strong = (0usize, 0usize);
+            for (event, range) in Parser::new_ext(text, options).into_offset_iter() {
+                match event {
+                    Event::Start(Tag::Emphasis) => emph = (range.start, range.end),
+                    Event::Start(Tag::Strong) => strong = (range.start, range.end),
+                    _ => {}
+                }
+            }
+            let adjacent = emph.0 + 1 == strong.0 && strong.1 + 1 == emph.1;
+            assert!(
+                !adjacent,
+                "non-adjacent nesting must NOT satisfy adjacency check; \
+                 emph={:?}, strong={:?}",
+                emph, strong
+            );
+        }
     }
 
     // ---- No span bleeds past closing backtick ----

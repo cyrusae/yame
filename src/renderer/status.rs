@@ -58,7 +58,12 @@ pub(super) fn build_normal_status_bar(app: &App) -> Line<'static> {
     let canvas_bg = theme.bg;
     let hints_bg = theme.ui_bg;
     let muted_fg = theme.muted;
-    let sep = if app.powerline_glyphs { SEP_POWERLINE } else { SEP_UNIVERSAL }.to_string();
+    let sep = if app.powerline_glyphs {
+        SEP_POWERLINE
+    } else {
+        SEP_UNIVERSAL
+    }
+    .to_string();
 
     let (pill_bg, pill_fg) = if app.is_dirty {
         (theme.accent, theme.bg)
