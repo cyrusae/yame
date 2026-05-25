@@ -61,17 +61,22 @@ pub(super) fn screen_to_doc(
 /// Returns true if the key is a pure cursor-movement key that cannot change
 /// document content. Used to skip the decoration debounce timer on nav presses.
 pub(super) fn is_navigation_key(k: &crossterm::event::KeyEvent) -> bool {
-    matches!(
-        k.code,
-        KeyCode::Up
-            | KeyCode::Down
-            | KeyCode::Left
-            | KeyCode::Right
-            | KeyCode::Home
-            | KeyCode::End
-            | KeyCode::PageUp
-            | KeyCode::PageDown
-    )
+    use crossterm::event::KeyModifiers;
+    // Ctrl+Up/Down are viewport-scroll keys — they don't edit content.
+    let ctrl_scroll = k.modifiers == KeyModifiers::CONTROL
+        && matches!(k.code, KeyCode::Up | KeyCode::Down);
+    ctrl_scroll
+        || matches!(
+            k.code,
+            KeyCode::Up
+                | KeyCode::Down
+                | KeyCode::Left
+                | KeyCode::Right
+                | KeyCode::Home
+                | KeyCode::End
+                | KeyCode::PageUp
+                | KeyCode::PageDown
+        )
 }
 
 /// Extract the currently-selected text from the textarea, or `None` if there
@@ -181,12 +186,18 @@ pub(super) fn event_loop<B: ratatui::backend::Backend>(
             } else {
                 pre_layout.column
             };
-            clamp_scroll(
-                app,
-                pre_editor_area,
-                pre_layout.column.width,
-                BOTTOM_PADDING,
-            );
+            // Skip the clamp for one frame when the user is free-scrolling
+            // (mouse wheel or Ctrl+Up/Down).  The next keyboard/edit event
+            // leaves free_scroll false and clamp re-engages automatically.
+            if !app.free_scroll {
+                clamp_scroll(
+                    app,
+                    pre_editor_area,
+                    pre_layout.column.width,
+                    BOTTOM_PADDING,
+                );
+            }
+            app.free_scroll = false;
         }
 
         execute!(io::stdout(), BeginSynchronizedUpdate)?;
@@ -313,6 +324,16 @@ pub(super) fn event_loop<B: ratatui::backend::Backend>(
                                     .set_timed("Config reloaded.", Duration::from_millis(1500));
                                 app.last_keystroke = Some(std::time::Instant::now());
                             }
+                            // Ctrl+Up/Down: scroll viewport without moving cursor.
+                            (KeyModifiers::CONTROL, KeyCode::Up) => {
+                                app.scroll_top = app.scroll_top.saturating_sub(1);
+                                app.free_scroll = true;
+                            }
+                            (KeyModifiers::CONTROL, KeyCode::Down) => {
+                                let max = app.textarea.lines().len().saturating_sub(1);
+                                app.scroll_top = (app.scroll_top + 1).min(max);
+                                app.free_scroll = true;
+                            }
                             _ => {
                                 app.status.dismiss();
                                 app.config_warnings.clear();
@@ -339,15 +360,13 @@ pub(super) fn event_loop<B: ratatui::backend::Backend>(
                 }
                 Event::Mouse(mouse) => match mouse.kind {
                     MouseEventKind::ScrollDown => {
-                        for _ in 0..SCROLL_LINES {
-                            app.textarea.move_cursor(CursorMove::Down);
-                        }
+                        let max = app.textarea.lines().len().saturating_sub(1);
+                        app.scroll_top = (app.scroll_top + SCROLL_LINES).min(max);
+                        app.free_scroll = true;
                     }
                     MouseEventKind::ScrollUp => {
-                        for _ in 0..SCROLL_LINES {
-                            app.textarea.move_cursor(CursorMove::Up);
-                        }
                         app.scroll_top = app.scroll_top.saturating_sub(SCROLL_LINES);
+                        app.free_scroll = true;
                     }
                     MouseEventKind::Down(MouseButton::Left) => {
                         drag_selecting = false;

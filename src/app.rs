@@ -32,6 +32,11 @@ pub struct App {
     pub status: StatusLine,
     pub config_warnings: Vec<String>,
     pub scroll_top: usize,
+    /// True for exactly one frame after a scroll-wheel or Ctrl+Up/Down event.
+    /// While set, the pre-draw `clamp_scroll` pass is skipped so the viewport
+    /// can pan freely without snapping back to the cursor.  Cleared at the top
+    /// of every draw cycle regardless of whether it was set.
+    pub free_scroll: bool,
     /// Lazily-initialised system clipboard handle. `None` until the first copy/paste,
     /// then reused for the session to avoid reconnecting on every operation (expensive
     /// on Wayland where arboard opens a new display-server connection each time).
@@ -76,6 +81,7 @@ impl App {
             status: StatusLine::default(),
             config_warnings,
             scroll_top: 0,
+            free_scroll: false,
             clipboard: None,
             initial_file_empty,
         })
@@ -211,6 +217,7 @@ mod tests {
             status: StatusLine::default(),
             config_warnings: vec![],
             scroll_top: 0,
+            free_scroll: false,
             clipboard: None,
             initial_file_empty: false,
         }

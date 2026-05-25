@@ -406,6 +406,7 @@ mod tests {
             status: StatusLine::default(),
             config_warnings: vec![],
             scroll_top: 0,
+            free_scroll: false,
             clipboard: None,
             initial_file_empty: false,
         }

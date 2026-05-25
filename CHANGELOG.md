@@ -39,6 +39,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Italic default color now matches text color (not accent blend) (#60)
 
 ### Changed
+- Decouple scroll from cursor: scroll should pan without moving cursor (#56)
 - powerline_glyphs config flag: opt-in Nerd Font arrow in status bar (#96)
 - Replace Powerline glyph with universally-renderable separator (#54)
 - ROADMAP.md maintenance pass: prune done items, update issue index (#94)

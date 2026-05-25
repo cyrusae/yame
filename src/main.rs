@@ -128,6 +128,7 @@ mod tests {
             status: StatusLine::default(),
             config_warnings: vec![],
             scroll_top: 0,
+            free_scroll: false,
             clipboard: None,
             initial_file_empty: false,
         }
@@ -310,5 +311,82 @@ mod tests {
         let k = crossterm::event::KeyEvent::new(KeyCode::Char('['), KeyModifiers::CONTROL);
         let handled = handle_pair_wrap(&mut app, k);
         assert!(!handled, "Ctrl chord must not trigger pair wrap");
+    }
+
+    // ── free_scroll / decoupled scroll tests ─────────────────────────────────
+
+    use super::input::is_navigation_key;
+
+    fn ctrl_key(code: KeyCode) -> crossterm::event::KeyEvent {
+        crossterm::event::KeyEvent::new(code, KeyModifiers::CONTROL)
+    }
+
+    #[test]
+    fn scroll_down_increases_scroll_top_without_moving_cursor() {
+        // Simulate what the ScrollDown handler does: increment scroll_top, set free_scroll.
+        let mut app = make_app_with_lines(&["a"; 20]);
+        app.scroll_top = 0;
+        let (cursor_before, _) = app.textarea.cursor();
+        let max = app.textarea.lines().len().saturating_sub(1);
+        app.scroll_top = (app.scroll_top + 3).min(max);
+        app.free_scroll = true;
+        let (cursor_after, _) = app.textarea.cursor();
+        assert_eq!(app.scroll_top, 3, "scroll_top advanced by SCROLL_LINES");
+        assert_eq!(cursor_before, cursor_after, "cursor must not move on scroll");
+        assert!(app.free_scroll, "free_scroll must be set");
+    }
+
+    #[test]
+    fn scroll_up_decreases_scroll_top_without_moving_cursor() {
+        let mut app = make_app_with_lines(&["a"; 20]);
+        app.scroll_top = 6;
+        let (cursor_before, _) = app.textarea.cursor();
+        app.scroll_top = app.scroll_top.saturating_sub(3);
+        app.free_scroll = true;
+        let (cursor_after, _) = app.textarea.cursor();
+        assert_eq!(app.scroll_top, 3, "scroll_top decreased by SCROLL_LINES");
+        assert_eq!(cursor_before, cursor_after, "cursor must not move on scroll");
+        assert!(app.free_scroll, "free_scroll must be set");
+    }
+
+    #[test]
+    fn scroll_up_saturates_at_zero() {
+        let mut app = make_app_with_lines(&["a"; 10]);
+        app.scroll_top = 1;
+        app.scroll_top = app.scroll_top.saturating_sub(5); // would go negative
+        assert_eq!(app.scroll_top, 0, "scroll_top must not go below 0");
+    }
+
+    #[test]
+    fn scroll_down_saturates_at_last_line() {
+        let mut app = make_app_with_lines(&["a"; 5]);
+        let max = app.textarea.lines().len().saturating_sub(1); // = 4
+        app.scroll_top = (app.scroll_top + 100).min(max);
+        assert_eq!(app.scroll_top, 4, "scroll_top must not exceed last line");
+    }
+
+    #[test]
+    fn ctrl_up_is_navigation_key() {
+        let k = ctrl_key(KeyCode::Up);
+        assert!(
+            is_navigation_key(&k),
+            "Ctrl+Up must be classified as navigation (no debounce)"
+        );
+    }
+
+    #[test]
+    fn ctrl_down_is_navigation_key() {
+        let k = ctrl_key(KeyCode::Down);
+        assert!(
+            is_navigation_key(&k),
+            "Ctrl+Down must be classified as navigation (no debounce)"
+        );
+    }
+
+    #[test]
+    fn plain_up_is_navigation_key() {
+        // Regression: plain Up must still be navigation after is_navigation_key refactor.
+        let k = make_key(KeyCode::Up);
+        assert!(is_navigation_key(&k), "plain Up must remain a navigation key");
     }
 }
