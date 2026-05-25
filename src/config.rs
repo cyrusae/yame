@@ -74,6 +74,10 @@ pub struct LayoutConfig {
     pub min_cols: Option<u16>,
     /// Number of spaces to substitute for each `\t` on file load. Default 4.
     pub tab_width: Option<u16>,
+    /// Use Powerline/Nerd Font filled-arrow glyphs (U+E0B0) in the status bar
+    /// instead of the universal box-drawing separator `│`.
+    /// Requires a Nerd Font or Powerline-patched font. Default false.
+    pub powerline_glyphs: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize)]

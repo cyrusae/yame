@@ -17,6 +17,10 @@ pub struct App {
     pub saved_content: Option<Vec<String>>,
     pub theme: Theme,
     pub italic_support: bool,
+    /// When true, the status bar uses the Powerline filled-arrow glyph (U+E0B0)
+    /// as a segment separator instead of the universal `│` box-drawing character.
+    /// Controlled by `[layout] powerline_glyphs` in config. Default false.
+    pub powerline_glyphs: bool,
     /// Set on every keystroke; cleared after decoration pass fires.
     pub last_keystroke: Option<Instant>,
     /// Set when a structural change (line count change, undo, redo, paste) requires
@@ -45,6 +49,7 @@ impl App {
         file_path: PathBuf,
         theme: Theme,
         italic_support: bool,
+        powerline_glyphs: bool,
         config_warnings: Vec<String>,
         tab_width: usize,
     ) -> io::Result<Self> {
@@ -63,6 +68,7 @@ impl App {
             saved_content,
             theme,
             italic_support,
+            powerline_glyphs,
             last_keystroke: None,
             force_redecorate: false,
             decoration_map: DecorationMap::default(),
@@ -197,6 +203,7 @@ mod tests {
             saved_content: None,
             theme: Theme::default_theme(),
             italic_support: false,
+            powerline_glyphs: false,
             last_keystroke: None,
             force_redecorate: false,
             decoration_map: DecorationMap::default(),

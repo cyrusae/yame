@@ -11,8 +11,10 @@ use crate::status::StatusMode;
 
 use super::{format_thousands, shorten_path};
 
-/// Box-drawing vertical bar — universally renderable without Nerd Fonts.
-const SEP: char = '│';
+/// Universal box-drawing separator (no special font required).
+const SEP_UNIVERSAL: char = '│';
+/// Powerline/Nerd Font filled right-arrow. Requires a patched font.
+const SEP_POWERLINE: char = '\u{e0b0}';
 
 /// Render the bottom status bar into `area`.
 #[mutants::skip] // Writes into ratatui Buffer — void, not testable via return value.
@@ -56,7 +58,7 @@ pub(super) fn build_normal_status_bar(app: &App) -> Line<'static> {
     let canvas_bg = theme.bg;
     let hints_bg = theme.ui_bg;
     let muted_fg = theme.muted;
-    let sep = SEP.to_string();
+    let sep = if app.powerline_glyphs { SEP_POWERLINE } else { SEP_UNIVERSAL }.to_string();
 
     let (pill_bg, pill_fg) = if app.is_dirty {
         (theme.accent, theme.bg)

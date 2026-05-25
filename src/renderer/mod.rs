@@ -398,6 +398,7 @@ mod tests {
             saved_content: None,
             theme: Theme::default_theme(),
             italic_support: false,
+            powerline_glyphs: false,
             last_keystroke: None,
             force_redecorate: false,
             decoration_map: DecorationMap::default(),

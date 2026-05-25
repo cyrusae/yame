@@ -55,7 +55,8 @@ fn run(file_path: PathBuf) -> io::Result<()> {
     );
 
     let tab_width = config.layout.tab_width.unwrap_or(4) as usize;
-    let mut app = App::new(file_path, theme, italic_support, warnings, tab_width)?;
+    let powerline_glyphs = config.layout.powerline_glyphs.unwrap_or(false);
+    let mut app = App::new(file_path, theme, italic_support, powerline_glyphs, warnings, tab_width)?;
 
     if !italic_support {
         app.status.set_dismissible(
@@ -119,6 +120,7 @@ mod tests {
             saved_content: None,
             theme: Theme::default_theme(),
             italic_support: false,
+            powerline_glyphs: false,
             last_keystroke: None,
             force_redecorate: false,
             decoration_map: DecorationMap::default(),
