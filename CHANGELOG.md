@@ -21,6 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - v1 polish: italic startup warning, `delimiter_blend` config token, parent-dir creation on save (#35)
 
 ### Fixed
+- Wide char (CJK) scroll redraw artifact — gap fills with stale content from above (#71)
 - Free-scroll jitters and snaps back due to blanket free_scroll reset on every event (#99)
 - Coloring of italic+bold non-adjacent nesting shows muted (#98)
 - Three rendering regressions: scroll flicker, H1/H2 delimiter bold, bold+italic adjacency false-positive (#97)
@@ -43,6 +44,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Italic default color now matches text color (not accent blend) (#60)
 
 ### Changed
+- Rework Saved/warning status message display on UI bar (#76)
 - Decouple scroll from cursor: scroll should pan without moving cursor (#56)
 - powerline_glyphs config flag: opt-in Nerd Font arrow in status bar (#96)
 - Replace Powerline glyph with universally-renderable separator (#54)

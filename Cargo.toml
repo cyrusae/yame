@@ -20,6 +20,7 @@ arboard = "3"
 # Must be in [dependencies] (not dev-dependencies) because the attributes appear
 # on non-test functions, which aren't visible to the compiler via dev-dep paths.
 mutants = "0.0.3"
+unicode-width = "0.1"
 
 [profile.release]
 strip = true

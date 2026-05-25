@@ -33,16 +33,34 @@ pub fn render_status_bar(f: &mut Frame, area: Rect, app: &App) {
                 .add_modifier(Modifier::BOLD),
         )]),
 
-        StatusMode::TimedMessage { text, .. } | StatusMode::DismissibleMessage(text) => {
+        StatusMode::TimedMessage { text, .. } => {
             let msg = format!(" {text} ");
+            let msg_display_width = msg.chars().count() as u16; // ASCII status messages
             let pad = area
                 .width
-                .saturating_sub(msg.len() as u16)
+                .saturating_sub(msg_display_width)
                 .saturating_div(2);
             let padded = format!("{:pad$}{msg}", "", pad = pad as usize);
             Line::from(vec![Span::styled(
                 padded,
-                Style::default().fg(theme.text).bg(hints_bg),
+                Style::default()
+                    .fg(theme.accent)
+                    .bg(hints_bg)
+                    .add_modifier(Modifier::BOLD),
+            )])
+        }
+
+        StatusMode::DismissibleMessage(text) => {
+            let msg = format!(" {text} ");
+            let msg_display_width = msg.chars().count() as u16;
+            let pad = area
+                .width
+                .saturating_sub(msg_display_width)
+                .saturating_div(2);
+            let padded = format!("{:pad$}{msg}", "", pad = pad as usize);
+            Line::from(vec![Span::styled(
+                padded,
+                Style::default().fg(warning_fg).bg(hints_bg),
             )])
         }
 

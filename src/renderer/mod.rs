@@ -17,57 +17,95 @@ pub use utils::{format_thousands, shorten_path, split_into_spans};
 // Soft-wrap helpers
 // ---------------------------------------------------------------------------
 
-/// Soft-wrap a string into visual rows of at most `width` chars each.
+/// Soft-wrap a string into visual rows of at most `width` **terminal columns**.
 ///
-/// Breaks at the last space before `width`; falls back to a hard break at
-/// exactly `width` chars when no space exists. Returns byte-slices of `s`
-/// so no allocation is needed.
+/// Wide characters (CJK, emoji, …) are counted by their display width (1 or 2
+/// columns) rather than by Unicode scalar-value count.  Breaks at the last
+/// space before `width`; falls back to a hard break when no space exists.
+/// Returns byte-slices of `s` so no allocation is needed.
 pub fn wrap_line(s: &str, width: usize) -> Vec<&str> {
-    if s.is_empty() || width == 0 {
-        return vec![s];
-    }
+    use unicode_width::UnicodeWidthChar;
 
-    let total_chars = s.chars().count();
-    if total_chars <= width {
+    if s.is_empty() || width == 0 {
         return vec![s];
     }
 
     let char_indices: Vec<(usize, char)> = s.char_indices().collect();
 
+    // Fast path: total display width fits on one row.
+    let total_display: usize = char_indices
+        .iter()
+        .map(|&(_, c)| UnicodeWidthChar::width(c).unwrap_or(1))
+        .sum();
+    if total_display <= width {
+        return vec![s];
+    }
+
     let mut result: Vec<&str> = Vec::new();
-    let mut char_start = 0usize;
+    let mut char_start = 0usize; // index into char_indices
 
     loop {
-        let remaining = total_chars - char_start;
-        if remaining == 0 {
+        if char_start >= char_indices.len() {
             break;
         }
 
-        if remaining <= width {
+        // Check whether the rest fits without another break.
+        let remaining_display: usize = char_indices[char_start..]
+            .iter()
+            .map(|&(_, c)| UnicodeWidthChar::width(c).unwrap_or(1))
+            .sum();
+        if remaining_display <= width {
             let byte_start = char_indices[char_start].0;
             result.push(&s[byte_start..]);
             break;
         }
 
-        let chunk_end = char_start + width;
+        // Walk chars until adding the next one would exceed `width` display cols.
+        let mut display_col = 0usize;
+        let mut last_space: Option<usize> = None; // char_indices index of last fitting space
+        let mut chunk_end = char_start; // exclusive end: first char that doesn't fit
 
-        let last_space_rel = char_indices[char_start..chunk_end]
-            .iter()
-            .rposition(|&(_, c)| c == ' ');
-
-        let (break_char, next_char) = match last_space_rel {
-            Some(rel) => {
-                let abs = char_start + rel;
-                (abs, abs + 1)
+        for (ci, &(_, c)) in char_indices[char_start..].iter().enumerate() {
+            let cw = UnicodeWidthChar::width(c).unwrap_or(1);
+            if display_col + cw > width {
+                chunk_end = char_start + ci;
+                break;
             }
+            display_col += cw;
+            chunk_end = char_start + ci + 1;
+            if c == ' ' {
+                last_space = Some(char_start + ci);
+            }
+        }
+
+        if chunk_end == char_start {
+            // Pathological: first char alone is wider than `width` (e.g. width=1
+            // with a CJK char).  Hard-break after exactly one char to avoid an
+            // infinite loop.
+            let byte_start = char_indices[char_start].0;
+            let byte_end = char_indices
+                .get(char_start + 1)
+                .map_or(s.len(), |&(b, _)| b);
+            result.push(&s[byte_start..byte_end]);
+            char_start += 1;
+            continue;
+        }
+
+        // Prefer breaking at the last in-range space; fall back to hard break.
+        let (break_at, next_start) = match last_space {
+            Some(sp) => (sp, sp + 1),
             None => (chunk_end, chunk_end),
         };
 
         let byte_start = char_indices[char_start].0;
-        let byte_end = char_indices[break_char].0;
-        result.push(&s[byte_start..byte_end]);
+        let byte_end = char_indices
+            .get(break_at)
+            .map_or(s.len(), |&(b, _)| b);
 
-        char_start = next_char;
+        if byte_start < byte_end {
+            result.push(&s[byte_start..byte_end]);
+        }
+        char_start = next_start;
     }
 
     if result.is_empty() {
@@ -235,16 +273,29 @@ impl Widget for MarkdownView<'_> {
                         buf[(x, y)].set_char('─').set_style(rule_style);
                     }
                 } else {
+                    use unicode_width::UnicodeWidthChar;
                     let row_default = default_style.bg(line_bg);
                     let segments = split_into_spans(row_str, &row_spans, row_default);
                     let mut x = area.x + GUTTER + continuation_indent;
                     for span in &segments {
                         for ch in span.content.chars() {
-                            if (x.saturating_sub(area.x + GUTTER)) as usize >= content_width {
+                            let cw = UnicodeWidthChar::width(ch).unwrap_or(1);
+                            // Stop before this char would overflow the content area.
+                            if (x.saturating_sub(area.x + GUTTER)) as usize + cw > content_width {
                                 break;
                             }
                             buf[(x, y)].set_char(ch).set_style(span.style);
-                            x += 1;
+                            if cw == 2 {
+                                // Explicitly clear the second terminal column of the
+                                // wide char.  Without this, ratatui's frame-diff never
+                                // "owns" that cell, so when the line scrolls away the
+                                // cell can retain stale content from the previous frame.
+                                let x2 = x + 1;
+                                if ((x2.saturating_sub(area.x + GUTTER)) as usize) < content_width {
+                                    buf[(x2, y)].set_char(' ').set_style(span.style);
+                                }
+                            }
+                            x += cw as u16;
                         }
                     }
                 }
@@ -563,9 +614,20 @@ mod tests {
     }
 
     #[test]
-    fn wrap_multibyte_respects_char_count() {
+    fn wrap_wide_chars_count_display_columns() {
+        // Each CJK char is 2 display columns wide.
+        // "日本語テ" = 8 display cols; at width=4 it wraps into two rows of 2 chars each.
         let result = wrap_line("日本語テ", 4);
-        assert_eq!(result.len(), 1);
+        assert_eq!(result.len(), 2, "4 CJK chars (8 display cols) must wrap at width=4");
+        assert_eq!(result[0], "日本");
+        assert_eq!(result[1], "語テ");
+    }
+
+    #[test]
+    fn wrap_wide_chars_single_row_when_fits() {
+        // "日本" = 4 display cols; at width=4 it fits without wrapping.
+        let result = wrap_line("日本", 4);
+        assert_eq!(result.len(), 1, "2 CJK chars (4 display cols) must not wrap at width=4");
     }
 
     #[test]
