@@ -18,6 +18,32 @@ use yame::status::StatusMode;
 
 use super::commands::{clamp_scroll, handle_exit, handle_save};
 
+// ---------------------------------------------------------------------------
+// Key-event outcome
+// ---------------------------------------------------------------------------
+
+/// Signals the event loop needs to act on after `handle_key_event` returns.
+///
+/// Keeping I/O (file saves, config reloads) out of `handle_key_event` makes
+/// that function fully unit-testable without a real terminal or filesystem.
+#[derive(Debug, PartialEq)]
+pub(super) enum KeyOutcome {
+    /// Normal dispatch — state mutation complete, keep running.
+    Continue,
+    /// Ctrl+S / Super+S: persist buffer to disk, then keep running.
+    Save,
+    /// ExitPrompt Y: persist buffer to disk, then exit the loop.
+    SaveAndExit,
+    /// ExitPrompt N / Ctrl+X on a clean buffer: exit without saving.
+    Exit,
+    /// Ctrl+R: reload config from disk and redisplay a confirmation banner.
+    ReloadConfig,
+}
+
+// ---------------------------------------------------------------------------
+// Pure helpers
+// ---------------------------------------------------------------------------
+
 /// Map a screen-absolute (row, col) mouse position to a logical document
 /// (row, col) position, accounting for the editor gutter, scroll offset, and
 /// soft-wrapped lines. Returns `None` if the click is outside the editor area.
@@ -58,25 +84,25 @@ pub(super) fn screen_to_doc(
     Some((lines.len().saturating_sub(1) as u16, 0))
 }
 
-/// Returns true if the key is a pure cursor-movement key that cannot change
+/// Returns `true` if the key is a pure cursor-movement key that cannot change
 /// document content. Used to skip the decoration debounce timer on nav presses.
 pub(super) fn is_navigation_key(k: &crossterm::event::KeyEvent) -> bool {
-    use crossterm::event::KeyModifiers;
-    // Ctrl+Up/Down are viewport-scroll keys — they don't edit content.
-    let ctrl_scroll =
-        k.modifiers == KeyModifiers::CONTROL && matches!(k.code, KeyCode::Up | KeyCode::Down);
-    ctrl_scroll
-        || matches!(
-            k.code,
-            KeyCode::Up
-                | KeyCode::Down
-                | KeyCode::Left
-                | KeyCode::Right
-                | KeyCode::Home
-                | KeyCode::End
-                | KeyCode::PageUp
-                | KeyCode::PageDown
-        )
+    // Ctrl+Up/Down are handled in their own explicit arm in handle_key_event
+    // (they scroll the viewport rather than edit), so they never reach the `_`
+    // arm where is_navigation_key is called.  Nonetheless, matching purely on
+    // k.code (ignoring modifiers) means Ctrl+Up is still classified nav here,
+    // which is the correct policy if the arm ordering ever changes.
+    matches!(
+        k.code,
+        KeyCode::Up
+            | KeyCode::Down
+            | KeyCode::Left
+            | KeyCode::Right
+            | KeyCode::Home
+            | KeyCode::End
+            | KeyCode::PageUp
+            | KeyCode::PageDown
+    )
 }
 
 /// Extract the currently-selected text from the textarea, or `None` if there
@@ -136,6 +162,133 @@ pub(super) fn handle_pair_wrap(app: &mut App, k: crossterm::event::KeyEvent) -> 
     app.textarea.insert_str(format!("{selected}{close}"));
     true
 }
+
+// ---------------------------------------------------------------------------
+// Key-event dispatcher (pure — no file I/O, no terminal I/O)
+// ---------------------------------------------------------------------------
+
+/// Dispatch a single key event, mutating `app` state.
+///
+/// Returns a [`KeyOutcome`] telling the caller what (if any) I/O action to
+/// perform next. File writes, config reloads, and loop termination are the
+/// responsibility of the caller (`event_loop`).  This separation makes the
+/// entire key-dispatch path unit-testable without a real terminal or filesystem.
+pub(super) fn handle_key_event(
+    app: &mut App,
+    k: crossterm::event::KeyEvent,
+) -> KeyOutcome {
+    // Any key press re-engages cursor-clamping scroll.
+    // Ctrl+Up/Down immediately override this below by setting free_scroll = true again.
+    app.free_scroll = false;
+
+    // ── Exit-prompt mode ────────────────────────────────────────────────────
+    if matches!(app.status.mode, StatusMode::ExitPrompt) {
+        return match k.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => KeyOutcome::SaveAndExit,
+            KeyCode::Char('n') | KeyCode::Char('N') => KeyOutcome::Exit,
+            KeyCode::Esc
+            | KeyCode::Char('c')
+            | KeyCode::Char('C')
+            | KeyCode::Char('x')
+            | KeyCode::Char('X') => {
+                app.status.mode = StatusMode::Normal;
+                KeyOutcome::Continue
+            }
+            _ => KeyOutcome::Continue,
+        };
+    }
+
+    // ── Normal editing mode ─────────────────────────────────────────────────
+    match (k.modifiers, k.code) {
+        (KeyModifiers::CONTROL, KeyCode::Char('s'))
+        | (KeyModifiers::SUPER, KeyCode::Char('s')) => KeyOutcome::Save,
+
+        (KeyModifiers::CONTROL, KeyCode::Char('x'))
+        | (KeyModifiers::NONE, KeyCode::Esc) => {
+            if handle_exit(app) {
+                KeyOutcome::Exit
+            } else {
+                KeyOutcome::Continue
+            }
+        }
+
+        (KeyModifiers::CONTROL, KeyCode::Char('c'))
+        | (KeyModifiers::SUPER, KeyCode::Char('c')) => {
+            yame::clipboard::handle_copy(app);
+            KeyOutcome::Continue
+        }
+
+        (KeyModifiers::CONTROL, KeyCode::Char('v'))
+        | (KeyModifiers::SUPER, KeyCode::Char('v')) => {
+            yame::clipboard::handle_paste(app);
+            app.force_redecorate = true;
+            KeyOutcome::Continue
+        }
+
+        (KeyModifiers::CONTROL, KeyCode::Char('z')) => {
+            app.status.dismiss();
+            app.config_warnings.clear();
+            app.textarea.undo();
+            app.force_redecorate = true;
+            app.last_keystroke = Some(std::time::Instant::now());
+            app.recompute_dirty();
+            KeyOutcome::Continue
+        }
+
+        (KeyModifiers::CONTROL, KeyCode::Char('y')) => {
+            app.status.dismiss();
+            app.config_warnings.clear();
+            app.textarea.redo();
+            app.force_redecorate = true;
+            app.last_keystroke = Some(std::time::Instant::now());
+            app.recompute_dirty();
+            KeyOutcome::Continue
+        }
+
+        (KeyModifiers::CONTROL, KeyCode::Char('r')) => KeyOutcome::ReloadConfig,
+
+        // Ctrl+Up/Down: scroll viewport without moving cursor.
+        (KeyModifiers::CONTROL, KeyCode::Up) => {
+            app.scroll_top = app.scroll_top.saturating_sub(1);
+            app.free_scroll = true;
+            KeyOutcome::Continue
+        }
+
+        (KeyModifiers::CONTROL, KeyCode::Down) => {
+            let max = app.textarea.lines().len().saturating_sub(1);
+            app.scroll_top = (app.scroll_top + 1).min(max);
+            app.free_scroll = true;
+            KeyOutcome::Continue
+        }
+
+        _ => {
+            app.status.dismiss();
+            app.config_warnings.clear();
+            let is_nav = is_navigation_key(&k);
+
+            if !is_nav && handle_pair_wrap(app, k) {
+                app.force_redecorate = true;
+                app.mark_keystroke();
+            } else {
+                let prev_line_count = app.textarea.lines().len();
+                app.textarea.input(k);
+                if app.textarea.lines().len() != prev_line_count {
+                    app.force_redecorate = true;
+                }
+                if is_nav {
+                    app.recompute_dirty();
+                } else {
+                    app.mark_keystroke();
+                }
+            }
+            KeyOutcome::Continue
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Event loop
+// ---------------------------------------------------------------------------
 
 pub(super) fn event_loop<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
@@ -254,110 +407,29 @@ pub(super) fn event_loop<B: ratatui::backend::Backend>(
         if event::poll(POLL_TIMEOUT)? {
             match event::read()? {
                 Event::Key(k) => {
-                    // Any key press re-engages cursor-clamping scroll.
-                    // Ctrl+Up/Down (viewport scroll keys) immediately override this
-                    // below by setting free_scroll = true again.
-                    app.free_scroll = false;
-                    if matches!(app.status.mode, StatusMode::ExitPrompt) {
-                        match k.code {
-                            KeyCode::Char('y') | KeyCode::Char('Y') => {
-                                handle_save(app)?;
-                                break;
-                            }
-                            KeyCode::Char('n') | KeyCode::Char('N') => {
-                                break;
-                            }
-                            KeyCode::Esc
-                            | KeyCode::Char('c')
-                            | KeyCode::Char('C')
-                            | KeyCode::Char('x')
-                            | KeyCode::Char('X') => {
-                                app.status.mode = StatusMode::Normal;
-                            }
-                            _ => {}
+                    match handle_key_event(app, k) {
+                        KeyOutcome::Continue => {}
+                        KeyOutcome::Save => {
+                            handle_save(app)?;
                         }
-                    } else {
-                        match (k.modifiers, k.code) {
-                            (KeyModifiers::CONTROL, KeyCode::Char('s'))
-                            | (KeyModifiers::SUPER, KeyCode::Char('s')) => {
-                                handle_save(app)?;
-                            }
-                            (KeyModifiers::CONTROL, KeyCode::Char('x'))
-                            | (KeyModifiers::NONE, KeyCode::Esc) => {
-                                if handle_exit(app) {
-                                    break;
-                                }
-                            }
-                            (KeyModifiers::CONTROL, KeyCode::Char('c'))
-                            | (KeyModifiers::SUPER, KeyCode::Char('c')) => {
-                                yame::clipboard::handle_copy(app);
-                            }
-                            (KeyModifiers::CONTROL, KeyCode::Char('v'))
-                            | (KeyModifiers::SUPER, KeyCode::Char('v')) => {
-                                yame::clipboard::handle_paste(app);
-                                app.force_redecorate = true;
-                            }
-                            (KeyModifiers::CONTROL, KeyCode::Char('z')) => {
-                                app.status.dismiss();
-                                app.config_warnings.clear();
-                                app.textarea.undo();
-                                app.force_redecorate = true;
-                                app.last_keystroke = Some(std::time::Instant::now());
-                                app.recompute_dirty();
-                            }
-                            (KeyModifiers::CONTROL, KeyCode::Char('y')) => {
-                                app.status.dismiss();
-                                app.config_warnings.clear();
-                                app.textarea.redo();
-                                app.force_redecorate = true;
-                                app.last_keystroke = Some(std::time::Instant::now());
-                                app.recompute_dirty();
-                            }
-                            (KeyModifiers::CONTROL, KeyCode::Char('r')) => {
-                                let (new_config, new_warnings) = load_config();
-                                let mut warnings = new_warnings;
-                                app.theme = Theme::from_config(
-                                    &new_config.palette,
-                                    &new_config.theme,
-                                    &new_config.headings,
-                                    &mut warnings,
-                                );
-                                app.config_warnings = warnings;
-                                app.status
-                                    .set_timed("Config reloaded.", Duration::from_millis(1500));
-                                app.last_keystroke = Some(std::time::Instant::now());
-                            }
-                            // Ctrl+Up/Down: scroll viewport without moving cursor.
-                            (KeyModifiers::CONTROL, KeyCode::Up) => {
-                                app.scroll_top = app.scroll_top.saturating_sub(1);
-                                app.free_scroll = true;
-                            }
-                            (KeyModifiers::CONTROL, KeyCode::Down) => {
-                                let max = app.textarea.lines().len().saturating_sub(1);
-                                app.scroll_top = (app.scroll_top + 1).min(max);
-                                app.free_scroll = true;
-                            }
-                            _ => {
-                                app.status.dismiss();
-                                app.config_warnings.clear();
-                                let is_nav = is_navigation_key(&k);
-
-                                if !is_nav && handle_pair_wrap(app, k) {
-                                    app.force_redecorate = true;
-                                    app.mark_keystroke();
-                                } else {
-                                    let prev_line_count = app.textarea.lines().len();
-                                    app.textarea.input(k);
-                                    if app.textarea.lines().len() != prev_line_count {
-                                        app.force_redecorate = true;
-                                    }
-                                    if is_nav {
-                                        app.recompute_dirty();
-                                    } else {
-                                        app.mark_keystroke();
-                                    }
-                                }
-                            }
+                        KeyOutcome::SaveAndExit => {
+                            handle_save(app)?;
+                            break;
+                        }
+                        KeyOutcome::Exit => break,
+                        KeyOutcome::ReloadConfig => {
+                            let (new_config, new_warnings) = load_config();
+                            let mut warnings = new_warnings;
+                            app.theme = Theme::from_config(
+                                &new_config.palette,
+                                &new_config.theme,
+                                &new_config.headings,
+                                &mut warnings,
+                            );
+                            app.config_warnings = warnings;
+                            app.status
+                                .set_timed("Config reloaded.", Duration::from_millis(1500));
+                            app.last_keystroke = Some(std::time::Instant::now());
                         }
                     }
                 }

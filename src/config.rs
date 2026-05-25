@@ -500,6 +500,32 @@ mod tests {
         assert_eq!(blend((255, 0, 0), (0, 0, 0), 0.5), (128, 0, 0));
     }
 
+    // --- blend_colors ---
+
+    #[test]
+    fn blend_colors_returns_correct_rgb() {
+        // blend pure red with pure black at t=0.5 → approximately (128, 0, 0).
+        // The return must NOT be Color::default() (= Color::Reset).
+        let result = blend_colors(Color::Rgb(255, 0, 0), Color::Rgb(0, 0, 0), 0.5);
+        assert_eq!(
+            result,
+            Color::Rgb(128, 0, 0),
+            "blend_colors must interpolate RGB values correctly"
+        );
+    }
+
+    #[test]
+    fn blend_colors_at_zero_returns_b() {
+        let result = blend_colors(Color::Rgb(255, 0, 0), Color::Rgb(10, 20, 30), 0.0);
+        assert_eq!(result, Color::Rgb(10, 20, 30), "t=0 must return b");
+    }
+
+    #[test]
+    fn blend_colors_at_one_returns_a() {
+        let result = blend_colors(Color::Rgb(255, 0, 0), Color::Rgb(10, 20, 30), 1.0);
+        assert_eq!(result, Color::Rgb(255, 0, 0), "t=1 must return a");
+    }
+
     #[test]
     fn blend_zero_is_bg() {
         assert_eq!(blend((255, 0, 0), (10, 20, 30), 0.0), (10, 20, 30));

@@ -798,4 +798,167 @@ mod tests {
             "# character must carry green fg through split_into_spans"
         );
     }
+
+    // ── apply_selection_overlay ──────────────────────────────────────────────
+    //
+    // Tests operate directly on a ratatui Buffer (no terminal required).
+    // GUTTER = 1, so for area.x=0 the content column starts at x=1.
+    // char N on a line maps to buffer x = area.x + GUTTER + N = 1 + N.
+
+    fn sel_view<'a>(
+        lines: &'a [String],
+        deco: &'a DecorationMap,
+        theme: &'a Theme,
+    ) -> MarkdownView<'a> {
+        MarkdownView {
+            lines,
+            decoration_map: deco,
+            scroll_top: 0,
+            cursor: (0, 0),
+            selection: None,
+            theme,
+            column_width: 10,
+        }
+    }
+
+    #[test]
+    fn selection_overlay_single_row_highlights_correct_cells() {
+        // Selection: row 0, chars 1..3 (exclusive).
+        // content_width = 10 - 2*GUTTER = 8. Lines fit without wrapping.
+        // Expected highlighted buffer cells: x=2, x=3  (= GUTTER + char_offset).
+        use ratatui::buffer::Buffer;
+        let area = Rect { x: 0, y: 0, width: 10, height: 3 };
+        let mut buf = Buffer::empty(area);
+        let theme = Theme::default_theme();
+        let deco = DecorationMap::default();
+        let lines: Vec<String> = vec!["abcde".into(), "fghij".into(), "klmno".into()];
+        let view = sel_view(&lines, &deco, &theme);
+
+        apply_selection_overlay(area, &mut buf, &view, ((0, 1), (0, 3)));
+
+        let sel_bg = theme.selection_bg;
+        assert_ne!(buf.cell((1, 0)).unwrap().bg, sel_bg, "char 0 before selection");
+        assert_eq!(buf.cell((2, 0)).unwrap().bg, sel_bg, "char 1 selected");
+        assert_eq!(buf.cell((3, 0)).unwrap().bg, sel_bg, "char 2 selected");
+        assert_ne!(buf.cell((4, 0)).unwrap().bg, sel_bg, "char 3 after selection");
+        assert_ne!(buf.cell((1, 1)).unwrap().bg, sel_bg, "row 1 not selected");
+    }
+
+    #[test]
+    fn selection_overlay_multi_row_highlights_correct_cells() {
+        // Selection: row 0 col 2 to row 1 col 2.
+        // Row 0: chars 2..4 → x=3, x=4
+        // Row 1: chars 0..2 → x=1, x=2
+        // Row 2: no highlight
+        use ratatui::buffer::Buffer;
+        let area = Rect { x: 0, y: 0, width: 10, height: 4 };
+        let mut buf = Buffer::empty(area);
+        let theme = Theme::default_theme();
+        let deco = DecorationMap::default();
+        let lines: Vec<String> = vec!["aaaa".into(), "bbbb".into(), "cccc".into()];
+        let view = sel_view(&lines, &deco, &theme);
+
+        apply_selection_overlay(area, &mut buf, &view, ((0, 2), (1, 2)));
+
+        let sel_bg = theme.selection_bg;
+        // Row 0: only chars 2 and 3 highlighted
+        assert_ne!(buf.cell((1, 0)).unwrap().bg, sel_bg, "row 0 char 0");
+        assert_ne!(buf.cell((2, 0)).unwrap().bg, sel_bg, "row 0 char 1");
+        assert_eq!(buf.cell((3, 0)).unwrap().bg, sel_bg, "row 0 char 2");
+        assert_eq!(buf.cell((4, 0)).unwrap().bg, sel_bg, "row 0 char 3");
+        assert_ne!(buf.cell((5, 0)).unwrap().bg, sel_bg, "row 0 beyond line");
+        // Row 1: chars 0 and 1 highlighted
+        assert_eq!(buf.cell((1, 1)).unwrap().bg, sel_bg, "row 1 char 0");
+        assert_eq!(buf.cell((2, 1)).unwrap().bg, sel_bg, "row 1 char 1");
+        assert_ne!(buf.cell((3, 1)).unwrap().bg, sel_bg, "row 1 char 2 not selected");
+        // Row 2: no highlight
+        assert_ne!(buf.cell((1, 2)).unwrap().bg, sel_bg, "row 2 not selected");
+    }
+
+    #[test]
+    fn selection_overlay_middle_row_fully_highlighted() {
+        // 3-row selection: the middle row has neither a start-col nor end-col
+        // constraint — it should be highlighted from char 0 to line end.
+        use ratatui::buffer::Buffer;
+        let area = Rect { x: 0, y: 0, width: 10, height: 4 };
+        let mut buf = Buffer::empty(area);
+        let theme = Theme::default_theme();
+        let deco = DecorationMap::default();
+        let lines: Vec<String> = vec!["aaaa".into(), "bbbb".into(), "cccc".into()];
+        let view = sel_view(&lines, &deco, &theme);
+
+        // Select row 0 col 1 → row 2 col 1.  Row 1 is the unconstrained middle.
+        apply_selection_overlay(area, &mut buf, &view, ((0, 1), (2, 1)));
+
+        let sel_bg = theme.selection_bg;
+        // Row 1 (middle): chars 0..4 all highlighted
+        assert_eq!(buf.cell((1, 1)).unwrap().bg, sel_bg, "middle row char 0");
+        assert_eq!(buf.cell((2, 1)).unwrap().bg, sel_bg, "middle row char 1");
+        assert_eq!(buf.cell((3, 1)).unwrap().bg, sel_bg, "middle row char 2");
+        assert_eq!(buf.cell((4, 1)).unwrap().bg, sel_bg, "middle row char 3");
+        // Row 2: only char 0 highlighted (col_end = 1)
+        assert_eq!(buf.cell((1, 2)).unwrap().bg, sel_bg, "last row char 0");
+        assert_ne!(buf.cell((2, 2)).unwrap().bg, sel_bg, "last row char 1 excluded");
+    }
+
+    #[test]
+    fn selection_overlay_row_after_sel_end_not_highlighted() {
+        // log_row > sel_row_end → the loop must break and leave that row clean.
+        use ratatui::buffer::Buffer;
+        let area = Rect { x: 0, y: 0, width: 10, height: 3 };
+        let mut buf = Buffer::empty(area);
+        let theme = Theme::default_theme();
+        let deco = DecorationMap::default();
+        let lines: Vec<String> = vec!["aaaa".into(), "bbbb".into(), "cccc".into()];
+        let view = sel_view(&lines, &deco, &theme);
+
+        // Selection is only on row 0.
+        apply_selection_overlay(area, &mut buf, &view, ((0, 0), (0, 4)));
+
+        let sel_bg = theme.selection_bg;
+        // Row 1 (past sel_row_end) must not be touched.
+        assert_ne!(buf.cell((1, 1)).unwrap().bg, sel_bg, "row after sel_row_end");
+        assert_ne!(buf.cell((1, 2)).unwrap().bg, sel_bg, "two rows past sel_row_end");
+    }
+
+    #[test]
+    fn selection_overlay_row_before_sel_start_not_highlighted() {
+        // scroll_top=0, sel_row_start=1: row 0 must not be highlighted.
+        use ratatui::buffer::Buffer;
+        let area = Rect { x: 0, y: 0, width: 10, height: 3 };
+        let mut buf = Buffer::empty(area);
+        let theme = Theme::default_theme();
+        let deco = DecorationMap::default();
+        let lines: Vec<String> = vec!["aaaa".into(), "bbbb".into(), "cccc".into()];
+        let view = sel_view(&lines, &deco, &theme);
+
+        // Selection starts on row 1.
+        apply_selection_overlay(area, &mut buf, &view, ((1, 0), (1, 3)));
+
+        let sel_bg = theme.selection_bg;
+        // Row 0 (before sel_row_start) must not be touched.
+        assert_ne!(buf.cell((1, 0)).unwrap().bg, sel_bg, "row before sel_row_start");
+        // Row 1 IS selected.
+        assert_eq!(buf.cell((1, 1)).unwrap().bg, sel_bg, "selected row char 0");
+    }
+
+    #[test]
+    fn selection_overlay_empty_selection_no_highlight() {
+        // row_sel_start == row_sel_end → nothing should be highlighted.
+        use ratatui::buffer::Buffer;
+        let area = Rect { x: 0, y: 0, width: 10, height: 2 };
+        let mut buf = Buffer::empty(area);
+        let theme = Theme::default_theme();
+        let deco = DecorationMap::default();
+        let lines: Vec<String> = vec!["aaaa".into(), "bbbb".into()];
+        let view = sel_view(&lines, &deco, &theme);
+
+        // Zero-width selection (col_start == col_end).
+        apply_selection_overlay(area, &mut buf, &view, ((0, 2), (0, 2)));
+
+        let sel_bg = theme.selection_bg;
+        for x in 0..10u16 {
+            assert_ne!(buf.cell((x, 0)).unwrap().bg, sel_bg, "zero-width selection must not highlight x={x}");
+        }
+    }
 }
