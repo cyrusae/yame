@@ -1,12 +1,16 @@
 [package]
 name = "yame"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 edition = "2024"
 description = "A lightweight terminal Markdown editor"
 license = "MIT"
+authors = ["Cyrus <cyrus.eosphoros@gmail.com>"]
+repository = "https://github.com/cyrusae/yame"
+homepage = "https://github.com/cyrusae/yame"
+readme = "README.md"
 keywords = ["markdown", "editor", "terminal", "tui"]
 categories = ["command-line-utilities", "text-editors"]
-exclude = [".chainlink", ".claude", ".github", "_docs", ".antigravitycli"]
+exclude = [".chainlink", ".claude", ".github", "_docs", ".antigravitycli", ".mcp.json", "mutants.out"]
 
 [dependencies]
 ratatui = "0.29"
