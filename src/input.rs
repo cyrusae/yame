@@ -290,6 +290,7 @@ pub(super) fn handle_key_event(
 // Event loop
 // ---------------------------------------------------------------------------
 
+#[mutants::skip] // Terminal I/O loop — requires a real terminal backend + live event stream; not unit-testable.
 pub(super) fn event_loop<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
