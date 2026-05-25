@@ -28,6 +28,10 @@ pub struct App {
     pub status: StatusLine,
     pub config_warnings: Vec<String>,
     pub scroll_top: usize,
+    /// True when the file was 0 bytes (or did not exist) at load time.
+    /// Prevents handle_save from growing a 0-byte file to a 1-byte bare newline
+    /// when the buffer is still empty.  Reset to false after any non-empty save.
+    pub initial_file_empty: bool,
 }
 
 impl App {
@@ -39,6 +43,10 @@ impl App {
         italic_support: bool,
         config_warnings: Vec<String>,
     ) -> io::Result<Self> {
+        // Detect whether the file is empty/new before loading, so handle_save can
+        // preserve the 0-byte state instead of growing the file to a bare newline.
+        let initial_file_empty = !file_path.exists()
+            || std::fs::metadata(&file_path).is_ok_and(|m| m.len() == 0);
         let textarea = load_file(&file_path)?;
         // Snapshot the initial content so recompute_dirty() has a baseline for both
         // existing files (undo back to load state → clean) and new files (empty baseline).
@@ -57,6 +65,7 @@ impl App {
             status: StatusLine::default(),
             config_warnings,
             scroll_top: 0,
+            initial_file_empty,
         })
     }
 
@@ -119,6 +128,7 @@ mod tests {
             status: StatusLine::default(),
             config_warnings: vec![],
             scroll_top: 0,
+            initial_file_empty: false,
         }
     }
 

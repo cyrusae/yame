@@ -41,7 +41,11 @@ fn parse_args() -> Result<PathBuf, ()> {
     match args.len() {
         1 => Ok(PathBuf::from(&args[0])),
         _ => {
-            eprintln!("Usage: yame <file>");
+            eprintln!("yame — yet another markdown editor\n");
+            eprintln!("Usage: yame <file.md>");
+            eprintln!("       Opens <file.md> for editing, creating it if it does not exist.");
+            eprintln!("\nNote: a file named exactly 'init' is a valid target; yame init");
+            eprintln!("      support is planned but not yet implemented.");
             Err(())
         }
     }
@@ -101,7 +105,11 @@ fn screen_to_doc(
     scroll_top: usize,
     lines: &[String],
 ) -> Option<(u16, u16)> {
-    if screen_row < editor_area.y || screen_col < editor_area.x {
+    if screen_row < editor_area.y
+        || screen_col < editor_area.x
+        || screen_row >= editor_area.y + editor_area.height
+        || screen_col >= editor_area.x + editor_area.width
+    {
         return None;
     }
     let cw = (editor_area.width as usize)
@@ -124,6 +132,22 @@ fn screen_to_doc(
     }
     // Click landed below all content — go to last line, column 0.
     Some((lines.len().saturating_sub(1) as u16, 0))
+}
+
+/// Returns true if the key is a pure cursor-movement key that cannot change
+/// document content. Used to skip the decoration debounce timer on nav presses.
+fn is_navigation_key(k: &crossterm::event::KeyEvent) -> bool {
+    matches!(
+        k.code,
+        KeyCode::Up
+            | KeyCode::Down
+            | KeyCode::Left
+            | KeyCode::Right
+            | KeyCode::Home
+            | KeyCode::End
+            | KeyCode::PageUp
+            | KeyCode::PageDown
+    )
 }
 
 fn event_loop<B: ratatui::backend::Backend>(
@@ -162,8 +186,8 @@ fn event_loop<B: ratatui::backend::Backend>(
 
     loop {
         // Fire decoration pass if debounce has elapsed.
-        // TODO(v1.5): move to background thread — build_decoration_map and count_words
-        // are pure functions; when v1.5 moves them here, replace with tx.send(text) + rx.try_recv().
+        // v1.5 migration point: move to background thread — build_decoration_map and count_words
+        // are pure functions; swap this block for tx.send(text) + rx.try_recv() when ready.
         if app.force_redecorate || app.last_keystroke.is_some_and(|t| t.elapsed() >= DEBOUNCE) {
             let text = app.textarea.lines().join("\n");
             app.decoration_map = build_decoration_map(&text, &app.theme, app.italic_support);
@@ -310,73 +334,90 @@ fn event_loop<B: ratatui::backend::Backend>(
         if event::poll(POLL_TIMEOUT)? {
             match event::read()? {
                 Event::Key(k) => {
-                    match (k.modifiers, k.code) {
-                        (KeyModifiers::CONTROL, KeyCode::Char('s'))
-                        | (KeyModifiers::SUPER, KeyCode::Char('s')) => {
-                            handle_save(app)?;
-                        }
-                        (KeyModifiers::CONTROL, KeyCode::Char('x'))
-                        | (KeyModifiers::NONE, KeyCode::Esc) => {
-                            if handle_exit(app) {
+                    // ── ExitPrompt modal: intercept ALL keys before global shortcuts ──────
+                    // Without this guard, Esc hits the outer (NONE, Esc) arm and re-fires
+                    // handle_exit (stuck in a loop), and Ctrl+C triggers clipboard copy
+                    // instead of canceling. The modal owns its entire key space.
+                    if matches!(app.status.mode, StatusMode::ExitPrompt) {
+                        match k.code {
+                            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                                handle_save(app)?;
                                 break;
                             }
+                            KeyCode::Char('n') | KeyCode::Char('N') => {
+                                break;
+                            }
+                            // Esc, c/C (any modifier, so Ctrl+C works), and x/X cancel.
+                            KeyCode::Esc
+                            | KeyCode::Char('c')
+                            | KeyCode::Char('C')
+                            | KeyCode::Char('x')
+                            | KeyCode::Char('X') => {
+                                app.status.mode = StatusMode::Normal;
+                            }
+                            _ => {}
                         }
-                        (KeyModifiers::CONTROL, KeyCode::Char('c'))
-                        | (KeyModifiers::SUPER, KeyCode::Char('c')) => {
-                            yame::clipboard::handle_copy(app);
-                        }
-                        (KeyModifiers::CONTROL, KeyCode::Char('v'))
-                        | (KeyModifiers::SUPER, KeyCode::Char('v')) => {
-                            yame::clipboard::handle_paste(app);
-                            app.force_redecorate = true;
-                        }
-                        // Undo/redo: tui-textarea uses Ctrl+U/Ctrl+R internally,
-                        // but we expose the conventional Ctrl+Z / Ctrl+Y bindings
-                        // by calling the methods directly. After each operation we
-                        // recompute the dirty flag so undoing back to saved state
-                        // clears it, and trigger a decoration refresh.
-                        (KeyModifiers::CONTROL, KeyCode::Char('z')) => {
-                            app.status.dismiss();
-                            app.config_warnings.clear();
-                            app.textarea.undo();
-                            app.force_redecorate = true;
-                            app.last_keystroke = Some(std::time::Instant::now());
-                            app.recompute_dirty();
-                        }
-                        (KeyModifiers::CONTROL, KeyCode::Char('y')) => {
-                            app.status.dismiss();
-                            app.config_warnings.clear();
-                            app.textarea.redo();
-                            app.force_redecorate = true;
-                            app.last_keystroke = Some(std::time::Instant::now());
-                            app.recompute_dirty();
-                        }
-                        _ => {
-                            // Handle exit prompt key intercepts
-                            if matches!(app.status.mode, StatusMode::ExitPrompt) {
-                                match k.code {
-                                    KeyCode::Char('y') | KeyCode::Char('Y') => {
-                                        handle_save(app)?;
-                                        break;
-                                    }
-                                    KeyCode::Char('n') | KeyCode::Char('N') => {
-                                        break;
-                                    }
-                                    KeyCode::Esc | KeyCode::Char('c') | KeyCode::Char('C') => {
-                                        app.status.mode = StatusMode::Normal;
-                                    }
-                                    _ => {}
+                    } else {
+                        match (k.modifiers, k.code) {
+                            (KeyModifiers::CONTROL, KeyCode::Char('s'))
+                            | (KeyModifiers::SUPER, KeyCode::Char('s')) => {
+                                handle_save(app)?;
+                            }
+                            (KeyModifiers::CONTROL, KeyCode::Char('x'))
+                            | (KeyModifiers::NONE, KeyCode::Esc) => {
+                                if handle_exit(app) {
+                                    break;
                                 }
-                            } else {
-                                // Dismiss any dismissible message on any keypress
+                            }
+                            (KeyModifiers::CONTROL, KeyCode::Char('c'))
+                            | (KeyModifiers::SUPER, KeyCode::Char('c')) => {
+                                yame::clipboard::handle_copy(app);
+                            }
+                            (KeyModifiers::CONTROL, KeyCode::Char('v'))
+                            | (KeyModifiers::SUPER, KeyCode::Char('v')) => {
+                                yame::clipboard::handle_paste(app);
+                                app.force_redecorate = true;
+                            }
+                            // Undo/redo: tui-textarea uses Ctrl+U/Ctrl+R internally,
+                            // but we expose the conventional Ctrl+Z / Ctrl+Y bindings
+                            // by calling the methods directly. After each operation we
+                            // recompute the dirty flag so undoing back to saved state
+                            // clears it, and trigger a decoration refresh.
+                            (KeyModifiers::CONTROL, KeyCode::Char('z')) => {
                                 app.status.dismiss();
                                 app.config_warnings.clear();
+                                app.textarea.undo();
+                                app.force_redecorate = true;
+                                app.last_keystroke = Some(std::time::Instant::now());
+                                app.recompute_dirty();
+                            }
+                            (KeyModifiers::CONTROL, KeyCode::Char('y')) => {
+                                app.status.dismiss();
+                                app.config_warnings.clear();
+                                app.textarea.redo();
+                                app.force_redecorate = true;
+                                app.last_keystroke = Some(std::time::Instant::now());
+                                app.recompute_dirty();
+                            }
+                            _ => {
+                                // Dismiss any dismissible message on any content keypress.
+                                app.status.dismiss();
+                                app.config_warnings.clear();
+                                // Capture nav flag before input() consumes the event.
+                                let is_nav = is_navigation_key(&k);
                                 let prev_line_count = app.textarea.lines().len();
                                 app.textarea.input(k);
                                 if app.textarea.lines().len() != prev_line_count {
                                     app.force_redecorate = true;
                                 }
-                                app.mark_keystroke();
+                                // Navigation keys move the cursor without changing content —
+                                // skip the decoration debounce timer to avoid a redundant
+                                // full re-parse of the document on every arrow-key press.
+                                if is_nav {
+                                    app.recompute_dirty();
+                                } else {
+                                    app.mark_keystroke();
+                                }
                             }
                         }
                     }
@@ -468,10 +509,16 @@ fn event_loop<B: ratatui::backend::Backend>(
 
 #[mutants::skip] // Calls std::fs::write — I/O side effect; status message logic tested in Phase 11.
 fn handle_save(app: &mut App) -> io::Result<()> {
-    // Always write a POSIX-compliant trailing newline.  Internally lines have no
-    // trailing newline; saved_content stores the same internal representation, so
-    // the dirty comparison is unaffected.
-    let content = app.textarea.lines().join("\n") + "\n";
+    // Build the content to write.  Normally we always append a POSIX trailing
+    // newline.  Exception: if the file was empty (0 bytes or new) at load time
+    // and the buffer is still empty, write nothing — avoids growing a 0-byte
+    // file to a 1-byte bare newline on a no-op save.
+    let lines = app.textarea.lines();
+    let content = if app.initial_file_empty && lines == [""] {
+        String::new()
+    } else {
+        lines.join("\n") + "\n"
+    };
     // Create parent directories if they don't exist (e.g. `yame notes/new.md`).
     if let Some(parent) = app.file_path.parent()
         && !parent.as_os_str().is_empty()
@@ -541,6 +588,7 @@ mod tests {
             status: StatusLine::default(),
             config_warnings: vec![],
             scroll_top: 0,
+            initial_file_empty: false,
         }
     }
 

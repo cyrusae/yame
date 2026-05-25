@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- Add no-args help output (suggest file path usage) (#88)
 - Color tweaks: heading # toward bg, ~~ revert to muted, checkbox brackets muted, fenced lang tag muted (#80)
 - Escape key exits (clean buffer) or prompts (dirty buffer), matching Ctrl+X (#66)
 - Checked todo `[x]` bracket uses text color for visual pop; item text stays muted (#67)
@@ -14,6 +15,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - v1 polish: italic startup warning, `delimiter_blend` config token, parent-dir creation on save (#35)
 
 ### Fixed
+- Fix empty-file POSIX growth: saving empty buffer writes 1-byte newline (#84)
+- Fix screen_to_doc missing upper-bound boundary checks on mouse click (#82)
+- Fix exit-prompt Esc/Ctrl+C shadowed by outer key match arms (#81)
 - Dim # heading and backtick/tilde delimiters using delimiter_blend like bold/italic/link delimiters (#75)
 - Fenced code block background color wrong — blending toward code_color instead of staying dark (#72)
 - Ctrl+Z undo not working (#70)
@@ -24,6 +28,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Italic default color now matches text color (not accent blend) (#60)
 
 ### Changed
+- Update DESIGN.md: remove stale scrollbar widget reference (#87)
+- split_into_spans: early-exit for undecorated lines to avoid heap alloc (#85)
+- Skip decoration rebuild on pure navigation keystrokes (#83)
 - Annotate build_decoration_map with mutants::skip (#69)
 - Document yame init shell helper design notes and review (#68)
 - Color fenced code language tag accent, backtick fences inline-code color (#57)

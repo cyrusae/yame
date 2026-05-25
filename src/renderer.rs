@@ -56,13 +56,13 @@ pub fn split_into_spans(
     spans: &[StyledSpan],
     default_style: Style,
 ) -> Vec<Span<'static>> {
-    let chars: Vec<(usize, char)> = line.char_indices().collect();
-    let char_count = chars.len();
-
-    // Fast path — no decoration spans
+    // Fast path — no decoration spans; skip the char_indices allocation entirely.
     if spans.is_empty() {
         return vec![Span::styled(line.to_owned(), default_style)];
     }
+
+    let chars: Vec<(usize, char)> = line.char_indices().collect();
+    let char_count = chars.len();
 
     // Sort by char_start (stable — preserves paint order within same position)
     let mut sorted = spans.to_vec();
@@ -591,6 +591,7 @@ mod tests {
             status: StatusLine::default(),
             config_warnings: vec![],
             scroll_top: 0,
+            initial_file_empty: false,
         }
     }
 
