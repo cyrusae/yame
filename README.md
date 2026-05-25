@@ -4,46 +4,48 @@
 The goal is something meaningfully lighter than VS Code for editing READMEs, notes,
 and CLAUDE.mds, while being more capable than nano for Markdown specifically.
 
-> **Early / alpha.** The core editing loop and theming system are solid. The visual
-> layout is going to change — don't treat the current UI as settled. Config keys and
-> keybindings are stable.
+> **Alpha.** Core editing, decoration, and theming are solid. Config keys and
+> keybindings are stable. The visual layout may still change before 1.0.
 
-<!-- screenshot or demo GIF goes here once the UI settles -->
+<!-- screenshot or demo GIF goes here -->
 
 ---
 
 ## What it does
 
-- Opens and saves Markdown files with inline decoration: headings, bold, italic, inline
-  code, fenced blocks, blockquotes, links, lists, todo checkboxes, tables
-- Centered editing column with soft word wrap
+- Opens and saves Markdown files with live inline decoration: headings, bold, italic,
+  inline code, fenced blocks, blockquotes, links, lists, todo checkboxes, tables,
+  strikethrough, horizontal rules
+- Centered editing column with soft word wrap (wide/CJK character aware)
 - Catppuccin Mocha theme by default, fully configurable via `~/.config/yame/config.toml`
 - System clipboard (`Ctrl+C` / `Ctrl+V`)
-- Save with `Ctrl+S`, exit with `Ctrl+X` (prompts if unsaved changes)
+- Smart pair wrapping: select text, press `(`, `[`, `"`, `` ` ``, `*`, etc. to wrap it
+- Decoupled viewport scrolling — scroll to read without moving the cursor
 - Undo/redo via `Ctrl+Z` / `Ctrl+Y`
+- Live config reload with `Ctrl+R`
 
 ## What it doesn't do yet
 
-- No syntax highlighting inside fenced code blocks (coming in v1.5)
-- No search (coming in v2)
-- No line numbers (coming in v2)
+- No syntax highlighting inside fenced code blocks (planned v1.5)
+- No search / find-replace (planned v2)
+- No line numbers (planned v2)
 - No tab completion, file browser, or split panes
 
 ---
 
 ## Install
 
-Requires Rust (stable). From source:
+```sh
+cargo install yame
+```
+
+Or build from source:
 
 ```sh
-git clone https://github.com/yourname/yame
+git clone https://github.com/cyrusae/yame
 cd yame
 cargo install --path .
 ```
-
-> **Note:** Requires a [Nerd Fonts](https://www.nerdfonts.com/) patched terminal font
-> for the Powerline separator in the status bar. If you don't have one, the separator
-> will render as a box character — everything else works fine.
 
 ### Platform support
 
@@ -85,8 +87,6 @@ yame() {
 Requires [`fd`](https://github.com/sharkdp/fd) and [`fzf`](https://github.com/junegunn/fzf).
 Without `fd`, replace `fd --type f --extension md` with `find . -name "*.md"`.
 
-> This is an example pattern, not a battle-tested wrapper. Adjust to taste.
-
 ---
 
 ## Keybindings
@@ -94,17 +94,20 @@ Without `fd`, replace `fd --type f --extension md` with `find . -name "*.md"`.
 | Key | Action |
 |-----|--------|
 | `Ctrl+S` | Save |
-| `Ctrl+X` | Exit (prompts if unsaved changes) |
+| `Ctrl+X` · `Esc` | Exit (prompts if unsaved changes) |
 | `Ctrl+Z` | Undo |
 | `Ctrl+Y` | Redo |
-| `Ctrl+C` | Copy selection (or current line if no selection) |
+| `Ctrl+C` | Copy selection |
 | `Ctrl+V` | Paste from system clipboard |
+| `Ctrl+R` | Reload config file |
 | Arrow keys | Move cursor |
 | `Shift+Arrow` | Select text |
 | `Home` / `End` | Start / end of line |
-| `PgUp` / `PgDn` | Scroll |
+| `PgUp` / `PgDn` | Scroll by page |
+| `Ctrl+Up` / `Ctrl+Down` | Scroll viewport without moving cursor |
 | Mouse click | Place cursor |
-| Mouse scroll | Scroll |
+| Mouse drag | Select text |
+| Mouse scroll | Scroll viewport |
 
 ---
 
@@ -137,23 +140,23 @@ Optional per-element overrides. These take precedence over the derived defaults.
 
 ```toml
 [theme]
-# bold_color         = "#cdd6f4"
-# italic_color       = "#f5c2e7"   # e.g. Catppuccin pink for tonal distinction
-# strikethrough_color = "#585b70"  # ~~struck~~ text (default: muted)
-# blockquote_color   = "#6c7086"
-# link_text_color    = "#cba6f7"
-# link_url_color     = "#6c7086"
-# todo_done          = "#585b70"   # completed todo items
-# rule_color         = "#585b70"   # horizontal rule ─────
-# code_bg            = "#262637"
-# fenced_bg        = "#222233"
-# heading_bg       = "#302d45"
-# selection_bg     = "#413d5c"
-# selection_fg     = "#1e1e2e"
-# ui_bg            = "#1e1e2e"
-# ui_bar           = "#313244"
-# ui_text          = "#cdd6f4"
-# delimiter_blend  = 0.4         # 0.0 = full muted, 1.0 = full span color
+# bold_color          = "#cdd6f4"
+# italic_color        = "#f5c2e7"   # e.g. Catppuccin pink for tonal distinction
+# strikethrough_color = "#585b70"   # ~~struck~~ text (default: muted)
+# blockquote_color    = "#6c7086"
+# link_text_color     = "#cba6f7"
+# link_url_color      = "#6c7086"
+# todo_done           = "#585b70"   # completed todo items
+# rule_color          = "#585b70"   # horizontal rule ─────
+# code_bg             = "#262637"
+# fenced_bg           = "#222233"
+# heading_bg          = "#302d45"
+# selection_bg        = "#413d5c"
+# selection_fg        = "#1e1e2e"
+# ui_bg               = "#1e1e2e"
+# ui_bar              = "#313244"
+# ui_text             = "#cdd6f4"
+# delimiter_blend     = 0.4         # 0.0 = full muted, 1.0 = full span color
 ```
 
 ### Per-level heading colors
@@ -172,8 +175,14 @@ Optional per-element overrides. These take precedence over the derived defaults.
 
 ```toml
 [layout]
-# min_cols = 60   # minimum editing column width in characters
+# min_cols        = 60     # minimum editing column width in characters
+# tab_width       = 4      # spaces per tab character (tabs are expanded on load)
+# powerline_glyphs = false # set true to use Nerd Font arrows in the status bar
 ```
+
+> **Note:** `powerline_glyphs = true` requires a
+> [Nerd Fonts](https://www.nerdfonts.com/) patched terminal font.
+> Without one, the separator renders as a box character — everything else works fine.
 
 ### Error handling
 

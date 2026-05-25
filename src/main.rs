@@ -1,48 +1,46 @@
 use std::io;
 use std::path::PathBuf;
-use std::time::Duration;
 
 use crossterm::{
-    event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseEventKind,
-    },
+    event::{DisableMouseCapture, EnableMouseCapture},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::{
-    Terminal, backend::CrosstermBackend, layout::Rect, style::Style, widgets::Paragraph,
-};
-use tui_textarea::CursorMove;
+use ratatui::{Terminal, backend::CrosstermBackend};
 
 use yame::app::App;
-use yame::config::{LayoutConfig, Theme, load_config, supports_italic};
-use yame::decoration::{build_decoration_map, count_words};
-use yame::status::StatusMode;
+use yame::config::{Theme, load_config, supports_italic};
 
-#[mutants::skip] // Installs a global panic hook — untestable side effect with no return value.
+mod commands;
+mod input;
+
+#[mutants::skip] // Installs a global panic hook — untestable side effect.
 fn setup_panic_hook() {
     let original = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        // Best-effort terminal restore on panic; ignore errors.
         let _ = disable_raw_mode();
         let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
         original(info);
     }));
 }
 
-#[mutants::skip] // Reads std::env::args() — side-effectful, not unit-testable without refactoring.
+#[mutants::skip] // Reads std::env::args() — side-effectful, not unit-testable.
 fn parse_args() -> Result<PathBuf, ()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.len() {
         1 => Ok(PathBuf::from(&args[0])),
         _ => {
-            eprintln!("Usage: yame <file>");
+            eprintln!("yame — yet another markdown editor\n");
+            eprintln!("Usage: yame <file.md>");
+            eprintln!("       Opens <file.md> for editing, creating it if it does not exist.");
+            eprintln!("\nNote: a file named exactly 'init' is a valid target; yame init");
+            eprintln!("      support is planned but not yet implemented.");
             Err(())
         }
     }
 }
 
-#[mutants::skip] // Full terminal I/O orchestration — no unit-testable return value.
+#[mutants::skip] // Full terminal I/O orchestration — not unit-testable.
 fn run(file_path: PathBuf) -> io::Result<()> {
     setup_panic_hook();
 
@@ -56,9 +54,17 @@ fn run(file_path: PathBuf) -> io::Result<()> {
         &mut warnings,
     );
 
-    let mut app = App::new(file_path, theme, italic_support, warnings)?;
+    let tab_width = config.layout.tab_width.unwrap_or(4) as usize;
+    let powerline_glyphs = config.layout.powerline_glyphs.unwrap_or(false);
+    let mut app = App::new(
+        file_path,
+        theme,
+        italic_support,
+        powerline_glyphs,
+        warnings,
+        tab_width,
+    )?;
 
-    // Queue italic fallback warning if the terminal doesn't support italic rendering.
     if !italic_support {
         app.status.set_dismissible(
             "⚠ Terminal does not support italics — using color fallback  [any key to dismiss]",
@@ -71,9 +77,8 @@ fn run(file_path: PathBuf) -> io::Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let result = event_loop(&mut terminal, &mut app, &config.layout);
+    let result = input::event_loop(&mut terminal, &mut app, &config.layout);
 
-    // Always restore terminal, even on error.
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
@@ -83,325 +88,6 @@ fn run(file_path: PathBuf) -> io::Result<()> {
     terminal.show_cursor()?;
 
     result
-}
-
-#[mutants::skip] // Terminal event loop — requires a real terminal backend, not unit-testable.
-fn event_loop<B: ratatui::backend::Backend>(
-    terminal: &mut Terminal<B>,
-    app: &mut App,
-    layout_config: &LayoutConfig,
-) -> io::Result<()> {
-    use yame::layout::{DEFAULT_MIN_COLS, compute_layout};
-    use yame::renderer;
-
-    const POLL_TIMEOUT: Duration = Duration::from_millis(16);
-    const DEBOUNCE: Duration = Duration::from_millis(50);
-    /// Virtual empty rows kept below the cursor at end-of-document.
-    /// Implemented by firing the scroll clamp early (not by shrinking the viewport),
-    /// so all terminal rows remain usable when the cursor is mid-document.
-    const BOTTOM_PADDING: usize = 3;
-    /// Lines moved per scroll-wheel tick.
-    const SCROLL_LINES: usize = 3;
-
-    let min_cols = layout_config.min_cols.unwrap_or(DEFAULT_MIN_COLS);
-
-    // Initial decoration pass — populate before the first frame so the file
-    // renders with bold/italic/etc. immediately on open, without needing a
-    // keystroke to trigger the debounce.
-    {
-        let text = app.textarea.lines().join("\n");
-        app.decoration_map = build_decoration_map(&text, &app.theme, app.italic_support);
-        app.word_count = count_words(&text);
-    }
-
-    // Persisted across frames so mouse events can translate screen-absolute
-    // coordinates to editor-relative (col, row) + scroll offset.
-    let mut last_editor_area = Rect::default();
-
-    loop {
-        // Fire decoration pass if debounce has elapsed.
-        // TODO(v1.5): move to background thread — build_decoration_map and count_words
-        // are pure functions; when v1.5 moves them here, replace with tx.send(text) + rx.try_recv().
-        if app.last_keystroke.is_some_and(|t| t.elapsed() >= DEBOUNCE) {
-            let text = app.textarea.lines().join("\n");
-            app.decoration_map = build_decoration_map(&text, &app.theme, app.italic_support);
-            app.word_count = count_words(&text);
-            app.last_keystroke = None;
-        }
-        app.status.tick();
-
-        terminal.draw(|f| {
-            let layout = compute_layout(f.area(), min_cols);
-
-            // Flood-fill the full content area (everything above the info/status rows)
-            // with the editor background so the gutters on either side of the centered
-            // column share the same colour — one unified canvas rather than two
-            // distinct gutter strips flanking the column.
-            let content_bg_area = Rect {
-                x: layout.full.x,
-                y: layout.full.y,
-                width: layout.full.width,
-                height: layout.column.height,
-            };
-            f.render_widget(
-                Paragraph::new("").style(Style::default().bg(app.theme.bg)),
-                content_bg_area,
-            );
-
-            // Config warning banner — occupies the first row of the column when present.
-            // Dismissed on any keystroke (see event handling below).
-            let editor_area = if !app.config_warnings.is_empty() && layout.column.height > 0 {
-                let warn_area = Rect {
-                    height: 1,
-                    ..layout.column
-                };
-                let msg = format!(" ⚠  {}  [any key to dismiss]", app.config_warnings[0]);
-                f.render_widget(
-                    Paragraph::new(msg)
-                        .style(Style::default().fg(app.theme.warning).bg(app.theme.ui_bar)),
-                    warn_area,
-                );
-                Rect {
-                    y: layout.column.y + 1,
-                    height: layout.column.height.saturating_sub(1),
-                    ..layout.column
-                }
-            } else {
-                layout.column
-            };
-
-            // Clamp scroll_top so the cursor stays visible after every keystroke,
-            // mouse click, or terminal resize.
-            //
-            // IMPORTANT: we track *visual* rows (after soft/hard wrap), not logical
-            // rows.  A logical line that wraps into N visual rows consumes N slots in
-            // the viewport, so a pure logical-row clamp lets the cursor drift off the
-            // bottom whenever wrapped lines sit between scroll_top and the cursor.
-            //
-            // BOTTOM_PADDING is applied by firing the scroll clamp BOTTOM_PADDING rows
-            // early — the viewport itself stays full height so all rows remain usable
-            // mid-document.  The renderer already draws canvas bg past end-of-content,
-            // so those virtual padding rows appear naturally.
-            //
-            // content_width must match the renderer's own calculation exactly so that
-            // wrap_line returns the same split as what gets drawn.
-            let (cursor_row, cursor_col) = app.textarea.cursor();
-            let visible_rows = editor_area.height as usize;
-            let lines = app.textarea.lines();
-            // renderer::GUTTER == 1, two sides → subtract 2
-            let cw = (layout.column.width as usize).saturating_sub(2).max(1);
-
-            // ── Scroll up: cursor above the viewport ──────────────────────────
-            if cursor_row < app.scroll_top {
-                app.scroll_top = cursor_row;
-            }
-
-            // ── Scroll down: check cursor's visual position ───────────────────
-            // Count visual rows occupied by logical lines [scroll_top, cursor_row).
-            let above_visual: usize = lines
-                .get(app.scroll_top..cursor_row.min(lines.len()))
-                .unwrap_or(&[])
-                .iter()
-                .map(|l| renderer::wrap_line(l, cw).len())
-                .sum();
-
-            // Find which visual sub-row within cursor_row the cursor sits on.
-            // Mirrors the renderer's cursor-tracking logic (pointer-arithmetic char_start).
-            let cursor_line_str = lines.get(cursor_row).map_or("", |s| s.as_str());
-            let cursor_wraps = renderer::wrap_line(cursor_line_str, cw);
-            let cursor_subrow = cursor_wraps
-                .iter()
-                .enumerate()
-                .rev()
-                .find(|(_, wrap)| {
-                    let byte_off =
-                        (wrap.as_ptr() as usize).wrapping_sub(cursor_line_str.as_ptr() as usize);
-                    let char_start = cursor_line_str[..byte_off].chars().count();
-                    cursor_col >= char_start
-                })
-                .map_or(0, |(i, _)| i);
-
-            let cursor_visual = above_visual + cursor_subrow;
-
-            // Fire BOTTOM_PADDING rows early so the cursor never sits flush at the
-            // very bottom of the viewport.
-            if cursor_visual + BOTTOM_PADDING >= visible_rows {
-                // Walk backward from cursor_row, accumulating visual rows, until we
-                // find a scroll_top that places the cursor at (last visible row − padding).
-                let headroom = visible_rows.saturating_sub(1 + cursor_subrow + BOTTOM_PADDING);
-                let mut remaining = headroom;
-                let mut new_top = cursor_row;
-                while new_top > 0 {
-                    let prev_wraps =
-                        renderer::wrap_line(lines.get(new_top - 1).map_or("", |s| s.as_str()), cw)
-                            .len();
-                    if prev_wraps > remaining {
-                        break;
-                    }
-                    remaining -= prev_wraps;
-                    new_top -= 1;
-                }
-                app.scroll_top = new_top;
-            }
-
-            let view = renderer::MarkdownView {
-                lines: app.textarea.lines(),
-                decoration_map: &app.decoration_map,
-                scroll_top: app.scroll_top,
-                cursor: app.textarea.cursor(),
-                selection: app.textarea.selection_range(),
-                theme: &app.theme,
-                column_width: layout.column.width,
-            };
-            f.render_widget(view, editor_area);
-            renderer::render_status_bar(f, layout.status_bar, app);
-            renderer::render_info_line(f, layout.info_line, app);
-
-            // Persist so the mouse handler can translate coordinates next frame.
-            last_editor_area = editor_area;
-        })?;
-
-        if event::poll(POLL_TIMEOUT)? {
-            match event::read()? {
-                Event::Key(k) => {
-                    match (k.modifiers, k.code) {
-                        (KeyModifiers::CONTROL, KeyCode::Char('s')) => {
-                            handle_save(app)?;
-                        }
-                        (KeyModifiers::CONTROL, KeyCode::Char('x'))
-                        | (KeyModifiers::NONE, KeyCode::Esc) => {
-                            if handle_exit(app) {
-                                break;
-                            }
-                        }
-                        (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
-                            yame::clipboard::handle_copy(app);
-                        }
-                        (KeyModifiers::CONTROL, KeyCode::Char('v')) => {
-                            yame::clipboard::handle_paste(app);
-                        }
-                        // Undo/redo: pass to tui-textarea then recompute dirty,
-                        // since undoing to the saved state should clear the flag.
-                        (KeyModifiers::CONTROL, KeyCode::Char('z'))
-                        | (KeyModifiers::CONTROL, KeyCode::Char('y')) => {
-                            app.status.dismiss();
-                            app.config_warnings.clear();
-                            app.textarea.input(k);
-                            app.last_keystroke = Some(std::time::Instant::now());
-                            app.recompute_dirty();
-                        }
-                        _ => {
-                            // Handle exit prompt key intercepts
-                            if matches!(app.status.mode, StatusMode::ExitPrompt) {
-                                match k.code {
-                                    KeyCode::Char('y') | KeyCode::Char('Y') => {
-                                        handle_save(app)?;
-                                        break;
-                                    }
-                                    KeyCode::Char('n') | KeyCode::Char('N') => {
-                                        break;
-                                    }
-                                    KeyCode::Esc | KeyCode::Char('c') | KeyCode::Char('C') => {
-                                        app.status.mode = StatusMode::Normal;
-                                    }
-                                    _ => {}
-                                }
-                            } else {
-                                // Dismiss any dismissible message on any keypress
-                                app.status.dismiss();
-                                app.config_warnings.clear();
-                                app.textarea.input(k);
-                                app.mark_keystroke();
-                            }
-                        }
-                    }
-                }
-                Event::Mouse(mut mouse) => {
-                    match mouse.kind {
-                        // Scroll events are intercepted before tui-textarea to avoid
-                        // two problems:
-                        //   1. tui-textarea accumulates its own internal scroll offset
-                        //      that diverges from our scroll_top, producing "ghost"
-                        //      scroll steps that must be unwound before cursor moves.
-                        //   2. On scroll-up mid-viewport, the visual clamp only fires
-                        //      at the bottom boundary, so cursor drifts through the
-                        //      visible area without the viewport moving at all.
-                        //
-                        // Fix: move cursor ourselves, and on ScrollUp also decrement
-                        // scroll_top immediately so the viewport follows the gesture
-                        // without waiting for the cursor to hit the top of the view.
-                        // The visual clamp corrects any overshoot on the next frame.
-                        MouseEventKind::ScrollDown => {
-                            for _ in 0..SCROLL_LINES {
-                                app.textarea.move_cursor(CursorMove::Down);
-                            }
-                            // scroll_top is driven upward by the visual clamp when
-                            // the cursor approaches the bottom — no manual adjustment.
-                        }
-                        MouseEventKind::ScrollUp => {
-                            for _ in 0..SCROLL_LINES {
-                                app.textarea.move_cursor(CursorMove::Up);
-                            }
-                            // Immediately pull the viewport up so content moves on
-                            // every tick.  The clamp corrects if this undershoots.
-                            app.scroll_top = app.scroll_top.saturating_sub(SCROLL_LINES);
-                        }
-                        // Click / drag: translate screen coords → logical doc coords
-                        // so tui-textarea places the cursor on the correct line.
-                        _ => {
-                            mouse.column = mouse.column.saturating_sub(last_editor_area.x);
-                            let rel_row = mouse.row.saturating_sub(last_editor_area.y) as usize;
-                            mouse.row = rel_row.saturating_add(app.scroll_top) as u16;
-                            app.textarea.input(Event::Mouse(mouse));
-                        }
-                    }
-                }
-                Event::Resize(_, _) => {
-                    // next draw() picks up new dimensions automatically
-                }
-                _ => {}
-            }
-        }
-    }
-
-    Ok(())
-}
-
-#[mutants::skip] // Calls std::fs::write — I/O side effect; status message logic tested in Phase 11.
-fn handle_save(app: &mut App) -> io::Result<()> {
-    // Always write a POSIX-compliant trailing newline.  Internally lines have no
-    // trailing newline; saved_content stores the same internal representation, so
-    // the dirty comparison is unaffected.
-    let content = app.textarea.lines().join("\n") + "\n";
-    // Create parent directories if they don't exist (e.g. `yame notes/new.md`).
-    if let Some(parent) = app.file_path.parent()
-        && !parent.as_os_str().is_empty()
-        && let Err(e) = std::fs::create_dir_all(parent)
-    {
-        app.status.set_dismissible(format!("⚠ Save failed: {e}"));
-        return Ok(());
-    }
-    match std::fs::write(&app.file_path, &content) {
-        Ok(()) => {
-            app.saved_content = Some(app.textarea.lines().to_vec());
-            app.is_dirty = false;
-            app.status.set_timed("Saved.", Duration::from_millis(1500));
-        }
-        Err(e) => {
-            app.status.set_dismissible(format!("⚠ Save failed: {e}"));
-        }
-    }
-    Ok(())
-}
-
-/// Returns true if the app should exit.
-fn handle_exit(app: &mut App) -> bool {
-    if app.is_dirty {
-        app.status.mode = StatusMode::ExitPrompt;
-        false
-    } else {
-        true
-    }
 }
 
 #[mutants::skip] // Entry point — calls process::exit, not unit-testable.
@@ -419,13 +105,19 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::path::PathBuf;
     use tui_textarea::TextArea;
 
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use ratatui::layout::Rect;
+
+    use yame::app::App;
     use yame::config::Theme;
     use yame::decoration::DecorationMap;
     use yame::status::{StatusLine, StatusMode};
+
+    use super::commands::{clamp_scroll, handle_exit};
+    use super::input::{get_selection_text, handle_pair_wrap};
 
     fn make_app() -> App {
         App {
@@ -435,12 +127,17 @@ mod tests {
             saved_content: None,
             theme: Theme::default_theme(),
             italic_support: false,
+            powerline_glyphs: false,
             last_keystroke: None,
+            force_redecorate: false,
             decoration_map: DecorationMap::default(),
             word_count: 0,
             status: StatusLine::default(),
             config_warnings: vec![],
             scroll_top: 0,
+            free_scroll: false,
+            clipboard: None,
+            initial_file_empty: false,
         }
     }
 
@@ -463,6 +160,249 @@ mod tests {
         assert!(
             matches!(app.status.mode, StatusMode::ExitPrompt),
             "dirty exit must show ExitPrompt"
+        );
+    }
+
+    // ── clamp_scroll tests ────────────────────────────────────────────────────
+    // col_width=82 → cw = 82 - 2*GUTTER. GUTTER=1 → cw=80. Using 82 gives cw=80.
+    const TEST_COL: u16 = 82;
+
+    fn make_editor_area(height: u16) -> Rect {
+        Rect {
+            x: 0,
+            y: 0,
+            width: TEST_COL,
+            height,
+        }
+    }
+
+    fn make_app_with_lines(lines: &[&str]) -> App {
+        let mut app = make_app();
+        app.textarea = TextArea::new(lines.iter().map(|s| s.to_string()).collect());
+        app
+    }
+
+    #[test]
+    fn clamp_scroll_cursor_above_viewport_scrolls_up() {
+        let mut app = make_app_with_lines(&["a"; 20]);
+        app.scroll_top = 5;
+        app.textarea
+            .move_cursor(tui_textarea::CursorMove::Jump(2, 0));
+        clamp_scroll(&mut app, make_editor_area(10), TEST_COL, 0);
+        assert_eq!(
+            app.scroll_top, 2,
+            "cursor above viewport → scroll_top = cursor_row"
+        );
+    }
+
+    #[test]
+    fn clamp_scroll_cursor_in_viewport_unchanged() {
+        let mut app = make_app_with_lines(&["a"; 20]);
+        app.scroll_top = 0;
+        app.textarea
+            .move_cursor(tui_textarea::CursorMove::Jump(3, 0));
+        clamp_scroll(&mut app, make_editor_area(10), TEST_COL, 0);
+        assert_eq!(
+            app.scroll_top, 0,
+            "cursor inside viewport → scroll_top unchanged"
+        );
+    }
+
+    #[test]
+    fn clamp_scroll_cursor_at_bottom_with_padding_scrolls_down() {
+        let mut app = make_app_with_lines(&["a"; 20]);
+        app.scroll_top = 0;
+        app.textarea
+            .move_cursor(tui_textarea::CursorMove::Jump(9, 0));
+        clamp_scroll(&mut app, make_editor_area(10), TEST_COL, 3);
+        assert!(
+            app.scroll_top > 0,
+            "cursor near bottom with padding → scroll_top advances"
+        );
+    }
+
+    #[test]
+    fn clamp_scroll_zero_height_does_not_panic() {
+        let mut app = make_app_with_lines(&["a"; 5]);
+        clamp_scroll(&mut app, make_editor_area(0), TEST_COL, 3);
+    }
+
+    // ── get_selection_text tests ──────────────────────────────────────────────
+
+    fn make_key(code: KeyCode) -> crossterm::event::KeyEvent {
+        crossterm::event::KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn get_selection_text_none_when_no_selection() {
+        let app = make_app_with_lines(&["hello world"]);
+        assert_eq!(get_selection_text(&app), None);
+    }
+
+    #[test]
+    fn get_selection_text_single_line() {
+        let mut app = make_app_with_lines(&["hello world"]);
+        app.textarea.start_selection();
+        for _ in 0..5 {
+            app.textarea.move_cursor(tui_textarea::CursorMove::Forward);
+        }
+        assert_eq!(get_selection_text(&app), Some("hello".to_string()));
+    }
+
+    #[test]
+    fn get_selection_text_multiline() {
+        let mut app = make_app_with_lines(&["abc", "def"]);
+        app.textarea.start_selection();
+        app.textarea.move_cursor(tui_textarea::CursorMove::Down);
+        app.textarea.move_cursor(tui_textarea::CursorMove::End);
+        let text = get_selection_text(&app).unwrap_or_default();
+        assert!(
+            text.contains('\n'),
+            "multiline selection must include newline"
+        );
+        assert!(text.starts_with("abc"), "first line preserved");
+    }
+
+    // ── handle_pair_wrap tests ────────────────────────────────────────────────
+
+    #[test]
+    fn pair_wrap_bracket_wraps_selection() {
+        let mut app = make_app_with_lines(&["hello"]);
+        app.textarea.start_selection();
+        for _ in 0..5 {
+            app.textarea.move_cursor(tui_textarea::CursorMove::Forward);
+        }
+        let handled = handle_pair_wrap(&mut app, make_key(KeyCode::Char('[')));
+        assert!(handled, "pair wrap must return true when selection present");
+        let line = app.textarea.lines()[0].clone();
+        assert_eq!(line, "[hello]", "selection wrapped with square brackets");
+    }
+
+    #[test]
+    fn pair_wrap_star_wraps_selection() {
+        let mut app = make_app_with_lines(&["hi"]);
+        app.textarea.start_selection();
+        for _ in 0..2 {
+            app.textarea.move_cursor(tui_textarea::CursorMove::Forward);
+        }
+        handle_pair_wrap(&mut app, make_key(KeyCode::Char('*')));
+        assert_eq!(app.textarea.lines()[0], "*hi*");
+    }
+
+    #[test]
+    fn pair_wrap_no_selection_returns_false() {
+        let mut app = make_app_with_lines(&["hello"]);
+        let handled = handle_pair_wrap(&mut app, make_key(KeyCode::Char('[')));
+        assert!(!handled, "no selection → pair wrap is a no-op");
+        assert_eq!(app.textarea.lines()[0], "hello", "content unchanged");
+    }
+
+    #[test]
+    fn pair_wrap_non_pair_key_returns_false() {
+        let mut app = make_app_with_lines(&["hello"]);
+        app.textarea.start_selection();
+        for _ in 0..5 {
+            app.textarea.move_cursor(tui_textarea::CursorMove::Forward);
+        }
+        let handled = handle_pair_wrap(&mut app, make_key(KeyCode::Char('a')));
+        assert!(!handled, "non-pair key → pair wrap is a no-op");
+    }
+
+    #[test]
+    fn pair_wrap_ctrl_chord_ignored() {
+        let mut app = make_app_with_lines(&["hello"]);
+        app.textarea.start_selection();
+        for _ in 0..5 {
+            app.textarea.move_cursor(tui_textarea::CursorMove::Forward);
+        }
+        let k = crossterm::event::KeyEvent::new(KeyCode::Char('['), KeyModifiers::CONTROL);
+        let handled = handle_pair_wrap(&mut app, k);
+        assert!(!handled, "Ctrl chord must not trigger pair wrap");
+    }
+
+    // ── free_scroll / decoupled scroll tests ─────────────────────────────────
+
+    use super::input::is_navigation_key;
+
+    fn ctrl_key(code: KeyCode) -> crossterm::event::KeyEvent {
+        crossterm::event::KeyEvent::new(code, KeyModifiers::CONTROL)
+    }
+
+    #[test]
+    fn scroll_down_increases_scroll_top_without_moving_cursor() {
+        // Simulate what the ScrollDown handler does: increment scroll_top, set free_scroll.
+        let mut app = make_app_with_lines(&["a"; 20]);
+        app.scroll_top = 0;
+        let (cursor_before, _) = app.textarea.cursor();
+        let max = app.textarea.lines().len().saturating_sub(1);
+        app.scroll_top = (app.scroll_top + 3).min(max);
+        app.free_scroll = true;
+        let (cursor_after, _) = app.textarea.cursor();
+        assert_eq!(app.scroll_top, 3, "scroll_top advanced by SCROLL_LINES");
+        assert_eq!(
+            cursor_before, cursor_after,
+            "cursor must not move on scroll"
+        );
+        assert!(app.free_scroll, "free_scroll must be set");
+    }
+
+    #[test]
+    fn scroll_up_decreases_scroll_top_without_moving_cursor() {
+        let mut app = make_app_with_lines(&["a"; 20]);
+        app.scroll_top = 6;
+        let (cursor_before, _) = app.textarea.cursor();
+        app.scroll_top = app.scroll_top.saturating_sub(3);
+        app.free_scroll = true;
+        let (cursor_after, _) = app.textarea.cursor();
+        assert_eq!(app.scroll_top, 3, "scroll_top decreased by SCROLL_LINES");
+        assert_eq!(
+            cursor_before, cursor_after,
+            "cursor must not move on scroll"
+        );
+        assert!(app.free_scroll, "free_scroll must be set");
+    }
+
+    #[test]
+    fn scroll_up_saturates_at_zero() {
+        let mut app = make_app_with_lines(&["a"; 10]);
+        app.scroll_top = 1;
+        app.scroll_top = app.scroll_top.saturating_sub(5); // would go negative
+        assert_eq!(app.scroll_top, 0, "scroll_top must not go below 0");
+    }
+
+    #[test]
+    fn scroll_down_saturates_at_last_line() {
+        let mut app = make_app_with_lines(&["a"; 5]);
+        let max = app.textarea.lines().len().saturating_sub(1); // = 4
+        app.scroll_top = (app.scroll_top + 100).min(max);
+        assert_eq!(app.scroll_top, 4, "scroll_top must not exceed last line");
+    }
+
+    #[test]
+    fn ctrl_up_is_navigation_key() {
+        let k = ctrl_key(KeyCode::Up);
+        assert!(
+            is_navigation_key(&k),
+            "Ctrl+Up must be classified as navigation (no debounce)"
+        );
+    }
+
+    #[test]
+    fn ctrl_down_is_navigation_key() {
+        let k = ctrl_key(KeyCode::Down);
+        assert!(
+            is_navigation_key(&k),
+            "Ctrl+Down must be classified as navigation (no debounce)"
+        );
+    }
+
+    #[test]
+    fn plain_up_is_navigation_key() {
+        // Regression: plain Up must still be navigation after is_navigation_key refactor.
+        let k = make_key(KeyCode::Up);
+        assert!(
+            is_navigation_key(&k),
+            "plain Up must remain a navigation key"
         );
     }
 }

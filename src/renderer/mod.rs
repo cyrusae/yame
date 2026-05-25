@@ -1,186 +1,109 @@
 use ratatui::{
-    Frame,
     buffer::Buffer,
     layout::Rect,
     style::{Modifier, Style},
-    text::{Line, Span},
-    widgets::{Paragraph, Widget},
+    widgets::Widget,
 };
 
-use crate::app::App;
 use crate::decoration::{DecorationMap, StyledSpan};
-use crate::status::StatusMode;
+
+mod status;
+mod utils;
+
+pub use status::{render_info_line, render_status_bar};
+pub use utils::{format_thousands, shorten_path, split_into_spans};
 
 // ---------------------------------------------------------------------------
-// Pure helpers (tested below)
+// Soft-wrap helpers
 // ---------------------------------------------------------------------------
 
-/// Shorten a file path to at most `max_components` trailing components.
-/// e.g. "/home/user/docs/notes/foo.md" → "notes/foo.md" with max_components=2
-pub fn shorten_path(path: &std::path::Path, max_components: usize) -> String {
-    let components: Vec<_> = path
-        .components()
-        .map(|c| c.as_os_str().to_string_lossy().into_owned())
-        .collect();
-    let start = components.len().saturating_sub(max_components);
-    components[start..].join("/")
-}
-
-/// Format a usize with thousands separators.
-/// e.g. 1204 → "1,204", 999 → "999"
-pub fn format_thousands(n: usize) -> String {
-    let s = n.to_string();
-    let bytes = s.as_bytes();
-    let len = bytes.len();
-    let mut result = String::with_capacity(len + len / 3);
-    for (i, &b) in bytes.iter().enumerate() {
-        if i > 0 && (len - i).is_multiple_of(3) {
-            result.push(',');
-        }
-        result.push(b as char);
-    }
-    result
-}
-
-// ---------------------------------------------------------------------------
-// Step 7.3 — Span boundary splitting
-// ---------------------------------------------------------------------------
-
-/// Split a raw line string into ratatui `Span`s at decoration span boundaries.
+/// Soft-wrap a string into visual rows of at most `width` **terminal columns**.
 ///
-/// `spans` need not be sorted or non-overlapping; this function sorts by
-/// `char_start` and clips any later span that overlaps a prior one.
-/// All indices are char indices (not byte indices).
-pub fn split_into_spans(
-    line: &str,
-    spans: &[StyledSpan],
-    default_style: Style,
-) -> Vec<Span<'static>> {
-    let chars: Vec<(usize, char)> = line.char_indices().collect();
-    let char_count = chars.len();
-
-    // Fast path — no decoration spans
-    if spans.is_empty() {
-        return vec![Span::styled(line.to_owned(), default_style)];
-    }
-
-    // Sort by char_start (stable — preserves paint order within same position)
-    let mut sorted = spans.to_vec();
-    sorted.sort_by_key(|s| s.char_start);
-
-    let mut result: Vec<Span<'static>> = Vec::with_capacity(sorted.len() * 2 + 1);
-    let mut char_pos = 0usize; // current position in char terms
-
-    for span in &sorted {
-        // Clamp and clip for safety
-        let s_start = span.char_start.min(char_count);
-        let s_end = span.char_end.min(char_count);
-        // Clip start forward to handle overlapping spans
-        let s_start = s_start.max(char_pos);
-
-        if s_start >= s_end {
-            continue; // zero-width or fully overlapped
-        }
-
-        // Unstyled gap before this span
-        if char_pos < s_start {
-            let byte_start = chars[char_pos].0;
-            let byte_end = chars[s_start].0;
-            result.push(Span::styled(
-                line[byte_start..byte_end].to_owned(),
-                default_style,
-            ));
-        }
-
-        // Styled span content
-        let byte_start = chars[s_start].0;
-        let byte_end = if s_end < char_count {
-            chars[s_end].0
-        } else {
-            line.len()
-        };
-        result.push(Span::styled(
-            line[byte_start..byte_end].to_owned(),
-            span.style,
-        ));
-
-        char_pos = s_end;
-    }
-
-    // Trailing unstyled tail
-    if char_pos < char_count {
-        let byte_start = chars[char_pos].0;
-        result.push(Span::styled(line[byte_start..].to_owned(), default_style));
-    }
-
-    // Always return at least one span (handles empty lines)
-    if result.is_empty() {
-        result.push(Span::styled(String::new(), default_style));
-    }
-
-    result
-}
-
-// ---------------------------------------------------------------------------
-// Step 7.5 — Soft-wrap
-// ---------------------------------------------------------------------------
-
-/// Soft-wrap a string into visual rows of at most `width` chars each.
-///
-/// Breaks at the last space before `width`; falls back to a hard break at
-/// exactly `width` chars when no space exists. Returns byte-slices of `s`
-/// so no allocation is needed.
-///
-/// Width is measured in Unicode scalar values (chars), not display columns.
-/// Wide characters (e.g. CJK) are a v1.5 concern; use `unicode-width` then.
+/// Wide characters (CJK, emoji, …) are counted by their display width (1 or 2
+/// columns) rather than by Unicode scalar-value count.  Breaks at the last
+/// space before `width`; falls back to a hard break when no space exists.
+/// Returns byte-slices of `s` so no allocation is needed.
 pub fn wrap_line(s: &str, width: usize) -> Vec<&str> {
+    use unicode_width::UnicodeWidthChar;
+
     if s.is_empty() || width == 0 {
         return vec![s];
     }
 
     let char_indices: Vec<(usize, char)> = s.char_indices().collect();
-    let total_chars = char_indices.len();
 
-    // Fits on a single row without wrapping
-    if total_chars <= width {
+    // Fast path: total display width fits on one row.
+    let total_display: usize = char_indices
+        .iter()
+        .map(|&(_, c)| UnicodeWidthChar::width(c).unwrap_or(1))
+        .sum();
+    if total_display <= width {
         return vec![s];
     }
 
     let mut result: Vec<&str> = Vec::new();
-    let mut char_start = 0usize;
+    let mut char_start = 0usize; // index into char_indices
 
     loop {
-        let remaining = total_chars - char_start;
-        if remaining == 0 {
+        if char_start >= char_indices.len() {
             break;
         }
 
-        if remaining <= width {
+        // Check whether the rest fits without another break.
+        let remaining_display: usize = char_indices[char_start..]
+            .iter()
+            .map(|&(_, c)| UnicodeWidthChar::width(c).unwrap_or(1))
+            .sum();
+        if remaining_display <= width {
             let byte_start = char_indices[char_start].0;
             result.push(&s[byte_start..]);
             break;
         }
 
-        let chunk_end = char_start + width; // exclusive upper bound
+        // Walk chars until adding the next one would exceed `width` display cols.
+        let mut display_col = 0usize;
+        let mut last_space: Option<usize> = None; // char_indices index of last fitting space
+        let mut chunk_end = char_start; // exclusive end: first char that doesn't fit
 
-        // Find the last space in [char_start .. chunk_end)
-        let last_space_rel = char_indices[char_start..chunk_end]
-            .iter()
-            .rposition(|&(_, c)| c == ' ');
-
-        let (break_char, next_char) = match last_space_rel {
-            Some(rel) => {
-                let abs = char_start + rel;
-                (abs, abs + 1) // break before space, skip the space itself
+        for (ci, &(_, c)) in char_indices[char_start..].iter().enumerate() {
+            let cw = UnicodeWidthChar::width(c).unwrap_or(1);
+            if display_col + cw > width {
+                chunk_end = char_start + ci;
+                break;
             }
-            None => (chunk_end, chunk_end), // hard break — no space found
+            display_col += cw;
+            chunk_end = char_start + ci + 1;
+            if c == ' ' {
+                last_space = Some(char_start + ci);
+            }
+        }
+
+        if chunk_end == char_start {
+            // Pathological: first char alone is wider than `width` (e.g. width=1
+            // with a CJK char).  Hard-break after exactly one char to avoid an
+            // infinite loop.
+            let byte_start = char_indices[char_start].0;
+            let byte_end = char_indices
+                .get(char_start + 1)
+                .map_or(s.len(), |&(b, _)| b);
+            result.push(&s[byte_start..byte_end]);
+            char_start += 1;
+            continue;
+        }
+
+        // Prefer breaking at the last in-range space; fall back to hard break.
+        let (break_at, next_start) = match last_space {
+            Some(sp) => (sp, sp + 1),
+            None => (chunk_end, chunk_end),
         };
 
         let byte_start = char_indices[char_start].0;
-        let byte_end = char_indices[break_char].0;
-        result.push(&s[byte_start..byte_end]);
+        let byte_end = char_indices.get(break_at).map_or(s.len(), |&(b, _)| b);
 
-        char_start = next_char;
+        if byte_start < byte_end {
+            result.push(&s[byte_start..byte_end]);
+        }
+        char_start = next_start;
     }
 
     if result.is_empty() {
@@ -190,25 +113,45 @@ pub fn wrap_line(s: &str, width: usize) -> Vec<&str> {
     result
 }
 
+/// Compute the `(char_start, char_len)` pair for each element of a
+/// [`wrap_line`] output slice, measured in char units within `line`.
+///
+/// `wrap_line` breaks at spaces and **skips** the break-space. A naïve
+/// approach of accumulating `char_len` produces incorrect char offsets for
+/// every segment after the first soft-wrap break. This function corrects for
+/// that by measuring the byte gap between segments (the skipped space).
+pub fn wrap_char_ranges(line: &str, wrapped: &[&str]) -> Vec<(usize, usize)> {
+    let base = line.as_ptr() as usize;
+    let mut result = Vec::with_capacity(wrapped.len());
+    let mut prev_byte_end = 0usize;
+    let mut prev_char_end = 0usize;
+
+    for row_str in wrapped {
+        let seg_byte_start = row_str.as_ptr() as usize - base;
+        let gap_chars = line[prev_byte_end..seg_byte_start].chars().count();
+        let char_start = prev_char_end + gap_chars;
+        let char_len = row_str.chars().count();
+        result.push((char_start, char_len));
+        prev_byte_end = seg_byte_start + row_str.len();
+        prev_char_end = char_start + char_len;
+    }
+
+    result
+}
+
 /// Blank columns on each side of the text content within the editor column.
-/// Keeps text from running flush against the background boundary.
-const GUTTER: u16 = 1;
+pub const GUTTER: u16 = 1;
 
 // ---------------------------------------------------------------------------
-// Step 7.1 — MarkdownView widget
+// MarkdownView widget
 // ---------------------------------------------------------------------------
 
 /// The main editor rendering widget.
-///
-/// Renders visible logical lines from `scroll_top`, applying soft-wrap,
-/// decoration spans, cursor highlighting, and selection overlay.
 pub struct MarkdownView<'a> {
     pub lines: &'a [String],
     pub decoration_map: &'a DecorationMap,
     pub scroll_top: usize,
-    /// Logical (row, col) cursor position from `textarea.cursor()`.
     pub cursor: (usize, usize),
-    /// Normalised selection range from `textarea.selection_range()`.
     pub selection: Option<((usize, usize), (usize, usize))>,
     pub theme: &'a crate::config::Theme,
     pub column_width: u16,
@@ -217,13 +160,12 @@ pub struct MarkdownView<'a> {
 impl Widget for MarkdownView<'_> {
     #[mutants::skip] // Writes into ratatui Buffer — void, not testable via return value.
     fn render(self, area: Rect, buf: &mut Buffer) {
-        // Content area is inset by GUTTER on each side within the column.
         let content_width = (self.column_width as usize).saturating_sub(2 * GUTTER as usize);
         let visible = area.height as usize;
         let bg = self.theme.bg;
         let default_style = Style::default().fg(self.theme.text).bg(bg);
 
-        // 1. Flood-fill the entire area with the background colour.
+        // Flood-fill the entire area with the background colour.
         for row in 0..area.height {
             for col in 0..area.width {
                 buf[(area.x + col, area.y + row)].set_bg(bg);
@@ -233,7 +175,6 @@ impl Widget for MarkdownView<'_> {
         let (cursor_log_row, cursor_log_col) = self.cursor;
         let mut cursor_buf_pos: Option<(u16, u16)> = None;
 
-        // 2. Render each visible logical line.
         let mut visual_row: usize = 0;
         let total = self.lines.len();
         let mut log_row = self.scroll_top;
@@ -243,33 +184,18 @@ impl Widget for MarkdownView<'_> {
             let wrapped = wrap_line(line, content_width.max(1));
             let line_decs = self.decoration_map.get(&log_row);
 
-            for (wrap_idx, &row_str) in wrapped.iter().enumerate() {
+            let char_ranges = wrap_char_ranges(line, &wrapped);
+            for (wrap_idx, (&row_str, &(char_start, char_len))) in
+                wrapped.iter().zip(char_ranges.iter()).enumerate()
+            {
                 if visual_row >= visible {
                     break;
                 }
 
-                // --- Compute this visual row's char range within the logical line ---
-                let byte_off = (row_str.as_ptr() as usize).wrapping_sub(line.as_ptr() as usize);
-                let char_start = line[..byte_off].chars().count();
-                let char_len = row_str.chars().count();
                 let char_end = char_start + char_len;
 
-                // --- Cursor tracking ---
-                if log_row == cursor_log_row {
-                    let is_last_wrap = wrap_idx + 1 == wrapped.len();
-                    let in_range =
-                        cursor_log_col >= char_start && (cursor_log_col < char_end || is_last_wrap);
-                    if in_range {
-                        let col_in_row = (cursor_log_col.saturating_sub(char_start))
-                            .min(content_width.saturating_sub(1));
-                        cursor_buf_pos = Some((
-                            area.x + GUTTER + col_in_row as u16,
-                            area.y + visual_row as u16,
-                        ));
-                    }
-                }
-
-                // --- Adjust decoration spans to this visual row's char range ---
+                // Adjust decoration spans to this visual row's char range.
+                // Built first so continuation_indent is available for cursor tracking.
                 let row_spans: Vec<StyledSpan> = line_decs
                     .map(|decs| {
                         decs.iter()
@@ -279,6 +205,7 @@ impl Widget for MarkdownView<'_> {
                                 char_end: s.char_end.saturating_sub(char_start).min(char_len),
                                 style: s.style,
                                 is_blockquote: s.is_blockquote,
+                                continuation_indent: s.continuation_indent,
                                 full_line_bg: s.full_line_bg,
                                 border_bottom: s.border_bottom,
                                 is_rule: s.is_rule,
@@ -287,7 +214,42 @@ impl Widget for MarkdownView<'_> {
                     })
                     .unwrap_or_default();
 
-                // --- Full-line background (headings, fenced blocks) ---
+                // Continuation rows (wrap_idx > 0) of blockquote/list lines are
+                // indented to align with the text start after the `> ` / bullet prefix.
+                //
+                // IMPORTANT: read from `line_decs` (all logical-line spans), NOT from
+                // `row_spans` (filtered to visual-row char range).  The bullet/indicator
+                // span covers chars 0..1, which is outside the char range of any
+                // continuation row — so it would be stripped from `row_spans` and the
+                // indent would compute to zero.
+                let continuation_indent: u16 = if wrap_idx > 0 {
+                    line_decs
+                        .map(|decs| {
+                            decs.iter()
+                                .map(|s| s.continuation_indent)
+                                .max()
+                                .unwrap_or(0)
+                        })
+                        .unwrap_or(0) as u16
+                } else {
+                    0
+                };
+
+                // Cursor tracking
+                if log_row == cursor_log_row {
+                    let is_last_wrap = wrap_idx + 1 == wrapped.len();
+                    let in_range =
+                        cursor_log_col >= char_start && (cursor_log_col < char_end || is_last_wrap);
+                    if in_range {
+                        let col_in_row = (cursor_log_col.saturating_sub(char_start))
+                            .min(content_width.saturating_sub(1));
+                        cursor_buf_pos = Some((
+                            area.x + GUTTER + continuation_indent + col_in_row as u16,
+                            area.y + visual_row as u16,
+                        ));
+                    }
+                }
+
                 let line_bg = row_spans.iter().find_map(|s| s.full_line_bg).unwrap_or(bg);
                 let border_color = row_spans.iter().find_map(|s| s.border_bottom);
                 let is_rule = row_spans.iter().any(|s| s.is_rule);
@@ -295,14 +257,11 @@ impl Widget for MarkdownView<'_> {
 
                 let y = area.y + visual_row as u16;
 
-                // Flood-fill background across the full column width first.
                 for col in 0..self.column_width {
                     buf[(area.x + col, y)].set_bg(line_bg);
                 }
 
-                // --- Write character cells ---
                 if is_rule {
-                    // Replace source text (---, ***, ___) with a ─ rule across the content width.
                     let rule_style = row_spans
                         .iter()
                         .find(|s| s.is_rule)
@@ -312,21 +271,34 @@ impl Widget for MarkdownView<'_> {
                         buf[(x, y)].set_char('─').set_style(rule_style);
                     }
                 } else {
+                    use unicode_width::UnicodeWidthChar;
                     let row_default = default_style.bg(line_bg);
                     let segments = split_into_spans(row_str, &row_spans, row_default);
-                    let mut x = area.x + GUTTER; // start after left gutter
+                    let mut x = area.x + GUTTER + continuation_indent;
                     for span in &segments {
                         for ch in span.content.chars() {
-                            if (x.saturating_sub(area.x + GUTTER)) as usize >= content_width {
+                            let cw = UnicodeWidthChar::width(ch).unwrap_or(1);
+                            // Stop before this char would overflow the content area.
+                            if (x.saturating_sub(area.x + GUTTER)) as usize + cw > content_width {
                                 break;
                             }
                             buf[(x, y)].set_char(ch).set_style(span.style);
-                            x += 1;
+                            if cw == 2 {
+                                // Explicitly clear the second terminal column of the
+                                // wide char.  Without this, ratatui's frame-diff never
+                                // "owns" that cell, so when the line scrolls away the
+                                // cell can retain stale content from the previous frame.
+                                let x2 = x + 1;
+                                if ((x2.saturating_sub(area.x + GUTTER)) as usize) < content_width {
+                                    buf[(x2, y)].set_char(' ').set_style(span.style);
+                                }
+                            }
+                            x += cw as u16;
                         }
                     }
                 }
 
-                // --- Bottom border (H1–H3 heading underline, last visual row only) ---
+                // Bottom border (H1–H3 heading underline, last visual row only)
                 if let Some(bc) = border_color
                     && is_last_wrap
                 {
@@ -338,7 +310,9 @@ impl Widget for MarkdownView<'_> {
                             width: self.column_width,
                             height: 1,
                         },
-                        Style::default().fg(bc).add_modifier(Modifier::UNDERLINED),
+                        Style::default()
+                            .underline_color(bc)
+                            .add_modifier(Modifier::UNDERLINED),
                     );
                 }
 
@@ -348,12 +322,12 @@ impl Widget for MarkdownView<'_> {
             log_row += 1;
         }
 
-        // 3. Selection overlay — applied after content, before cursor.
+        // Selection overlay — applied after content, before cursor.
         if let Some(selection) = self.selection {
             apply_selection_overlay(area, buf, &self, selection);
         }
 
-        // 4. Cursor cell — always on top.
+        // Cursor cell — always on top.
         if let Some((cx, cy)) = cursor_buf_pos {
             buf[(cx, cy)]
                 .set_fg(self.theme.bg)
@@ -362,10 +336,6 @@ impl Widget for MarkdownView<'_> {
     }
 }
 
-/// Apply the selection highlight over the already-rendered buffer cells.
-///
-/// Iterates logical lines in the selection range, maps each visual row's
-/// char range to buffer coordinates, and overwrites fg+bg for covered cells.
 fn apply_selection_overlay(
     area: Rect,
     buf: &mut Buffer,
@@ -383,7 +353,6 @@ fn apply_selection_overlay(
     let mut log_row = view.scroll_top;
 
     while visual_row < visible && log_row < total {
-        // Stop scanning once we're past the selection end.
         if log_row > sel_row_end {
             break;
         }
@@ -391,18 +360,33 @@ fn apply_selection_overlay(
         let line = &view.lines[log_row];
         let wrapped = wrap_line(line, content_width.max(1));
 
-        for row_str in &wrapped {
+        let char_ranges = wrap_char_ranges(line, &wrapped);
+        for (wrap_idx, (_row_str, &(char_start, char_len))) in
+            wrapped.iter().zip(char_ranges.iter()).enumerate()
+        {
             if visual_row >= visible {
                 break;
             }
 
-            let byte_off = (row_str.as_ptr() as usize).wrapping_sub(line.as_ptr() as usize);
-            let char_start = line[..byte_off].chars().count();
-            let char_len = row_str.chars().count();
             let char_end = char_start + char_len;
 
+            // Mirror the continuation_indent logic from render() so selection
+            // highlighting respects the same left-margin indent.
+            let continuation_indent: u16 = if wrap_idx > 0 {
+                view.decoration_map
+                    .get(&log_row)
+                    .map(|decs| {
+                        decs.iter()
+                            .map(|s| s.continuation_indent)
+                            .max()
+                            .unwrap_or(0)
+                    })
+                    .unwrap_or(0) as u16
+            } else {
+                0
+            };
+
             if log_row >= sel_row_start && log_row <= sel_row_end {
-                // Selection range on this logical line (in logical-line char units)
                 let line_sel_start = if log_row == sel_row_start {
                     sel_col_start
                 } else {
@@ -414,13 +398,13 @@ fn apply_selection_overlay(
                     usize::MAX
                 };
 
-                // Intersect with this visual row's char range
                 let row_sel_start = line_sel_start.max(char_start);
                 let row_sel_end = line_sel_end.min(char_end);
 
                 if row_sel_start < row_sel_end {
                     let y = area.y + visual_row as u16;
-                    let x_start = area.x + GUTTER + (row_sel_start - char_start) as u16;
+                    let x_start =
+                        area.x + GUTTER + continuation_indent + (row_sel_start - char_start) as u16;
                     let x_end = (area.x + GUTTER + (row_sel_end - char_start) as u16)
                         .min(area.x + GUTTER + content_width as u16);
                     for x in x_start..x_end {
@@ -437,139 +421,23 @@ fn apply_selection_overlay(
 }
 
 // ---------------------------------------------------------------------------
-// Step 5.2 — Status bar
-// ---------------------------------------------------------------------------
-
-const POWERLINE_RIGHT: char = '\u{e0b0}';
-
-/// Render the bottom status bar into `area`.
-///
-/// Normal mode: two left-aligned Powerline pills floating on the canvas colour.
-///   Pill 1 — filename: bg=text(clean)/accent(dirty), fg=bg(clean)/text(dirty)
-///   Pill 2 — hints:    bg=ui_bg (canvas+5% text), fg=muted
-/// Each pill is capped with a ▶ that blends its bg into the next region's bg.
-///
-/// Non-normal modes (exit prompt, messages) fill the row with a hints-bg backdrop.
-#[mutants::skip] // Writes into ratatui Buffer — mutations have no observable return value to assert on.
-pub fn render_status_bar(f: &mut Frame, area: Rect, app: &App) {
-    let theme = &app.theme;
-    let canvas_bg = theme.bg;
-    let hints_bg = theme.ui_bg;
-    let warning_fg = theme.warning;
-
-    let content: Line = match &app.status.mode {
-        StatusMode::ExitPrompt => Line::from(vec![Span::styled(
-            " Save modified buffer? [Y]es  [N]o  [C]ancel ",
-            Style::default()
-                .fg(warning_fg)
-                .bg(hints_bg)
-                .add_modifier(Modifier::BOLD),
-        )]),
-
-        StatusMode::TimedMessage { text, .. } | StatusMode::DismissibleMessage(text) => {
-            let msg = format!(" {text} ");
-            let pad = area
-                .width
-                .saturating_sub(msg.len() as u16)
-                .saturating_div(2);
-            let padded = format!("{:pad$}{msg}", "", pad = pad as usize);
-            Line::from(vec![Span::styled(
-                padded,
-                Style::default().fg(theme.text).bg(hints_bg),
-            )])
-        }
-
-        StatusMode::Normal => build_normal_status_bar(app),
-    };
-
-    // Paragraph bg = canvas — cells beyond the spans show the canvas colour.
-    let para = Paragraph::new(content).style(Style::default().bg(canvas_bg));
-    f.render_widget(para, area);
-}
-
-fn build_normal_status_bar(app: &App) -> Line<'static> {
-    let theme = &app.theme;
-    let canvas_bg = theme.bg;
-    let hints_bg = theme.ui_bg;
-    let muted_fg = theme.muted;
-    let sep = POWERLINE_RIGHT.to_string();
-
-    // Pill 1 — filename chip.
-    // Clean: light-coloured chip (text bg, dark fg).
-    // Dirty: accent-coloured chip (accent bg, text fg) — colour alone signals the state.
-    let (pill_bg, pill_fg) = if app.is_dirty {
-        (theme.accent, theme.bg) // accent chip, dark text reads on purple
-    } else {
-        (theme.text, theme.bg) // text-colour chip, dark text reads on lavender
-    };
-    let dirty_marker = if app.is_dirty { " [*]" } else { "" };
-    let path_str = shorten_path(&app.file_path, 3);
-    let pill1_text = format!(" {path_str}{dirty_marker} ");
-
-    let pill1 = Span::styled(pill1_text, Style::default().fg(pill_fg).bg(pill_bg));
-    // ▶ cap: bleeds pill1 bg → hints pill bg (no seam between pills).
-    let cap1 = Span::styled(sep.clone(), Style::default().fg(pill_bg).bg(hints_bg));
-
-    // Pill 2 — keybinding hints.
-    let hints = Span::styled(
-        " ^S Save  ^X Exit  ^Z Undo  ^Y Redo ",
-        Style::default().fg(muted_fg).bg(hints_bg),
-    );
-    // ▶ cap: bleeds hints bg → canvas (right edge of hints pill).
-    let cap2 = Span::styled(sep, Style::default().fg(hints_bg).bg(canvas_bg));
-
-    Line::from(vec![pill1, cap1, hints, cap2])
-}
-
-// ---------------------------------------------------------------------------
-// Step 5.3 — Info line
-// ---------------------------------------------------------------------------
-
-/// Render the second-to-last row: cursor position and word count.
-/// Only the text itself gets a background rectangle; the rest of the row
-/// shows the editor background so the bar doesn't span the full terminal.
-#[mutants::skip] // Writes into ratatui Buffer — void, not testable via return value.
-pub fn render_info_line(f: &mut Frame, area: Rect, app: &App) {
-    let theme = &app.theme;
-
-    // Clear full row with editor background first.
-    f.render_widget(
-        Paragraph::new("").style(Style::default().bg(theme.bg)),
-        area,
-    );
-
-    let (row, col) = app.textarea.cursor();
-    let text = format!(
-        " Ln {}, Col {} · {} words ",
-        format_thousands(row + 1),
-        format_thousands(col + 1),
-        format_thousands(app.word_count),
-    );
-    // Render only as wide as the text content (char count ≈ display width for ASCII + ·).
-    let text_width = (text.chars().count() as u16).min(area.width);
-    let text_area = Rect {
-        width: text_width,
-        ..area
-    };
-    f.render_widget(
-        Paragraph::new(text).style(Style::default().fg(theme.muted).bg(theme.bg)),
-        text_area,
-    );
-}
-
-// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::path::{Path, PathBuf};
     use tui_textarea::TextArea;
 
+    use ratatui::style::{Modifier, Style};
+
+    use crate::app::App;
     use crate::config::Theme;
-    use crate::decoration::DecorationMap;
+    use crate::decoration::{DecorationMap, StyledSpan};
     use crate::status::StatusLine;
+
+    use super::status::build_normal_status_bar;
+    use super::*;
 
     fn make_app() -> App {
         App {
@@ -579,12 +447,17 @@ mod tests {
             saved_content: None,
             theme: Theme::default_theme(),
             italic_support: false,
+            powerline_glyphs: false,
             last_keystroke: None,
+            force_redecorate: false,
             decoration_map: DecorationMap::default(),
             word_count: 0,
             status: StatusLine::default(),
             config_warnings: vec![],
             scroll_top: 0,
+            free_scroll: false,
+            clipboard: None,
+            initial_file_empty: false,
         }
     }
 
@@ -660,15 +533,13 @@ mod tests {
             ..Default::default()
         };
         let result = split_into_spans("0123456789", &[span], Style::default());
-        assert_eq!(result[0].content, "01"); // unstyled prefix
-        assert_eq!(result[1].content, "234"); // styled span
-        assert_eq!(result[2].content, "56789"); // unstyled suffix
+        assert_eq!(result[0].content, "01");
+        assert_eq!(result[1].content, "234");
+        assert_eq!(result[2].content, "56789");
     }
 
     #[test]
     fn span_split_multibyte_safe() {
-        // "café" — chars: c(0) a(1) f(2) é(3); 'é' is 2 bytes
-        // span covers char index 1 ("a")
         let span = StyledSpan {
             char_start: 1,
             char_end: 2,
@@ -701,8 +572,6 @@ mod tests {
 
     #[test]
     fn span_split_overlapping_clips_later_span() {
-        // Two overlapping spans: first covers 0..5, second covers 3..8
-        // Second should be clipped to start at 5
         let s1 = StyledSpan {
             char_start: 0,
             char_end: 5,
@@ -715,9 +584,6 @@ mod tests {
             ..Default::default()
         };
         let result = split_into_spans("0123456789", &[s1, s2], Style::default());
-        // s1: 0..5 = "01234"
-        // s2 clipped: 5..8 = "567"
-        // trailing: 8..10 = "89"
         assert_eq!(result[0].content, "01234");
         assert_eq!(result[1].content, "567");
         assert_eq!(result[2].content, "89");
@@ -746,10 +612,28 @@ mod tests {
     }
 
     #[test]
-    fn wrap_multibyte_respects_char_count() {
-        // 4 kanji chars, width=4 — fits in one visual row (char-count width)
+    fn wrap_wide_chars_count_display_columns() {
+        // Each CJK char is 2 display columns wide.
+        // "日本語テ" = 8 display cols; at width=4 it wraps into two rows of 2 chars each.
         let result = wrap_line("日本語テ", 4);
-        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result.len(),
+            2,
+            "4 CJK chars (8 display cols) must wrap at width=4"
+        );
+        assert_eq!(result[0], "日本");
+        assert_eq!(result[1], "語テ");
+    }
+
+    #[test]
+    fn wrap_wide_chars_single_row_when_fits() {
+        // "日本" = 4 display cols; at width=4 it fits without wrapping.
+        let result = wrap_line("日本", 4);
+        assert_eq!(
+            result.len(),
+            1,
+            "2 CJK chars (4 display cols) must not wrap at width=4"
+        );
     }
 
     #[test]
@@ -801,7 +685,117 @@ mod tests {
     #[test]
     fn status_bar_no_panic() {
         let app = make_app();
-        // Must not panic regardless of theme values.
         let _ = build_normal_status_bar(&app);
+    }
+
+    #[test]
+    fn heading_delimiter_bold_survives_split_into_spans() {
+        // Verify that Modifier::BOLD on a StyledSpan passes through split_into_spans
+        // to the resulting ratatui Span — confirming the renderer pipeline carries BOLD.
+        let delim_span = StyledSpan {
+            char_start: 0,
+            char_end: 2,
+            style: Style::default()
+                .fg(ratatui::style::Color::Rgb(100, 150, 200))
+                .add_modifier(Modifier::BOLD),
+            ..Default::default()
+        };
+        let segments = split_into_spans("# Hello", &[delim_span], Style::default());
+        let hash_span = segments
+            .iter()
+            .find(|s| s.content.starts_with('#'))
+            .expect("span starting with # must exist");
+        assert!(
+            hash_span.style.add_modifier.contains(Modifier::BOLD),
+            "BOLD modifier must survive split_into_spans for heading delimiter"
+        );
+    }
+
+    #[test]
+    fn heading_delimiter_bold_reaches_buffer() {
+        // End-to-end: render a decorated H1 line into a ratatui Buffer and confirm
+        // that the `#` cell carries Modifier::BOLD.  This catches any renderer path
+        // that might silently drop the modifier before it hits the terminal.
+        use ratatui::buffer::Buffer;
+        use ratatui::widgets::Widget;
+
+        let area = ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width: 40,
+            height: 3,
+        };
+        let mut buf = Buffer::empty(area);
+
+        let theme = crate::config::Theme::default_theme();
+        let mut deco = DecorationMap::default();
+        deco.insert(
+            0,
+            vec![
+                StyledSpan {
+                    char_start: 0,
+                    char_end: 2, // "# "
+                    style: Style::default()
+                        .fg(theme.headings.h1)
+                        .add_modifier(Modifier::BOLD),
+                    ..Default::default()
+                },
+                StyledSpan {
+                    char_start: 2,
+                    char_end: 7, // "Hello"
+                    style: Style::default()
+                        .fg(theme.headings.h1)
+                        .add_modifier(Modifier::BOLD),
+                    ..Default::default()
+                },
+            ],
+        );
+
+        let view = MarkdownView {
+            lines: &["# Hello".to_string()],
+            decoration_map: &deco,
+            scroll_top: 0,
+            cursor: (0, 0),
+            selection: None,
+            theme: &theme,
+            column_width: 40,
+        };
+        view.render(area, &mut buf);
+
+        // The `#` char is at x = GUTTER (= 1), y = 0.
+        let cell = buf.cell((GUTTER, 0)).expect("cell must exist");
+        assert!(
+            cell.modifier.contains(Modifier::BOLD),
+            "H1 # character must carry Modifier::BOLD in the rendered ratatui buffer"
+        );
+    }
+
+    #[test]
+    fn heading_delimiter_fg_survives_split_into_spans() {
+        use ratatui::style::Color;
+        let green = Color::Rgb(166, 227, 161);
+        let heading = Color::Rgb(203, 166, 247);
+        let delim_span = StyledSpan {
+            char_start: 0,
+            char_end: 2,
+            style: Style::default().fg(green),
+            ..Default::default()
+        };
+        let content_span = StyledSpan {
+            char_start: 2,
+            char_end: 7,
+            style: Style::default().fg(heading),
+            ..Default::default()
+        };
+        let segments = split_into_spans("# Hello", &[delim_span, content_span], Style::default());
+        let hash_span = segments
+            .iter()
+            .find(|s| s.content.starts_with('#'))
+            .expect("must have a span starting with #");
+        assert_eq!(
+            hash_span.style.fg,
+            Some(green),
+            "# character must carry green fg through split_into_spans"
+        );
     }
 }

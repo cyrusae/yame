@@ -16,6 +16,8 @@ renderer's line-wrapping logic and continuation indentation.
 
 Mixed: **bold and *nested italic* inside bold** — pulldown-cmark handles this correctly.
 
+What about *italic and **nested bold***?
+
 ---
 
 ## Inline Elements
@@ -25,6 +27,10 @@ A [link to example](https://example.com) in the middle of a sentence.
 A bare link with a long URL: [Rust documentation](https://doc.rust-lang.org/std/collections/struct.HashMap.html).
 
 `inline code` at the start, middle `of` a sentence, and at the end `too`.
+
+What happens when I type a long line? A long line? A line that goes on for a long long time? 
+
+~~Strikethrough.~~
 
 ---
 
@@ -70,6 +76,7 @@ Ordered:
 - [ ] Another unchecked item with **bold** content
 - [x] Another completed item
 - [x] What about a really, really, really, really, really, really, really, `really` long to-do item?
+    - [ ] what about nesting a to-do item? A really, really, really, really long to-do item? Nice!
 
 Test entry
 

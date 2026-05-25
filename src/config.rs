@@ -72,6 +72,12 @@ pub struct HeadingColors {
 #[serde(default)]
 pub struct LayoutConfig {
     pub min_cols: Option<u16>,
+    /// Number of spaces to substitute for each `\t` on file load. Default 4.
+    pub tab_width: Option<u16>,
+    /// Use Powerline/Nerd Font filled-arrow glyphs (U+E0B0) in the status bar
+    /// instead of the universal box-drawing separator `│`.
+    /// Requires a Nerd Font or Powerline-patched font. Default false.
+    pub powerline_glyphs: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -227,7 +233,11 @@ impl Theme {
         let bold_color = resolve(&overrides.bold_color, text, warnings);
         // Italic defaults to plain text color (same as bold) — independently overridable.
         let italic_color = resolve(&overrides.italic_color, text, warnings);
-        let strikethrough_color = resolve(&overrides.strikethrough_color, muted, warnings);
+        let strikethrough_color = resolve(
+            &overrides.strikethrough_color,
+            blend(muted, text, 0.5),
+            warnings,
+        );
         let blockquote_color = resolve(
             &overrides.blockquote_color,
             blend(muted, text, 0.5),
@@ -242,7 +252,9 @@ impl Theme {
         let todo_done = resolve(&overrides.todo_done, muted, warnings);
         let rule_color = resolve(&overrides.rule_color, muted, warnings);
         let code_bg_rgb = resolve(&overrides.code_bg, blend(code_rgb, bg, 0.15), warnings);
-        let fenced_bg_rgb = resolve(&overrides.fenced_bg, blend(code_rgb, bg, 0.08), warnings);
+        // Fenced block background: lift bg slightly toward text (neutral) so the
+        // panel reads as a distinct surface without inheriting code_color's hue.
+        let fenced_bg_rgb = resolve(&overrides.fenced_bg, blend(text, bg, 0.08), warnings);
         let heading_bg_rgb = resolve(&overrides.heading_bg, blend(accent, bg, 0.15), warnings);
         let selection_bg_rgb = resolve(&overrides.selection_bg, blend(accent, bg, 0.6), warnings);
         let selection_fg_rgb = resolve(&overrides.selection_fg, bg, warnings);
