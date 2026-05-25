@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- v1.5: smart pair wrapping (wrap selection with bracket/quote) (#43)
+- v1.5: Ctrl+R config reload (#42)
 - Wrap terminal.draw() with synchronized output protocol to eliminate Enter/Backspace flicker (#78)
 - Add no-args help output (suggest file path usage) (#88)
 - Color tweaks: heading # toward bg, ~~ revert to muted, checkbox brackets muted, fenced lang tag muted (#80)

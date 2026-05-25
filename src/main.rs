@@ -150,6 +150,71 @@ fn is_navigation_key(k: &crossterm::event::KeyEvent) -> bool {
     )
 }
 
+/// Extract the currently-selected text from the textarea, or `None` if there
+/// is no active selection.  Does not fall back to the current line.
+fn get_selection_text(app: &App) -> Option<String> {
+    let ((row_start, col_start), (row_end, col_end)) = app.textarea.selection_range()?;
+    let lines = app.textarea.lines();
+    if row_start == row_end {
+        let chars: Vec<char> = lines[row_start].chars().collect();
+        Some(chars[col_start..col_end.min(chars.len())].iter().collect())
+    } else {
+        let mut result = String::new();
+        for row in row_start..=row_end {
+            if row >= lines.len() {
+                break;
+            }
+            let chars: Vec<char> = lines[row].chars().collect();
+            let start = if row == row_start { col_start } else { 0 };
+            let end = if row == row_end {
+                col_end.min(chars.len())
+            } else {
+                chars.len()
+            };
+            result.extend(&chars[start..end]);
+            if row < row_end {
+                result.push('\n');
+            }
+        }
+        Some(result)
+    }
+}
+
+/// If there is an active selection and `k` is a pair-opener (`(`, `[`, `{`,
+/// `"`, `'`, `` ` ``, `*`, `_`), wrap the selection with the corresponding
+/// pair and return `true`.  Returns `false` in all other cases so the caller
+/// can fall through to normal input handling.
+fn handle_pair_wrap(app: &mut App, k: crossterm::event::KeyEvent) -> bool {
+    // Only fire on bare character presses — never on Ctrl/Alt chords.
+    if k.modifiers
+        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+    {
+        return false;
+    }
+    let close = match k.code {
+        KeyCode::Char('(') => ')',
+        KeyCode::Char('[') => ']',
+        KeyCode::Char('{') => '}',
+        KeyCode::Char('"') => '"',
+        KeyCode::Char('\'') => '\'',
+        KeyCode::Char('`') => '`',
+        KeyCode::Char('*') => '*',
+        KeyCode::Char('_') => '_',
+        _ => return false,
+    };
+    // Capture the selected text before any mutation.
+    let selected = match get_selection_text(app) {
+        Some(s) => s,
+        None => return false,
+    };
+    // `input(k)` calls `insert_char(open)` which internally calls
+    // `delete_selection()` first, then places the open delimiter.
+    app.textarea.input(k);
+    // Append the captured text and the closing delimiter.
+    app.textarea.insert_str(format!("{selected}{close}"));
+    true
+}
+
 fn event_loop<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
@@ -208,8 +273,7 @@ fn event_loop<B: ratatui::backend::Backend>(
             let term_size = terminal.size()?;
             let term_area = Rect::new(0, 0, term_size.width, term_size.height);
             let pre_layout = compute_layout(term_area, min_cols);
-            let pre_editor_area = if !app.config_warnings.is_empty()
-                && pre_layout.column.height > 0
+            let pre_editor_area = if !app.config_warnings.is_empty() && pre_layout.column.height > 0
             {
                 Rect {
                     y: pre_layout.column.y + 1,
@@ -219,7 +283,12 @@ fn event_loop<B: ratatui::backend::Backend>(
             } else {
                 pre_layout.column
             };
-            clamp_scroll(app, pre_editor_area, pre_layout.column.width, BOTTOM_PADDING);
+            clamp_scroll(
+                app,
+                pre_editor_area,
+                pre_layout.column.width,
+                BOTTOM_PADDING,
+            );
         }
 
         execute!(io::stdout(), BeginSynchronizedUpdate)?;
@@ -349,24 +418,49 @@ fn event_loop<B: ratatui::backend::Backend>(
                                 app.last_keystroke = Some(std::time::Instant::now());
                                 app.recompute_dirty();
                             }
+                            (KeyModifiers::CONTROL, KeyCode::Char('r')) => {
+                                let (new_config, new_warnings) = load_config();
+                                let mut warnings = new_warnings;
+                                app.theme = Theme::from_config(
+                                    &new_config.palette,
+                                    &new_config.theme,
+                                    &new_config.headings,
+                                    &mut warnings,
+                                );
+                                app.config_warnings = warnings;
+                                app.status
+                                    .set_timed("Config reloaded.", Duration::from_millis(1500));
+                                // Trigger a decoration rebuild so the new theme colors
+                                // are applied immediately on the next frame.
+                                app.last_keystroke = Some(std::time::Instant::now());
+                            }
                             _ => {
                                 // Dismiss any dismissible message on any content keypress.
                                 app.status.dismiss();
                                 app.config_warnings.clear();
                                 // Capture nav flag before input() consumes the event.
                                 let is_nav = is_navigation_key(&k);
-                                let prev_line_count = app.textarea.lines().len();
-                                app.textarea.input(k);
-                                if app.textarea.lines().len() != prev_line_count {
+
+                                // Smart pair wrapping: if there's an active selection and
+                                // the user types a bracket/quote opener, wrap the selection
+                                // with the corresponding pair instead of replacing it.
+                                if !is_nav && handle_pair_wrap(app, k) {
                                     app.force_redecorate = true;
-                                }
-                                // Navigation keys move the cursor without changing content —
-                                // skip the decoration debounce timer to avoid a redundant
-                                // full re-parse of the document on every arrow-key press.
-                                if is_nav {
-                                    app.recompute_dirty();
-                                } else {
                                     app.mark_keystroke();
+                                } else {
+                                    let prev_line_count = app.textarea.lines().len();
+                                    app.textarea.input(k);
+                                    if app.textarea.lines().len() != prev_line_count {
+                                        app.force_redecorate = true;
+                                    }
+                                    // Navigation keys move the cursor without changing content —
+                                    // skip the decoration debounce timer to avoid a redundant
+                                    // full re-parse of the document on every arrow-key press.
+                                    if is_nav {
+                                        app.recompute_dirty();
+                                    } else {
+                                        app.mark_keystroke();
+                                    }
                                 }
                             }
                         }
@@ -550,11 +644,8 @@ fn clamp_scroll(app: &mut App, editor_area: Rect, col_width: u16, bottom_padding
         let mut remaining = headroom;
         let mut new_top = cursor_row;
         while new_top > 0 {
-            let prev_wraps = renderer::wrap_line(
-                lines.get(new_top - 1).map_or("", |s| s.as_str()),
-                cw,
-            )
-            .len();
+            let prev_wraps =
+                renderer::wrap_line(lines.get(new_top - 1).map_or("", |s| s.as_str()), cw).len();
             if prev_wraps > remaining {
                 break;
             }
@@ -646,7 +737,12 @@ mod tests {
     const TEST_COL: u16 = 82; // gives cw=78 with GUTTER=2
 
     fn make_editor_area(height: u16) -> Rect {
-        Rect { x: 0, y: 0, width: TEST_COL, height }
+        Rect {
+            x: 0,
+            y: 0,
+            width: TEST_COL,
+            height,
+        }
     }
 
     fn make_app_with_lines(lines: &[&str]) -> App {
@@ -660,9 +756,13 @@ mod tests {
         // scroll_top=5, cursor at line 2 → must scroll up to 2.
         let mut app = make_app_with_lines(&["a"; 20]);
         app.scroll_top = 5;
-        app.textarea.move_cursor(tui_textarea::CursorMove::Jump(2, 0));
+        app.textarea
+            .move_cursor(tui_textarea::CursorMove::Jump(2, 0));
         clamp_scroll(&mut app, make_editor_area(10), TEST_COL, 0);
-        assert_eq!(app.scroll_top, 2, "cursor above viewport → scroll_top = cursor_row");
+        assert_eq!(
+            app.scroll_top, 2,
+            "cursor above viewport → scroll_top = cursor_row"
+        );
     }
 
     #[test]
@@ -670,9 +770,13 @@ mod tests {
         // scroll_top=0, cursor at line 3, viewport height=10 → no change.
         let mut app = make_app_with_lines(&["a"; 20]);
         app.scroll_top = 0;
-        app.textarea.move_cursor(tui_textarea::CursorMove::Jump(3, 0));
+        app.textarea
+            .move_cursor(tui_textarea::CursorMove::Jump(3, 0));
         clamp_scroll(&mut app, make_editor_area(10), TEST_COL, 0);
-        assert_eq!(app.scroll_top, 0, "cursor inside viewport → scroll_top unchanged");
+        assert_eq!(
+            app.scroll_top, 0,
+            "cursor inside viewport → scroll_top unchanged"
+        );
     }
 
     #[test]
@@ -681,9 +785,13 @@ mod tests {
         // cursor_visual=9, 9+3=12 >= 10 → must scroll down.
         let mut app = make_app_with_lines(&["a"; 20]);
         app.scroll_top = 0;
-        app.textarea.move_cursor(tui_textarea::CursorMove::Jump(9, 0));
+        app.textarea
+            .move_cursor(tui_textarea::CursorMove::Jump(9, 0));
         clamp_scroll(&mut app, make_editor_area(10), TEST_COL, 3);
-        assert!(app.scroll_top > 0, "cursor near bottom with padding → scroll_top advances");
+        assert!(
+            app.scroll_top > 0,
+            "cursor near bottom with padding → scroll_top advances"
+        );
     }
 
     #[test]
@@ -692,5 +800,103 @@ mod tests {
         let mut app = make_app_with_lines(&["a"; 5]);
         clamp_scroll(&mut app, make_editor_area(0), TEST_COL, 3);
         // Must not panic; scroll_top may be anything.
+    }
+
+    // ── get_selection_text tests ──────────────────────────────────────────────
+
+    fn make_key(code: KeyCode) -> crossterm::event::KeyEvent {
+        crossterm::event::KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn get_selection_text_none_when_no_selection() {
+        let app = make_app_with_lines(&["hello world"]);
+        assert_eq!(get_selection_text(&app), None);
+    }
+
+    #[test]
+    fn get_selection_text_single_line() {
+        let mut app = make_app_with_lines(&["hello world"]);
+        // Place cursor at col 0, start selection, move right 5 chars → selects "hello".
+        app.textarea.start_selection();
+        for _ in 0..5 {
+            app.textarea.move_cursor(tui_textarea::CursorMove::Forward);
+        }
+        assert_eq!(get_selection_text(&app), Some("hello".to_string()));
+    }
+
+    #[test]
+    fn get_selection_text_multiline() {
+        let mut app = make_app_with_lines(&["abc", "def"]);
+        // Start selection at (0,0), move down one line → selects "abc\ndef" up to (1,3).
+        app.textarea.start_selection();
+        app.textarea.move_cursor(tui_textarea::CursorMove::Down);
+        app.textarea.move_cursor(tui_textarea::CursorMove::End);
+        let text = get_selection_text(&app).unwrap_or_default();
+        assert!(
+            text.contains('\n'),
+            "multiline selection must include newline"
+        );
+        assert!(text.starts_with("abc"), "first line preserved");
+    }
+
+    // ── handle_pair_wrap tests ────────────────────────────────────────────────
+
+    #[test]
+    fn pair_wrap_bracket_wraps_selection() {
+        let mut app = make_app_with_lines(&["hello"]);
+        // Select "hello" (all 5 chars).
+        app.textarea.start_selection();
+        for _ in 0..5 {
+            app.textarea.move_cursor(tui_textarea::CursorMove::Forward);
+        }
+        let handled = handle_pair_wrap(&mut app, make_key(KeyCode::Char('[')));
+        assert!(handled, "pair wrap must return true when selection present");
+        let line = app.textarea.lines()[0].clone();
+        assert_eq!(line, "[hello]", "selection wrapped with square brackets");
+    }
+
+    #[test]
+    fn pair_wrap_star_wraps_selection() {
+        let mut app = make_app_with_lines(&["hi"]);
+        app.textarea.start_selection();
+        for _ in 0..2 {
+            app.textarea.move_cursor(tui_textarea::CursorMove::Forward);
+        }
+        handle_pair_wrap(&mut app, make_key(KeyCode::Char('*')));
+        assert_eq!(app.textarea.lines()[0], "*hi*");
+    }
+
+    #[test]
+    fn pair_wrap_no_selection_returns_false() {
+        let mut app = make_app_with_lines(&["hello"]);
+        // No active selection — must not wrap and must return false.
+        let handled = handle_pair_wrap(&mut app, make_key(KeyCode::Char('[')));
+        assert!(!handled, "no selection → pair wrap is a no-op");
+        assert_eq!(app.textarea.lines()[0], "hello", "content unchanged");
+    }
+
+    #[test]
+    fn pair_wrap_non_pair_key_returns_false() {
+        let mut app = make_app_with_lines(&["hello"]);
+        app.textarea.start_selection();
+        for _ in 0..5 {
+            app.textarea.move_cursor(tui_textarea::CursorMove::Forward);
+        }
+        let handled = handle_pair_wrap(&mut app, make_key(KeyCode::Char('a')));
+        assert!(!handled, "non-pair key → pair wrap is a no-op");
+    }
+
+    #[test]
+    fn pair_wrap_ctrl_chord_ignored() {
+        let mut app = make_app_with_lines(&["hello"]);
+        app.textarea.start_selection();
+        for _ in 0..5 {
+            app.textarea.move_cursor(tui_textarea::CursorMove::Forward);
+        }
+        // Ctrl+[ should not trigger pair wrapping.
+        let k = crossterm::event::KeyEvent::new(KeyCode::Char('['), KeyModifiers::CONTROL);
+        let handled = handle_pair_wrap(&mut app, k);
+        assert!(!handled, "Ctrl chord must not trigger pair wrap");
     }
 }

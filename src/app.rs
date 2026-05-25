@@ -49,8 +49,8 @@ impl App {
     ) -> io::Result<Self> {
         // Detect whether the file is empty/new before loading, so handle_save can
         // preserve the 0-byte state instead of growing the file to a bare newline.
-        let initial_file_empty = !file_path.exists()
-            || std::fs::metadata(&file_path).is_ok_and(|m| m.len() == 0);
+        let initial_file_empty =
+            !file_path.exists() || std::fs::metadata(&file_path).is_ok_and(|m| m.len() == 0);
         let textarea = load_file(&file_path)?;
         // Snapshot the initial content so recompute_dirty() has a baseline for both
         // existing files (undo back to load state → clean) and new files (empty baseline).

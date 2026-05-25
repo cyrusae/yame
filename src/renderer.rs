@@ -523,7 +523,7 @@ fn build_normal_status_bar(app: &App) -> Line<'static> {
 
     // Pill 2 — keybinding hints.
     let hints = Span::styled(
-        " ^S Save  ^X Exit  ^Z Undo  ^Y Redo ",
+        " ^S Save  ^X Exit  ^Z Undo  ^Y Redo  ^R Reload ",
         Style::default().fg(muted_fg).bg(hints_bg),
     );
     // ▶ cap: bleeds hints bg → canvas (right edge of hints pill).

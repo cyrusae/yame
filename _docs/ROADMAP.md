@@ -300,14 +300,14 @@ comment is in `layout.rs`.
 |---|---|---|---|
 | #13 | Phase 12: README & Distribution | v1 | open |
 | ~~#35~~ | ~~v1 polish: italic warning, delimiter_blend, parent-dir, theme tokens + cleanup~~ | ~~v1~~ | done |
-| #36 | v1.5: merge count_words into build_decoration_map | 1.5-S1 | open |
-| #37 | v1.5: O(N²) char counting + allocation hot-paths | 1.5-S1 | partial (#85 done) |
-| #38 | v1.5: cache arboard::Clipboard in App | 1.5-S1 | open |
+| ~~#36~~ | ~~v1.5: merge count_words into build_decoration_map~~ | ~~1.5-S1~~ | done |
+| ~~#37~~ | ~~v1.5: O(N²) char counting + allocation hot-paths~~ | ~~1.5-S1~~ | done |
+| ~~#38~~ | ~~v1.5: cache arboard::Clipboard in App~~ | ~~1.5-S1~~ | done |
 | #39 | v1.5: blockquote continuation indent | 1.5-S2 | open |
 | #40 | v1.5: tab character expansion on load | 1.5-S2 | open |
 | #41 | v1.5: CJK / wide character support | 1.5-S3 | open |
-| #42 | v1.5: Ctrl+R config reload | 1.5-S4 | open |
-| #43 | v1.5: smart pair wrapping | 1.5-S4 | open |
+| ~~#42~~ | ~~v1.5: Ctrl+R config reload~~ | ~~1.5-S4~~ | done |
+| ~~#43~~ | ~~v1.5: smart pair wrapping~~ | ~~1.5-S4~~ | done |
 | #44 | v1.5: syntect fenced code highlighting | 1.5-S5 | open |
 | #45 | v1.5: background decoration thread | 1.5-S5 | open |
 | #46 | v2: Ctrl+F search with regex | v2 | open |
