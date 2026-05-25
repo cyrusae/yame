@@ -349,6 +349,64 @@ impl Theme {
 // Config file loading
 // ---------------------------------------------------------------------------
 
+/// Commented template written to `~/.config/yame/config.toml` on first run.
+///
+/// All values shown are the Catppuccin Mocha defaults.  The `[theme]`,
+/// `[headings]`, and `[layout]` sections are fully commented out — uncomment
+/// any line to override the derived default.
+const DEFAULT_CONFIG_TEMPLATE: &str = r##"# yame configuration — ~/.config/yame/config.toml
+# Reload in-app at any time with Ctrl+R.
+#
+# All values shown are the Catppuccin Mocha defaults.
+# Uncomment and edit any line to override it.
+
+# ── Base palette ──────────────────────────────────────────────────────────────
+# These six colors drive the entire theme.
+[palette]
+text    = "#cdd6f4"   # body text
+accent  = "#cba6f7"   # headings, links, bullets
+muted   = "#585b70"   # blockquotes, URLs, completed todos
+code    = "#a6e3a1"   # inline code and fenced blocks
+bg      = "#11111b"   # editor background
+warning = "#f38ba8"   # dirty flag, warnings
+
+# ── Per-element overrides ─────────────────────────────────────────────────────
+# Uncomment any line to pin that value instead of deriving it from the palette.
+[theme]
+# bold_color          = "#cdd6f4"
+# italic_color        = "#cdd6f4"
+# strikethrough_color = "#9399b2"
+# blockquote_color    = "#9399b2"
+# link_text_color     = "#cbb0f6"
+# link_url_color      = "#585b70"
+# todo_done           = "#585b70"
+# rule_color          = "#585b70"
+# code_bg             = "#27312f"
+# fenced_bg           = "#20212c"
+# heading_bg          = "#2d273c"
+# selection_bg        = "#816a9f"
+# selection_fg        = "#11111b"
+# ui_bg               = "#242531"
+# ui_bar              = "#11111b"
+# ui_text             = "#cdd6f4"
+# delimiter_blend     = 0.4        # 0.0 = full muted · 1.0 = full span color
+
+# ── Per-level heading colors ──────────────────────────────────────────────────
+[headings]
+# h1 = "#cba6f7"
+# h2 = "#cba6f7"
+# h3 = "#cbadf7"
+# h4 = "#ccb4f6"
+# h5 = "#ccb9f6"
+# h6 = "#ccbef6"
+
+# ── Layout ────────────────────────────────────────────────────────────────────
+[layout]
+# min_cols         = 60     # minimum editing-column width in characters
+# tab_width        = 4      # spaces per tab character expanded on load
+# powerline_glyphs = false  # true requires a Nerd Font patched terminal font
+"##;
+
 pub fn config_path() -> PathBuf {
     let base = std::env::var("XDG_CONFIG_HOME")
         .map(PathBuf::from)
@@ -369,6 +427,12 @@ pub fn load_config() -> (Config, Vec<String>) {
     let mut warnings = Vec::new();
 
     if !path.exists() {
+        // Scaffold a commented starter config so the user can discover all options.
+        // Failures are silently ignored — yame works fine without the file.
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(&path, DEFAULT_CONFIG_TEMPLATE);
         return (Config::default(), warnings);
     }
 

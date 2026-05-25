@@ -46,6 +46,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Italic default color now matches text color (not accent blend) (#60)
 
 ### Changed
+- Auto-scaffold ~/.config/yame/config.toml on first run (#101)
 - Alpha release prep: version bump, Cargo.toml metadata, README polish, crates.io publish (#100)
 - Rework Saved/warning status message display on UI bar (#76)
 - Decouple scroll from cursor: scroll should pan without moving cursor (#56)
