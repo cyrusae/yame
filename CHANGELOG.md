@@ -18,6 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - v1 polish: italic startup warning, `delimiter_blend` config token, parent-dir creation on save (#35)
 
 ### Fixed
+- Soft-wrap space skip causes decoration spans to be off-by-1 char (#90)
 - Fix decoration flash on Enter/Backspace: force immediate redecorate on structural keystrokes (#79)
 - Cmd+C (forwarded as Ctrl+C) cuts/deletes selected text instead of copying (#73)
 - Fix empty-file POSIX growth: saving empty buffer writes 1-byte newline (#84)

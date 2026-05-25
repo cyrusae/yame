@@ -191,6 +191,43 @@ pub fn wrap_line(s: &str, width: usize) -> Vec<&str> {
     result
 }
 
+/// Compute the `(char_start, char_len)` pair for each element of a
+/// [`wrap_line`] output slice, measured in char units within `line`.
+///
+/// `wrap_line` breaks at spaces and **skips** the break-space (it is not
+/// included in either adjacent segment).  A naïve approach of accumulating
+/// `char_len` for each segment therefore produces incorrect char offsets for
+/// every segment after the first soft-wrap break.
+///
+/// This function corrects for that by measuring the byte gap between the end
+/// of one segment and the start of the next (which is exactly the skipped
+/// space), converting it to a char count, and adding it to the running offset.
+///
+/// Complexity: O(line_length) total — the gap between consecutive segments is
+/// at most one byte (one skipped ASCII space), so the per-segment char count
+/// of the gap is O(1).
+pub fn wrap_char_ranges(line: &str, wrapped: &[&str]) -> Vec<(usize, usize)> {
+    let base = line.as_ptr() as usize;
+    let mut result = Vec::with_capacity(wrapped.len());
+    let mut prev_byte_end = 0usize; // byte position in `line` after previous segment
+    let mut prev_char_end = 0usize; // char count up to prev_byte_end
+
+    for row_str in wrapped {
+        // Byte offset of this segment's first char within `line`.
+        let seg_byte_start = row_str.as_ptr() as usize - base;
+        // Count chars in the gap (the skipped soft-wrap space, or 0 for
+        // hard breaks and the very first segment).
+        let gap_chars = line[prev_byte_end..seg_byte_start].chars().count();
+        let char_start = prev_char_end + gap_chars;
+        let char_len = row_str.chars().count();
+        result.push((char_start, char_len));
+        prev_byte_end = seg_byte_start + row_str.len();
+        prev_char_end = char_start + char_len;
+    }
+
+    result
+}
+
 /// Blank columns on each side of the text content within the editor column.
 /// Keeps text from running flush against the background boundary.
 pub const GUTTER: u16 = 1;
@@ -244,17 +281,19 @@ impl Widget for MarkdownView<'_> {
             let wrapped = wrap_line(line, content_width.max(1));
             let line_decs = self.decoration_map.get(&log_row);
 
-            // Track char_start incrementally across wrap segments — O(line_length) total
-            // rather than the O(N × line_length) approach of rescanning from byte 0 each row.
-            let mut running_char_start = 0usize;
-            for (wrap_idx, &row_str) in wrapped.iter().enumerate() {
+            // Compute (char_start, char_len) for every wrap segment up-front.
+            // wrap_line skips the break-space at each soft-wrap boundary, so naïvely
+            // accumulating char_len would leave char_start off by 1 for every segment
+            // after the first soft break.  wrap_char_ranges accounts for the gap.
+            let char_ranges = wrap_char_ranges(line, &wrapped);
+            for (wrap_idx, (&row_str, &(char_start, char_len))) in
+                wrapped.iter().zip(char_ranges.iter()).enumerate()
+            {
                 if visual_row >= visible {
                     break;
                 }
 
                 // --- Compute this visual row's char range within the logical line ---
-                let char_len = row_str.chars().count();
-                let char_start = running_char_start;
                 let char_end = char_start + char_len;
 
                 // --- Cursor tracking ---
@@ -351,7 +390,6 @@ impl Widget for MarkdownView<'_> {
                 }
 
                 visual_row += 1;
-                running_char_start = char_end;
             }
 
             log_row += 1;
@@ -400,15 +438,14 @@ fn apply_selection_overlay(
         let line = &view.lines[log_row];
         let wrapped = wrap_line(line, content_width.max(1));
 
-        // Track char_start incrementally — same O(line_length) fix as the main render loop.
-        let mut running_char_start = 0usize;
-        for row_str in &wrapped {
+        // Use wrap_char_ranges so the char_start for each segment correctly
+        // accounts for spaces skipped at soft-wrap boundaries.
+        let char_ranges = wrap_char_ranges(line, &wrapped);
+        for (_row_str, &(char_start, char_len)) in wrapped.iter().zip(char_ranges.iter()) {
             if visual_row >= visible {
                 break;
             }
 
-            let char_len = row_str.chars().count();
-            let char_start = running_char_start;
             let char_end = char_start + char_len;
 
             if log_row >= sel_row_start && log_row <= sel_row_end {
@@ -440,7 +477,6 @@ fn apply_selection_overlay(
             }
 
             visual_row += 1;
-            running_char_start = char_end;
         }
 
         log_row += 1;

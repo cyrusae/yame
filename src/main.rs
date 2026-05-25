@@ -124,8 +124,9 @@ fn screen_to_doc(
         let seg_count = wrapped.len().max(1);
         if vis + seg_count > click_vis_row {
             let si = click_vis_row - vis;
-            let seg_start: usize = wrapped[..si].iter().map(|s| s.chars().count()).sum();
-            let doc_col = (seg_start + click_col).min(line.chars().count());
+            let char_ranges = renderer::wrap_char_ranges(line, &wrapped);
+            let seg_char_start = char_ranges.get(si).map_or(0, |&(start, _)| start);
+            let doc_col = (seg_char_start + click_col).min(line.chars().count());
             return Some((li as u16, doc_col as u16));
         }
         vis += seg_count;
@@ -615,20 +616,20 @@ fn clamp_scroll(app: &mut App, editor_area: Rect, col_width: u16, bottom_padding
         .sum();
 
     // Find which visual sub-row within cursor_row the cursor sits on.
-    // Iterates forward, tracking char_start incrementally — O(line_length) total
-    // instead of the O(N * line_length) pointer-arithmetic + chars().count() approach.
+    // Uses wrap_char_ranges so that spaces skipped at soft-wrap boundaries are
+    // accounted for — without it, char_start would be off by 1 after the first
+    // soft break, misidentifying the cursor's sub-row and terminal column.
     let cursor_line_str = lines.get(cursor_row).map_or("", |s| s.as_str());
     let cursor_wraps = renderer::wrap_line(cursor_line_str, cw);
     let cursor_subrow = {
-        let mut char_start = 0usize;
+        let char_ranges = renderer::wrap_char_ranges(cursor_line_str, &cursor_wraps);
         let mut subrow = 0usize;
-        for (i, wrap) in cursor_wraps.iter().enumerate() {
-            let char_end = char_start + wrap.chars().count();
-            if cursor_col < char_end || i + 1 == cursor_wraps.len() {
+        for (i, &(char_start, char_len)) in char_ranges.iter().enumerate() {
+            let char_end = char_start + char_len;
+            if cursor_col < char_end || i + 1 == char_ranges.len() {
                 subrow = i;
                 break;
             }
-            char_start = char_end;
         }
         subrow
     };

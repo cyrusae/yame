@@ -1666,4 +1666,108 @@ mod tests {
             "]( delimiter must be at chars 12..14"
         );
     }
+
+    // ── inline code range diagnostic ─────────────────────────────────────────
+
+    #[test]
+    fn debug_inline_code_multiline_paragraph_ranges() {
+        // Two inline code spans in a single paragraph separated by a soft break.
+        // pulldown-cmark treats adjacent lines (no blank) as one paragraph.
+        use pulldown_cmark::{Event, Options, Parser};
+        let text = "`inline code` at\n`too`.";
+        let options =
+            Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS | Options::ENABLE_STRIKETHROUGH;
+        let mut code_ranges: Vec<(String, std::ops::Range<usize>)> = Vec::new();
+        for (event, range) in Parser::new_ext(text, options).into_offset_iter() {
+            if let Event::Code(s) = event {
+                code_ranges.push((s.to_string(), range));
+            }
+        }
+        // Verify pulldown-cmark emits exactly two Code events.
+        assert_eq!(code_ranges.len(), 2, "expected 2 Code events, got: {:?}", code_ranges);
+        // First code span: `inline code` at bytes [0, 13)
+        // (` = 1, "inline code" = 11, ` = 1 → total 13 bytes)
+        let (c0, r0) = &code_ranges[0];
+        assert_eq!(c0, "inline code");
+        assert_eq!(r0.start, 0, "first Code range must start at byte 0");
+        assert_eq!(r0.end, 13, "first Code range must end at byte 13 (exclusive, past closing `)");
+        // Second code span: `too` at bytes [17, 22) — line 2 starts at byte 17
+        // (` = 1, "too" = 3, ` = 1 → 5 bytes)
+        let (c1, r1) = &code_ranges[1];
+        assert_eq!(c1, "too");
+        assert_eq!(r1.start, 17, "second Code range must start at byte 17");
+        assert_eq!(r1.end, 22, "second Code range must end at byte 22 (exclusive, past closing `)");
+    }
+
+    // ── no-span-bleeds-past-closing-backtick tests ────────────────────────────
+
+    fn spans_covering(map: &DecorationMap, line: usize, char_pos: usize) -> Vec<(usize, usize)> {
+        map.get(&line)
+            .map(|spans| {
+                spans
+                    .iter()
+                    .filter(|s| s.char_start <= char_pos && s.char_end > char_pos)
+                    .map(|s| (s.char_start, s.char_end))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn no_span_past_closing_backtick_singleline() {
+        // "`too`." — period at char 5 must not be in any span.
+        let text = "`too`.";
+        let map = build_map(text, &make_theme(), true);
+        let covering = spans_covering(&map, 0, 5);
+        assert!(
+            covering.is_empty(),
+            "period after closing `` ` `` must not be in any span; got: {:?}",
+            covering
+        );
+    }
+
+    #[test]
+    fn no_span_past_closing_backtick_multiline_paragraph() {
+        // Two code spans across a paragraph soft-break; period on line 1 must be clean.
+        let text = "`inline code` at\n`too`.";
+        let map = build_map(text, &make_theme(), true);
+        let covering = spans_covering(&map, 1, 5); // char 5 = '.'
+        assert!(
+            covering.is_empty(),
+            "period after `too` on line 1 must not be in any span; got: {:?}",
+            covering
+        );
+    }
+
+    #[test]
+    fn no_span_past_closing_backtick_comma() {
+        // Code followed by comma: "`foo`," — comma at char 5 must not be in any span.
+        let text = "`foo`,";
+        let map = build_map(text, &make_theme(), true);
+        let covering = spans_covering(&map, 0, 5);
+        assert!(
+            covering.is_empty(),
+            "comma after closing `` ` `` must not be in any span; got: {:?}",
+            covering
+        );
+    }
+
+    #[test]
+    fn no_span_past_closing_backtick_in_sentence() {
+        // Middle of sentence: "see `foo`. More" — period at char 9, space at char 10.
+        let text = "see `foo`. More";
+        let map = build_map(text, &make_theme(), true);
+        let covering_period = spans_covering(&map, 0, 9);
+        let covering_space = spans_covering(&map, 0, 10);
+        assert!(
+            covering_period.is_empty(),
+            "period at char 9 must not be in any span; got: {:?}",
+            covering_period
+        );
+        assert!(
+            covering_space.is_empty(),
+            "space at char 10 must not be in any span; got: {:?}",
+            covering_space
+        );
+    }
 }
