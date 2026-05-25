@@ -98,9 +98,7 @@ pub fn wrap_line(s: &str, width: usize) -> Vec<&str> {
         };
 
         let byte_start = char_indices[char_start].0;
-        let byte_end = char_indices
-            .get(break_at)
-            .map_or(s.len(), |&(b, _)| b);
+        let byte_end = char_indices.get(break_at).map_or(s.len(), |&(b, _)| b);
 
         if byte_start < byte_end {
             result.push(&s[byte_start..byte_end]);
@@ -618,7 +616,11 @@ mod tests {
         // Each CJK char is 2 display columns wide.
         // "日本語テ" = 8 display cols; at width=4 it wraps into two rows of 2 chars each.
         let result = wrap_line("日本語テ", 4);
-        assert_eq!(result.len(), 2, "4 CJK chars (8 display cols) must wrap at width=4");
+        assert_eq!(
+            result.len(),
+            2,
+            "4 CJK chars (8 display cols) must wrap at width=4"
+        );
         assert_eq!(result[0], "日本");
         assert_eq!(result[1], "語テ");
     }
@@ -627,7 +629,11 @@ mod tests {
     fn wrap_wide_chars_single_row_when_fits() {
         // "日本" = 4 display cols; at width=4 it fits without wrapping.
         let result = wrap_line("日本", 4);
-        assert_eq!(result.len(), 1, "2 CJK chars (4 display cols) must not wrap at width=4");
+        assert_eq!(
+            result.len(),
+            1,
+            "2 CJK chars (4 display cols) must not wrap at width=4"
+        );
     }
 
     #[test]
