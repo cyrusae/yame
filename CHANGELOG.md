@@ -46,6 +46,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Italic default color now matches text color (not accent blend) (#60)
 
 ### Changed
+- kill clamp_scroll walk-backward loop mutants: 18 surviving arithmetic + comparison operators (#108)
+- extract handle_key_event: decouple key dispatch from I/O for testability (#103)
+- kill misc input/app mutants: handle_key_event is_nav branch (lines 269/275) + expand_tabs double-tab (#109)
+- decoration mutant pass: add_byte_range_span field invariants + emit_* boundary arithmetic (#105)
+- kill surviving mutants: selection overlay, clamp_scroll, pair_wrap, navigation, status, config (#104)
 - Auto-scaffold ~/.config/yame/config.toml on first run (#101)
 - Alpha release prep: version bump, Cargo.toml metadata, README polish, crates.io publish (#100)
 - Rework Saved/warning status message display on UI bar (#76)
