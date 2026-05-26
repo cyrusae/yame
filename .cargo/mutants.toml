@@ -92,6 +92,22 @@ exclude_re = [
     # observe any difference.
     "decoration/mod\\.rs:82:.*replace > with >= in emit_content_around_existing",
 
+    # `.filter(|s| s.char_end > range_start && s.char_start < range_end)` overlap
+    # guard in emit_content_around_existing (decoration/mod.rs:69).
+    #   · `>→>=` (col 40): admits spans where char_end == range_start (adjacent, not
+    #     overlapping).  The map-to-intersection on line 70 clamps this to a zero-width
+    #     block (range_start, range_start), which the subsequent gap-filling loop ignores
+    #     (`pos < block_start` is false; `block_end > pos` is false).  No cell changes.
+    #   · `<→<=` (col 70): admits spans where char_start == range_end (adjacent on the
+    #     right).  Same zero-width outcome: (range_end, range_end).  Unkillable.
+    "decoration/mod\\.rs:69:40:.*replace > with >=",
+    "decoration/mod\\.rs:69:70:.*replace < with <=",
+
+    # Note: `delete field` mutations in spans.rs:91-92 (is_blockquote, full_line_bg) are
+    # killed by add_byte_range_span_propagates_span_params_fields in decoration/mod.rs.
+    # cargo-mutants v27 `delete field` mutations cannot be excluded via exclude_re —
+    # they require an actual test with non-default SpanParams values.
+
     # `2 * GUTTER` in apply_selection_overlay's content-width formula (renderer/mod.rs:346).
     # `replace * with /` is equivalent when GUTTER=1: 2*1 == 2/1 == 2.
     "renderer/mod\\.rs:346:.*replace \\* with /",

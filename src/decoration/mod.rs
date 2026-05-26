@@ -2509,4 +2509,39 @@ mod tests {
             "empty intermediate line must not produce a zero-width span; got: {:?}", l1
         );
     }
+
+    // Kills: spans.rs:91 `delete field is_blockquote` (uses Default=false instead of params)
+    //        spans.rs:92 `delete field full_line_bg`  (uses Default=None instead of params)
+    // These fields are propagated through SpanParams → StyledSpan.  Since all production
+    // call sites currently pass false/None, we need an explicit test with non-default values
+    // to distinguish propagation from defaulting.
+    #[test]
+    fn add_byte_range_span_propagates_span_params_fields() {
+        use ratatui::style::{Color, Style};
+        use super::spans::{SpanParams, add_byte_range_span, line_start_bytes as lsb};
+        let text = "hello";
+        let starts = lsb(text);
+        let mut map = DecorationMap::default();
+        add_byte_range_span(
+            &mut map,
+            &starts,
+            text,
+            0,
+            5,
+            SpanParams {
+                style: Style::default(),
+                full_line_bg: Some(Color::Red),
+                is_blockquote: true,
+            },
+        );
+        let spans = map.get(&0).expect("line 0 must have a span");
+        assert!(
+            spans.iter().any(|s| s.is_blockquote),
+            "is_blockquote must propagate from SpanParams to StyledSpan; got: {:?}", spans
+        );
+        assert!(
+            spans.iter().any(|s| s.full_line_bg == Some(Color::Red)),
+            "full_line_bg must propagate from SpanParams to StyledSpan; got: {:?}", spans
+        );
+    }
 }
