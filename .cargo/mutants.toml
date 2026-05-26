@@ -1,8 +1,9 @@
 # cargo-mutants configuration  https://mutants.rs/
-# ── NOTE: this file is a human-readable reference copy only. ────────────────
-# cargo-mutants v24+ reads from `.cargo/mutants.toml` (workspace root), NOT
-# from this file.  The ACTIVE configuration lives at `.cargo/mutants.toml`.
-# Edit that file; keep this copy in sync for documentation purposes.
+# ── CANONICAL LOCATION ──────────────────────────────────────────────────────
+# cargo-mutants v24+ reads this file from `.cargo/mutants.toml` in the
+# workspace root.  The file at `mutants.toml` (project root) is kept as a
+# human-readable reference but is NOT read automatically by the tool.
+# Always edit THIS file; keep the root copy in sync if desired.
 # ────────────────────────────────────────────────────────────────────────────
 
 # Multiply the measured baseline test time for per-mutant timeout.

@@ -46,6 +46,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Italic default color now matches text color (not accent blend) (#60)
 
 ### Changed
+- kill wrap_line + wrap_char_ranges arithmetic mutants: +/* and boundary operators (#107)
+- kill link_split_char_idx mutants + skip timeout line (words.rs): 7 logic + 1 infinite-loop timeout (#110)
 - kill clamp_scroll walk-backward loop mutants: 18 surviving arithmetic + comparison operators (#108)
 - extract handle_key_event: decouple key dispatch from I/O for testability (#103)
 - kill misc input/app mutants: handle_key_event is_nav branch (lines 269/275) + expand_tabs double-tab (#109)
