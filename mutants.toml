@@ -25,4 +25,17 @@ exclude_re = [
     # because the two flags occupy non-overlapping bits.  No test can observe a
     # difference, so this mutant is structurally unkillable.
     "replace \\| with \\^ in handle_pair_wrap",
+
+    # `chunk_end = char_start + ci + 1` in wrap_line's inner for-loop (renderer/mod.rs:75).
+    # The `+→*` mutations on this line are structurally unkillable: whenever
+    # `remaining_display > width` (the invariant for entering the inner loop) the
+    # break at line 71 (`chunk_end = char_start + ci`) always fires first and
+    # overwrites whatever line 75 last wrote.  The intermediate updates are dead.
+    "renderer/mod\\.rs:75:.*replace \\+ with \\*",
+
+    # `char_start += 1` in wrap_line's pathological CJK path (renderer/mod.rs:90).
+    # The `*= 1` mutation is a no-op that leaves char_start at the same position
+    # forever → infinite loop / timeout.  The `-= 1` mutation IS caught by the
+    # wrap_cjk_pathological_single_col test (usize underflow → panic in debug).
+    "renderer/mod\\.rs:90:.*replace \\+= with \\*=",
 ]

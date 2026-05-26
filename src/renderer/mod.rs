@@ -655,6 +655,66 @@ mod tests {
         assert_eq!(result[1], "ef");
     }
 
+    #[test]
+    fn wrap_zero_width_returns_whole_string() {
+        // Early-exit uses `||`: both `s.is_empty()` and `width == 0` independently
+        // trigger it.  With ||→&& mutation, width=0 no longer short-circuits and
+        // the function hard-breaks each character individually instead.
+        assert_eq!(wrap_line("hello", 0), vec!["hello"]);
+    }
+
+    #[test]
+    fn wrap_soft_break_exact_content() {
+        // Exercises the soft-break path (break at last space before width).
+        // Kills line-96 `sp+1→sp-1` (next_start goes backward → includes "z abc")
+        // and `sp+1→sp*1` (next_start stays at space → includes " abc").
+        assert_eq!(wrap_line("xyz abc", 5), vec!["xyz", "abc"]);
+    }
+
+    #[test]
+    fn wrap_cjk_pathological_single_col() {
+        // CJK chars are 2 display columns; width=1 forces the pathological path where
+        // the first char alone exceeds the limit (chunk_end == char_start).
+        // Kills line-87 `+→*` (byte_end = byte_start → empty segment pushed) and
+        // `+→-` (0usize - 1 underflows in debug → panic).
+        // Also kills line-90 `-=` (char_start underflows after the first hard-break).
+        assert_eq!(wrap_line("日", 1), vec!["日"]);
+    }
+
+    #[test]
+    fn wrap_skips_empty_span_at_space_boundary() {
+        // After wrapping "a" the next segment starts at the space; that space becomes
+        // the break point so byte_start == byte_end.  The `if byte_start < byte_end`
+        // guard must skip it.  With `<→<=` an empty string slice is pushed instead,
+        // giving ["a", "", "b"].
+        assert_eq!(wrap_line("a b", 1), vec!["a", "b"]);
+    }
+
+    // --- wrap_char_ranges ---
+
+    #[test]
+    fn char_ranges_two_segments() {
+        // "hello world" at width 5 → ["hello", "world"].
+        // Kills all four wrap_char_ranges arithmetic mutants:
+        //   line 132 +→- and +→* (wrong char_start for segment 2),
+        //   line 135 +→*           (wrong prev_byte_end → inflated gap → wrong char_start),
+        //   line 136 +→*           (wrong prev_char_end → wrong char_start for segment 2).
+        let line = "hello world";
+        let wrapped = wrap_line(line, 5);
+        assert_eq!(wrapped, vec!["hello", "world"]);
+        assert_eq!(wrap_char_ranges(line, &wrapped), vec![(0, 5), (6, 5)]);
+    }
+
+    #[test]
+    fn char_ranges_three_segments() {
+        // Three single-char segments with gap chars between each ensures
+        // prev_byte_end and prev_char_end are threaded correctly across all iterations.
+        let line = "a b c";
+        let wrapped = wrap_line(line, 2);
+        assert_eq!(wrapped, vec!["a", "b", "c"]);
+        assert_eq!(wrap_char_ranges(line, &wrapped), vec![(0, 1), (2, 1), (4, 1)]);
+    }
+
     // --- build_normal_status_bar ---
 
     #[test]
