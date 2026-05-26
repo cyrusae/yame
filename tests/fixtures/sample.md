@@ -32,6 +32,8 @@ What happens when I type a long line? A long line? A line that goes on for a lon
 
 ~~Strikethrough.~~
 
+***Bold and italic combined with triple asterisks.***
+
 ---
 
 ## Blockquotes

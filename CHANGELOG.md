@@ -47,6 +47,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Italic default color now matches text color (not accent blend) (#60)
 
 ### Changed
+- expand integration tests: strikethrough, links, rules, fenced, headings, template TOML (#102)
 - chore: replace duplicate mutants.toml with symlink to .cargo/mutants.toml (#112)
 - mutant triage: skip annotations + handle_pair_wrap fix + backlog issues (#106)
 - kill wrap_line + wrap_char_ranges arithmetic mutants: +/* and boundary operators (#107)
