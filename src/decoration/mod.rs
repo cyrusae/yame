@@ -2129,7 +2129,7 @@ mod tests {
 
     #[test]
     fn debug_pulldown_bold_italic_byte_ranges() {
-        use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
+        use pulldown_cmark::{Event, Options, Parser, Tag};
 
         // (text, emph_start, strong_start, strong_end, emph_end)
         // For `***text***` Emphasis wraps Strong, adjacent:

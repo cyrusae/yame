@@ -113,8 +113,50 @@ pub fn wrap_line(s: &str, width: usize) -> Vec<&str> {
     result
 }
 
+/// Soft-wrap with separate widths for the first row and continuation rows.
+///
+/// The first visual row is wrapped at `first_width` terminal columns. All
+/// subsequent rows (which are indented by `first_width − cont_width` columns
+/// during rendering) are wrapped at `cont_width` so they don't overflow the
+/// right edge.
+///
+/// When `cont_width >= first_width` this degenerates to `wrap_line(s,
+/// first_width)`.  All returned `&str` slices point into the original `s`
+/// so [`wrap_char_ranges`] works unchanged.
+pub fn wrap_line_indented(s: &str, first_width: usize, cont_width: usize) -> Vec<&str> {
+    // Fast path: no effective indent, delegate entirely.
+    if cont_width >= first_width {
+        return wrap_line(s, first_width);
+    }
+
+    // Wrap the full string at first_width to peel off exactly the first row.
+    let first_pass = wrap_line(s, first_width);
+    if first_pass.len() <= 1 {
+        // Everything fit on one row — no continuation rows needed.
+        return first_pass;
+    }
+
+    let first_row = first_pass[0];
+    // Byte position just after first_row in `s`.
+    let first_end_byte = first_row.as_ptr() as usize - s.as_ptr() as usize + first_row.len();
+    // `wrap_line` skips the break-space; skip it here too so we hand the
+    // correct remainder to the next wrap pass.
+    let rest_start = if first_end_byte < s.len() && s.as_bytes()[first_end_byte] == b' ' {
+        first_end_byte + 1
+    } else {
+        first_end_byte
+    };
+    let rest = &s[rest_start..];
+
+    // Wrap the remainder at the narrower continuation width.
+    let mut result = vec![first_row];
+    result.extend(wrap_line(rest, cont_width.max(1)));
+    result
+}
+
 /// Compute the `(char_start, char_len)` pair for each element of a
-/// [`wrap_line`] output slice, measured in char units within `line`.
+/// [`wrap_line`] (or [`wrap_line_indented`]) output slice, measured in char
+/// units within `line`.
 ///
 /// `wrap_line` breaks at spaces and **skips** the break-space. A naïve
 /// approach of accumulating `char_len` produces incorrect char offsets for
@@ -181,8 +223,17 @@ impl Widget for MarkdownView<'_> {
 
         while visual_row < visible && log_row < total {
             let line = &self.lines[log_row];
-            let wrapped = wrap_line(line, content_width.max(1));
             let line_decs = self.decoration_map.get(&log_row);
+            // Compute the continuation indent before wrapping so continuation
+            // rows are wrapped at the narrower effective width.
+            let line_ci = line_decs
+                .map(|decs| decs.iter().map(|s| s.continuation_indent).max().unwrap_or(0))
+                .unwrap_or(0) as usize;
+            let wrapped = wrap_line_indented(
+                line,
+                content_width.max(1),
+                content_width.saturating_sub(line_ci).max(1),
+            );
 
             let char_ranges = wrap_char_ranges(line, &wrapped);
             for (wrap_idx, (&row_str, &(char_start, char_len))) in
@@ -358,7 +409,16 @@ fn apply_selection_overlay(
         }
 
         let line = &view.lines[log_row];
-        let wrapped = wrap_line(line, content_width.max(1));
+        let line_ci = view
+            .decoration_map
+            .get(&log_row)
+            .map(|decs| decs.iter().map(|s| s.continuation_indent).max().unwrap_or(0))
+            .unwrap_or(0) as usize;
+        let wrapped = wrap_line_indented(
+            line,
+            content_width.max(1),
+            content_width.saturating_sub(line_ci).max(1),
+        );
 
         let char_ranges = wrap_char_ranges(line, &wrapped);
         for (wrap_idx, (_row_str, &(char_start, char_len))) in
@@ -688,6 +748,70 @@ mod tests {
         // guard must skip it.  With `<→<=` an empty string slice is pushed instead,
         // giving ["a", "", "b"].
         assert_eq!(wrap_line("a b", 1), vec!["a", "b"]);
+    }
+
+    // --- wrap_line_indented ---
+
+    #[test]
+    fn wrap_indented_no_indent_same_as_wrap_line() {
+        // cont_width >= first_width → fast path, identical to wrap_line.
+        let s = "one two three four five";
+        assert_eq!(wrap_line_indented(s, 12, 12), wrap_line(s, 12));
+    }
+
+    #[test]
+    fn wrap_indented_single_row_unchanged() {
+        // Line fits on one row — no continuation rows, no clipping.
+        assert_eq!(wrap_line_indented("hello", 40, 38), vec!["hello"]);
+    }
+
+    #[test]
+    fn wrap_indented_continuation_row_narrower() {
+        // "- word1 word2 word3" with first_width=20, cont_width=18 (indent=2).
+        // The first row gets up to 20 cols; continuation row(s) get up to 18.
+        // This test verifies continuation rows don't exceed cont_width characters.
+        let s = "- word1 word2 word3 word4 word5 word6 word7";
+        let rows = wrap_line_indented(s, 20, 18);
+        assert!(rows.len() >= 2, "expected wrapping to produce multiple rows");
+        // First row may use up to first_width.
+        assert!(rows[0].len() <= 20, "first row too wide: {:?}", rows[0]);
+        // All continuation rows must fit within cont_width.
+        for row in &rows[1..] {
+            assert!(
+                row.len() <= 18,
+                "continuation row exceeds cont_width: {:?}",
+                row
+            );
+        }
+    }
+
+    #[test]
+    fn wrap_indented_roundtrips_via_char_ranges() {
+        // All &str slices returned by wrap_line_indented point into the original
+        // string, so wrap_char_ranges must be able to locate them.
+        let s = "- some indented list item that is long enough to wrap at a narrow width";
+        let rows = wrap_line_indented(s, 30, 28);
+        // Must not panic and char ranges must be non-overlapping ascending.
+        let ranges = wrap_char_ranges(s, &rows);
+        let mut prev_end = 0usize;
+        for (start, len) in &ranges {
+            assert!(*start >= prev_end, "ranges overlap or go backward");
+            prev_end = start + len;
+        }
+    }
+
+    #[test]
+    fn wrap_indented_hard_break_continuation() {
+        // An unbreakable word on a continuation row should still hard-break
+        // within cont_width, not overflow to first_width.
+        let s = "- abcdefghijklmnopqrstuvwx";
+        // first_width=20, cont_width=18.  "- " is 2 chars on row 0; the 24-char
+        // tail must hard-break at 18 on the continuation row.
+        let rows = wrap_line_indented(s, 20, 18);
+        assert!(rows.len() >= 2);
+        for row in &rows[1..] {
+            assert!(row.len() <= 18, "continuation hard-break too wide: {:?}", row);
+        }
     }
 
     // --- wrap_char_ranges ---
