@@ -187,6 +187,15 @@ mod tests {
         assert_eq!(expand_tabs("\t\t", 4), "        ");
     }
 
+    // Kills: app.rs:126 replace += with *= in expand_tabs.
+    // With `col *= spaces`: after "a" col=1, first \t gives spaces=3 → col=3 (not 4),
+    // second \t then gives spaces=1 (not 4) → result "a    " (5 chars) ≠ "a       " (8 chars).
+    #[test]
+    fn expand_tabs_double_tab_with_offset() {
+        // "a" → col 1; \t → 3 spaces (col 4); \t → 4 spaces (col 8) = "a       "
+        assert_eq!(expand_tabs("a\t\t", 4), "a       ");
+    }
+
     #[test]
     fn expand_tabs_tab_width_two() {
         assert_eq!(expand_tabs("\t", 2), "  ");

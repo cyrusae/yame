@@ -494,3 +494,89 @@ pub(super) fn event_loop<B: ratatui::backend::Backend>(
 
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use std::path::PathBuf;
+    use tui_textarea::TextArea;
+    use yame::app::App;
+    use yame::config::Theme;
+    use yame::decoration::DecorationMap;
+    use yame::status::StatusLine;
+
+    fn make_app() -> App {
+        App {
+            textarea: TextArea::default(),
+            file_path: PathBuf::from("test.md"),
+            is_dirty: false,
+            saved_content: None,
+            theme: Theme::default_theme(),
+            italic_support: false,
+            powerline_glyphs: false,
+            last_keystroke: None,
+            force_redecorate: false,
+            decoration_map: DecorationMap::default(),
+            word_count: 0,
+            status: StatusLine::default(),
+            config_warnings: vec![],
+            scroll_top: 0,
+            free_scroll: false,
+            clipboard: None,
+            initial_file_empty: false,
+        }
+    }
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    // Kills: input.rs:269:24 replace && with || in handle_key_event.
+    // With ||: !is_nav || handle_pair_wrap short-circuits to true for any non-nav key
+    // (handle_pair_wrap is never evaluated), so the if-branch is entered without
+    // calling textarea.input → the textarea stays empty instead of receiving 'a'.
+    #[test]
+    fn typing_char_reaches_textarea() {
+        let mut app = make_app();
+        handle_key_event(&mut app, key(KeyCode::Char('a')));
+        assert_eq!(app.textarea.lines()[0], "a", "typed char must reach textarea");
+    }
+
+    // Kills: input.rs:269:16 delete ! in handle_key_event.
+    // Without !: is_nav && handle_pair_wrap short-circuits to false for all non-nav
+    // keys (is_nav=false), so pair-wrap is never called; instead textarea.input('(')
+    // is called → just "(" instead of the wrapped "(hello)".
+    #[test]
+    fn pair_wrap_with_selection_wraps() {
+        let mut app = make_app();
+        app.textarea.insert_str("hello");
+        app.textarea.move_cursor(CursorMove::Head);
+        app.textarea.start_selection();
+        app.textarea.move_cursor(CursorMove::End);
+        handle_key_event(&mut app, key(KeyCode::Char('(')));
+        assert_eq!(
+            app.textarea.lines()[0],
+            "(hello)",
+            "pair-wrap must wrap the selection"
+        );
+    }
+
+    // Kills: input.rs:275:47 replace != with == in handle_key_event.
+    // With ==: force_redecorate is set only when line count has NOT changed;
+    // pressing Enter adds a new line, so with the mutation force_redecorate is NOT set.
+    #[test]
+    fn enter_sets_force_redecorate() {
+        let mut app = make_app();
+        app.force_redecorate = false;
+        handle_key_event(&mut app, key(KeyCode::Enter));
+        assert!(
+            app.force_redecorate,
+            "Enter adds a line — force_redecorate must be true"
+        );
+    }
+}

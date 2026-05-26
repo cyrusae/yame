@@ -56,4 +56,53 @@ exclude_re = [
     # forever → infinite loop / timeout.  The `-= 1` mutation IS caught by the
     # wrap_cjk_pathological_single_col test (usize underflow → panic in debug).
     "renderer/mod\\.rs:90:.*replace \\+= with \\*=",
+
+    # `if block_end > pos { pos = block_end; }` in emit_content_around_existing
+    # (decoration/mod.rs:82).  `>→>=` is equivalent: when block_end == pos the
+    # assignment `pos = block_end` is a no-op (sets pos to itself).  No test can
+    # observe any difference.
+    "decoration/mod\\.rs:82:.*replace > with >= in emit_content_around_existing",
+
+    # `2 * GUTTER` in apply_selection_overlay's content-width formula (renderer/mod.rs:346).
+    # `replace * with /` is equivalent when GUTTER=1: 2*1 == 2/1 == 2.
+    "renderer/mod\\.rs:346:.*replace \\* with /",
+
+    # apply_selection_overlay outer while-loop guards (renderer/mod.rs:355).
+    #   · `&&→||`: when visual_row ≥ visible the inner for-loop immediately `break`s
+    #     before writing any cells, and the outer `if log_row > sel_row_end { break; }`
+    #     guard fires before `view.lines[log_row]` is ever accessed, so no buffer change
+    #     or out-of-bounds access is possible.
+    #   · `<→<=` on visual_row (line 355:22): the inner for-loop's early-exit guard
+    #     (`if visual_row >= visible { break; }`) fires before any highlighting when
+    #     visual_row == visible, so no cell is ever set — same observable result.
+    #   · `<→<=` on log_row (line 355:43): when log_row == total the `if log_row >
+    #     sel_row_end { break; }` guard always fires first because sel_row_end < total,
+    #     so `view.lines[log_row]` is never accessed — no panic or buffer mutation.
+    "renderer/mod\\.rs:355:32:.*replace \\&\\& with \\|\\| in apply_selection_overlay",
+    "renderer/mod\\.rs:355:22:.*replace < with <= in apply_selection_overlay",
+    "renderer/mod\\.rs:355:43:.*replace < with <= in apply_selection_overlay",
+
+    # `if row_sel_start < row_sel_end` guard (renderer/mod.rs:404).
+    # `<→<=` allows row_sel_start == row_sel_end, but that makes x_start == x_end so
+    # the `for x in x_start..x_end` range is empty — no cells are set.  Unkillable.
+    "renderer/mod\\.rs:404:.*replace < with <= in apply_selection_overlay",
+
+    # emit_bold_italic_spans early-return guard (decoration/mod.rs:127) and
+    # push-span guards (lines 147, 155, 163).  All are structurally unkillable
+    # for well-formed Markdown input:
+    #  · content_start > content_end: impossible — inner delimiters never invert the
+    #    content window for real `***` / `**_` syntax.
+    #  · content_start >= end_char_excl: impossible — content always precedes the
+    #    outer range end.
+    #  · `||→&&` on the combined guard: only observable if both conditions are
+    #    simultaneously true, which is also impossible.
+    #  · `>→>=` on the three push guards (lines 147/155/163): the equality cases
+    #    (content_start == start_char, content_end == content_start,
+    #    end_char_excl == content_end) require zero-width content or zero-width
+    #    delimiters — unreachable for any syntactically valid bold+italic span.
+    "decoration/mod\\.rs:127:.*replace \\|\\| with \\&\\& in emit_bold_italic_spans",
+    "decoration/mod\\.rs:127:22:.*replace > with .* in emit_bold_italic_spans",
+    "decoration/mod\\.rs:147:22:.*replace > with >= in emit_bold_italic_spans",
+    "decoration/mod\\.rs:155:20:.*replace > with >= in emit_bold_italic_spans",
+    "decoration/mod\\.rs:163:22:.*replace > with >= in emit_bold_italic_spans",
 ]

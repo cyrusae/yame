@@ -2255,4 +2255,258 @@ mod tests {
             covering_space
         );
     }
+
+    // ---- Direct helper tests: add_modifier_to_existing ----
+    //
+    // These call the private helper directly to verify the overlap filter on line 37:
+    //   `if span.char_end > range_start && span.char_start < range_end`
+
+    // Kills: mod.rs:37:30 replace > with >=
+    // With >=: char_end=10 >= range_start=10 → span incorrectly gets the modifier.
+    #[test]
+    fn add_modifier_not_applied_to_span_ending_at_range_start() {
+        use ratatui::style::Style;
+        use super::spans::{make_span, push_span};
+        let mut map = DecorationMap::default();
+        push_span(&mut map, 0, make_span(5, 10, Style::default()));
+        add_modifier_to_existing(&mut map, 0, 10, 15, Modifier::BOLD);
+        let span = &map[&0][0];
+        assert!(
+            !span.style.add_modifier.contains(Modifier::BOLD),
+            "span [5,10) ending exactly at range_start=10 must not receive BOLD"
+        );
+    }
+
+    // Kills: mod.rs:37:63 replace < with <=
+    // With <=: char_start=15 <= range_end=15 → span incorrectly gets the modifier.
+    #[test]
+    fn add_modifier_not_applied_to_span_starting_at_range_end() {
+        use ratatui::style::Style;
+        use super::spans::{make_span, push_span};
+        let mut map = DecorationMap::default();
+        push_span(&mut map, 0, make_span(15, 20, Style::default()));
+        add_modifier_to_existing(&mut map, 0, 10, 15, Modifier::BOLD);
+        let span = &map[&0][0];
+        assert!(
+            !span.style.add_modifier.contains(Modifier::BOLD),
+            "span [15,20) starting exactly at range_end=15 must not receive BOLD"
+        );
+    }
+
+    // Kills: mod.rs:37:44 replace && with ||
+    // With ||: char_start=0 < range_end=15 is TRUE → || short-circuits to true → span
+    // incorrectly gets the modifier even though it ends before the range.
+    #[test]
+    fn add_modifier_not_applied_to_span_entirely_before_range() {
+        use ratatui::style::Style;
+        use super::spans::{make_span, push_span};
+        let mut map = DecorationMap::default();
+        push_span(&mut map, 0, make_span(0, 5, Style::default()));
+        add_modifier_to_existing(&mut map, 0, 10, 15, Modifier::BOLD);
+        let span = &map[&0][0];
+        assert!(
+            !span.style.add_modifier.contains(Modifier::BOLD),
+            "span [0,5) entirely before range [10,15) must not receive BOLD"
+        );
+    }
+
+    // ---- Direct helper tests: emit_content_around_existing ----
+    //
+    // Verifies the gap-filling logic in lines 69–89 of mod.rs directly.
+
+    // Kills: mod.rs:69:40 (>→==, >→<, >→>=), 69:70 (<→==, <→>, <→<=),
+    //        79:16 (<→==, meaning the gap-emit condition fails for real gaps),
+    //        82:22 (>→== and >→< both fail to advance pos, causing overlap).
+    #[test]
+    fn emit_content_skips_blocked_interior() {
+        use ratatui::style::{Color, Style};
+        use super::spans::{make_span, push_span};
+        let mut map = DecorationMap::default();
+        let block_style = Style::default().fg(Color::Red);
+        let fill_style = Style::default().fg(Color::Blue);
+        // Existing span at [4,7) — must block the fill.
+        push_span(&mut map, 0, make_span(4, 7, block_style));
+        // Emit content around existing spans in range [2,10).
+        emit_content_around_existing(&mut map, 0, 2, 10, fill_style);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        // Leading gap [2,4) must be filled.
+        assert!(
+            spans.iter().any(|s| s.char_start == 2 && s.char_end == 4 && s.style.fg == Some(Color::Blue)),
+            "gap [2,4) before the block must be filled with fill_style; spans={:?}", spans
+        );
+        // Trailing gap [7,10) must be filled.
+        assert!(
+            spans.iter().any(|s| s.char_start == 7 && s.char_end == 10 && s.style.fg == Some(Color::Blue)),
+            "gap [7,10) after the block must be filled with fill_style; spans={:?}", spans
+        );
+        // No fill span must overlap the blocked region [4,7).
+        assert!(
+            !spans.iter().any(|s| s.char_start < 7 && s.char_end > 4 && s.style.fg == Some(Color::Blue)),
+            "no fill_style span must overlap the blocked region [4,7); spans={:?}", spans
+        );
+    }
+
+    // Kills: mod.rs:79:16 replace < with <= (emits a zero-width [5,5) span when range
+    //        starts at the block boundary).
+    #[test]
+    fn emit_content_no_leading_zero_width_span() {
+        use ratatui::style::{Color, Style};
+        use super::spans::{make_span, push_span};
+        let mut map = DecorationMap::default();
+        push_span(&mut map, 0, make_span(5, 8, Style::default().fg(Color::Red)));
+        // Range starts exactly at the block start: no leading gap should exist.
+        emit_content_around_existing(&mut map, 0, 5, 10, Style::default().fg(Color::Blue));
+        let spans = map.get(&0).expect("line 0 must have spans");
+        // Trailing gap [8,10) must be filled.
+        assert!(
+            spans.iter().any(|s| s.char_start == 8 && s.char_end == 10 && s.style.fg == Some(Color::Blue)),
+            "trailing gap [8,10) must be filled; spans={:?}", spans
+        );
+        // No zero-width span at the range/block start.
+        assert!(
+            !spans.iter().any(|s| s.char_start == 5 && s.char_end == 5),
+            "no zero-width span [5,5) when range_start == block_start; spans={:?}", spans
+        );
+    }
+
+    // Kills: mod.rs:86:12 replace < with <= (emits a zero-width [10,10) trailing span
+    //        when pos == range_end after the last block).
+    #[test]
+    fn emit_content_no_trailing_zero_width_span() {
+        use ratatui::style::{Color, Style};
+        use super::spans::{make_span, push_span};
+        let mut map = DecorationMap::default();
+        // Block extends to range_end; after the loop pos == range_end → no tail.
+        push_span(&mut map, 0, make_span(5, 10, Style::default().fg(Color::Red)));
+        emit_content_around_existing(&mut map, 0, 2, 10, Style::default().fg(Color::Blue));
+        let spans = map.get(&0).expect("line 0 must have spans");
+        // Leading gap [2,5) must be filled.
+        assert!(
+            spans.iter().any(|s| s.char_start == 2 && s.char_end == 5 && s.style.fg == Some(Color::Blue)),
+            "leading gap [2,5) must be filled; spans={:?}", spans
+        );
+        // No zero-width span anywhere.
+        assert!(
+            !spans.iter().any(|s| s.char_start == s.char_end),
+            "no zero-width span must be emitted; spans={:?}", spans
+        );
+    }
+
+    // Kills: mod.rs:69:54 replace && with || in emit_content_around_existing.
+    // With ||: a span at [12,15) satisfies char_end=15 > range_start=2 even though it
+    // starts past range_end=10.  It gets included in 'blocked', clamped to [12,10), and
+    // the gap loop emits [2,12) instead of [2,10).
+    #[test]
+    fn emit_content_does_not_block_external_span_past_range_end() {
+        use ratatui::style::{Color, Style};
+        use super::spans::{make_span, push_span};
+        let mut map = DecorationMap::default();
+        // Span entirely outside the emit range [2,10), past its end.
+        push_span(&mut map, 0, make_span(12, 15, Style::default().fg(Color::Red)));
+        emit_content_around_existing(&mut map, 0, 2, 10, Style::default().fg(Color::Blue));
+        let spans = map.get(&0).expect("line 0 must have spans");
+        // Entire range [2,10) must be filled as one unbroken span.
+        assert!(
+            spans.iter().any(|s| s.char_start == 2 && s.char_end == 10 && s.style.fg == Some(Color::Blue)),
+            "range [2,10) must be emitted exactly; spans={:?}", spans
+        );
+        // No fill span must bleed past range_end=10.
+        assert!(
+            !spans.iter().any(|s| s.char_end > 10 && s.style.fg == Some(Color::Blue)),
+            "no fill span must extend past range_end=10; spans={:?}", spans
+        );
+    }
+
+    // ---- Direct helper tests: line_char_len ----
+
+    // Kills: spans.rs:32:30 replace < with >
+    // With >: `line_idx + 1 > line_starts.len()` is never true for valid line indices,
+    // so the else branch always fires → le = text.len() → counts chars including \n.
+    #[test]
+    fn line_char_len_non_last_line_excludes_newline() {
+        use super::spans::line_char_len;
+        let text = "hello\nworld";
+        let starts = line_start_bytes(text); // [0, 6]
+        // Line 0 = "hello" (5 chars); mutation returns 11 (whole text).
+        assert_eq!(line_char_len(&starts, text, 0), 5, "line 0 must be 5 chars, not 11");
+        // Last line still correct (exercises the else branch in both variants).
+        assert_eq!(line_char_len(&starts, text, 1), 5, "line 1 must be 5 chars");
+    }
+
+    // ---- Direct helper tests: add_byte_range_span ----
+
+    // Kills: spans.rs:77:31 (==→!= swaps start_char assignment between lines),
+    //        spans.rs:78:29 (==→!= swaps end_char assignment between lines),
+    //        spans.rs:79:32 (+→- or +→* makes end exclusive off-by-1 or off-by-2),
+    //        spans.rs:88 (delete char_start → defaults to 0 on first line),
+    //        spans.rs:89 (delete char_end → defaults to 0 on first line).
+    #[test]
+    fn add_byte_range_span_multiline_correct_boundaries() {
+        use ratatui::style::Style;
+        use super::spans::{SpanParams, add_byte_range_span, line_start_bytes as lsb};
+        // text: "abcde\nfghij" — line 0 = "abcde" (5 chars), line 1 = "fghij" (5 chars)
+        let text = "abcde\nfghij";
+        let starts = lsb(text); // [0, 6]
+        let mut map = DecorationMap::default();
+        // byte 2 = 'c' on line 0 (char 2); byte 8 = 'i' on line 1 (char 2, exclusive end = 9)
+        add_byte_range_span(
+            &mut map,
+            &starts,
+            text,
+            2,
+            9,
+            SpanParams {
+                style: Style::default(),
+                full_line_bg: None,
+                is_blockquote: false,
+            },
+        );
+        // Line 0: c_start = start_char = 2, c_end = line_char_len(0) = 5.
+        let l0 = map.get(&0).expect("line 0 must have a span");
+        assert!(
+            l0.iter().any(|s| s.char_start == 2 && s.char_end == 5),
+            "line 0 span must be [2,5); got: {:?}", l0
+        );
+        // Line 1: c_start = 0, c_end = end_char_inclusive+1 = 3.
+        let l1 = map.get(&1).expect("line 1 must have a span");
+        assert!(
+            l1.iter().any(|s| s.char_start == 0 && s.char_end == 3),
+            "line 1 span must be [0,3); got: {:?}", l1
+        );
+    }
+
+    // Kills: spans.rs:83:39 replace + with * (c_end.max(c_start+1) → c_end.max(c_start*1) = c_end.max(c_start)).
+    // An empty intermediate line gets line_char_len=0; the max ensures at least 1-char width.
+    // With *: max(0, 0) = 0 → zero-width span for the empty line.
+    #[test]
+    fn add_byte_range_span_empty_intermediate_line_gets_min_width() {
+        use ratatui::style::Style;
+        use super::spans::{SpanParams, add_byte_range_span, line_start_bytes as lsb};
+        // text: "ab\n\ncd" — line 0="ab", line 1="" (empty), line 2="cd"
+        let text = "ab\n\ncd";
+        let starts = lsb(text); // [0, 3, 4]
+        let mut map = DecorationMap::default();
+        add_byte_range_span(
+            &mut map,
+            &starts,
+            text,
+            0,
+            6,
+            SpanParams {
+                style: Style::default(),
+                full_line_bg: None,
+                is_blockquote: false,
+            },
+        );
+        // Empty line 1 must get char_end = 1 (min-width clamp), not 0.
+        let l1 = map.get(&1).expect("empty line 1 must have a span");
+        assert!(
+            l1.iter().any(|s| s.char_end >= 1),
+            "empty intermediate line must get char_end >= 1 (min-width clamp); got: {:?}", l1
+        );
+        assert!(
+            !l1.iter().any(|s| s.char_start == s.char_end),
+            "empty intermediate line must not produce a zero-width span; got: {:?}", l1
+        );
+    }
 }

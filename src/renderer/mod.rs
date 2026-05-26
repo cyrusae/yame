@@ -1021,4 +1021,168 @@ mod tests {
             assert_ne!(buf.cell((x, 0)).unwrap().bg, sel_bg, "zero-width selection must not highlight x={x}");
         }
     }
+
+    // Kills: renderer/mod.rs:346:71 replace * with + in apply_selection_overlay.
+    // "abcdefgh" exactly fills content_width (cw = column_width - 2*GUTTER = 10-2 = 8).
+    // x_end = min(GUTTER + 8, GUTTER + cw) = min(9, 9) = 9 → cell x=8 IS highlighted.
+    // With *→+ (cw=7): min(9, 8) = 8 → cell x=8 NOT highlighted.
+    #[test]
+    fn selection_overlay_content_width_last_char_included() {
+        use ratatui::buffer::Buffer;
+        let area = Rect { x: 0, y: 0, width: 10, height: 2 };
+        let mut buf = Buffer::empty(area);
+        let theme = Theme::default_theme();
+        let deco = DecorationMap::default();
+        let lines: Vec<String> = vec!["abcdefgh".into(), "x".into()]; // 8 chars = full cw
+        let view = sel_view(&lines, &deco, &theme);
+        apply_selection_overlay(area, &mut buf, &view, ((0, 0), (0, 8)));
+        let sel_bg = theme.selection_bg;
+        assert_eq!(
+            buf.cell((8, 0)).unwrap().bg, sel_bg,
+            "char 7 at x=8 must be highlighted (last char within content_width=8)"
+        );
+        assert_ne!(
+            buf.cell((9, 0)).unwrap().bg, sel_bg,
+            "x=9 is past content_width and must not be highlighted"
+        );
+    }
+
+    // Combined test for wrap+continuation_indent correctness in apply_selection_overlay.
+    //
+    // Setup: column_width=8, GUTTER=1, cw=6.
+    // "abcdefghij" (10 chars, no spaces) wraps to "abcdef" (chars 0-5) + "ghij" (chars 6-9).
+    // Decoration: continuation_indent=2 on line 0.
+    // Selection: full line (0..10).
+    //
+    // Sub-row 0 (wrap_idx=0): ci must be 0 (original: wrap_idx > 0 is false).
+    //   x_start=1, x_end=min(1+6, 1+6)=7. Highlights x=1..6.
+    // Sub-row 1 (wrap_idx=1): ci=2 (original: wrap_idx > 0 is true).
+    //   x_start=1+2+0=3, x_end=min(1+(10-6), 1+6)=min(5,7)=5. Highlights x=3..4.
+    //
+    // Kills:
+    //   346:71  *→+ or *→/: cw=5 → sub-row 0 x_end clips at 6, cell (6,0) excluded.
+    //   375:56  >→== / >→>=: ci applied to sub-row 0 → x_start=3, cell (1,0) excluded.
+    //   375:56  >→<: no ci ever → sub-row 1 x_start=1, cell (1,1) highlighted (wrong).
+    //   407:80  -→+: x_start=1+2+(6+6)=15, out of area → cell (3,1) not highlighted.
+    //   408:65  -→+: x_end=min(1+(10+6),7)=7 → cell (5,1) highlighted (wrong).
+    //   409:37  +→*: min clips 1 cell early → cell (6,0) not highlighted.
+    //   409:46  +→*: same.
+    #[test]
+    fn selection_overlay_continuation_indent_only_on_wrapped_subrows() {
+        use ratatui::buffer::Buffer;
+        let area = Rect { x: 0, y: 0, width: 8, height: 3 };
+        let mut buf = Buffer::empty(area);
+        let theme = Theme::default_theme();
+        let mut deco = DecorationMap::default();
+        deco.insert(
+            0,
+            vec![StyledSpan {
+                char_start: 0,
+                char_end: 1,
+                continuation_indent: 2,
+                ..Default::default()
+            }],
+        );
+        let lines: Vec<String> = vec!["abcdefghij".into(), "xx".into()];
+        let view = MarkdownView {
+            lines: &lines,
+            decoration_map: &deco,
+            scroll_top: 0,
+            cursor: (0, 0),
+            selection: None,
+            theme: &theme,
+            column_width: 8, // cw = 8 - 2*1 = 6
+        };
+        apply_selection_overlay(area, &mut buf, &view, ((0, 0), (0, 10)));
+        let sel_bg = theme.selection_bg;
+
+        // Sub-row 0, first cell: ci must be 0 for wrap_idx=0.
+        // With >→== or >→>=: ci=2 → x_start=3, cell (1,0) not highlighted.
+        assert_eq!(
+            buf.cell((1, 0)).unwrap().bg, sel_bg,
+            "sub-row 0 char 0 (x=1) must be highlighted — no continuation indent on first sub-row"
+        );
+        // Sub-row 0, last cell (char 5, x=GUTTER+5=6): must reach the full cw.
+        // With 409 *→* mutations or 346 *→+: x_end clips 1 cell early → x=6 excluded.
+        assert_eq!(
+            buf.cell((6, 0)).unwrap().bg, sel_bg,
+            "sub-row 0 char 5 (x=6) must be highlighted — last char fills content_width"
+        );
+        // Sub-row 1, before continuation indent: must not be highlighted.
+        // With >→<: ci never applied → x_start=1, cell (1,1) highlighted (wrong).
+        assert_ne!(
+            buf.cell((1, 1)).unwrap().bg, sel_bg,
+            "sub-row 1 x=1 must not be highlighted (before continuation_indent=2)"
+        );
+        // Sub-row 1, first highlighted cell: x = GUTTER + ci + (char_start - char_start) = 1+2+0 = 3.
+        // With >→<: ci=0 → x_start=1, cell (1,1) highlighted instead.
+        // With 407:80 -→+: x_start=1+2+(6+6)=15, out of area → cell (3,1) not highlighted.
+        assert_eq!(
+            buf.cell((3, 1)).unwrap().bg, sel_bg,
+            "sub-row 1 first char (x=3 with ci=2) must be highlighted"
+        );
+        // Sub-row 1, one past the last char (x=5): must not be highlighted (char_len=4, x_end=5).
+        // With 408:65 -→+: x_end=min(1+(10+6),7)=7 → x=5 highlighted (wrong).
+        assert_ne!(
+            buf.cell((5, 1)).unwrap().bg, sel_bg,
+            "sub-row 1 x=5 (past char_len=4) must not be highlighted"
+        );
+    }
+
+    // Kills: renderer/mod.rs:407:41 replace + with - in apply_selection_overlay (x_start formula).
+    // Selection starts partway into the second sub-row (char 7, within sub-row chars 6-9).
+    // x_start = GUTTER + ci + (row_sel_start - char_start) = 1 + 2 + (7-6) = 4.
+    // With +→-: x_start = 1 + 2 - 1 = 2 → cell (2,1) highlighted (wrong).
+    //
+    // Note: the existing selection_overlay_multi_row_highlights_correct_cells test already
+    // catches this via u16 underflow when row_sel_start=2, char_start=0, ci=0 → 1-2 panics
+    // in debug mode.  This test provides an explicit non-overflow scenario.
+    #[test]
+    fn selection_overlay_subrow_partial_start_x_is_exact() {
+        use ratatui::buffer::Buffer;
+        let area = Rect { x: 0, y: 0, width: 8, height: 3 };
+        let mut buf = Buffer::empty(area);
+        let theme = Theme::default_theme();
+        let mut deco = DecorationMap::default();
+        deco.insert(
+            0,
+            vec![StyledSpan {
+                char_start: 0,
+                char_end: 1,
+                continuation_indent: 2,
+                ..Default::default()
+            }],
+        );
+        let lines: Vec<String> = vec!["abcdefghij".into(), "xx".into()];
+        let view = MarkdownView {
+            lines: &lines,
+            decoration_map: &deco,
+            scroll_top: 0,
+            cursor: (0, 0),
+            selection: None,
+            theme: &theme,
+            column_width: 8,
+        };
+        // Selection: char 7 to end of line (within sub-row 1, chars 6-9).
+        // sub-row 1: row_sel_start=max(7,6)=7. x_start = 1+2+(7-6) = 4. Highlights x=4.
+        apply_selection_overlay(area, &mut buf, &view, ((0, 7), (0, 10)));
+        let sel_bg = theme.selection_bg;
+
+        // Sub-row 0 must be completely clean (selection col_start=7 > sub-row 0 char_end=6).
+        assert_ne!(
+            buf.cell((1, 0)).unwrap().bg, sel_bg,
+            "sub-row 0 must not be highlighted when selection starts at char 7"
+        );
+        // x=2 must NOT be highlighted (selection offset is 1, not -1).
+        // With +→-: x_start = 1+2-(7-6) = 2 → cell (2,1) highlighted (wrong).
+        assert_ne!(
+            buf.cell((2, 1)).unwrap().bg, sel_bg,
+            "x=2 must not be highlighted — start offset must add (not subtract) the intra-chunk offset"
+        );
+        // First highlighted cell is x=4 = GUTTER + ci + (row_sel_start - char_start) = 1+2+1.
+        assert_eq!(
+            buf.cell((4, 1)).unwrap().bg, sel_bg,
+            "x=4 must be highlighted — correct partial-start offset in wrapped sub-row"
+        );
+    }
 }
