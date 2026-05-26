@@ -227,6 +227,85 @@ mod tests {
         clamp_scroll(&mut app, make_editor_area(0), TEST_COL, 3);
     }
 
+    // col_width=4 → cw = 4 − 2×GUTTER(1) = 2.
+    // col_width=5 → cw = 5 − 2×GUTTER(1) = 3.
+    // (make_editor_area only provides height; col_width is a separate parameter.)
+
+    #[test]
+    fn clamp_scroll_scroll_down_exact_new_top() {
+        // 5 lines of "aa" (1 visual row each at cw=2).  Cursor at row 4, visible=3, padding=0.
+        // above_visual=4, cursor_visual=4 ≥ 3 → scroll down.
+        // headroom=2 → walk backward through rows 3 and 2 (1 row each) → scroll_top=2.
+        // Kills: ln66 *→+ (wider cw=1 → 2 rows/line → scroll_top=3), ln99 +→* (0≥3?=no →
+        //        no scroll), ln103 >→< (loop never runs → scroll_top=4),
+        //        ln106 >→== / >→< (underflow), >→>= (breaks one step early → scroll_top=3),
+        //        ln110 -=→+= and -=→/= (remaining never shrinks → scroll_top=0).
+        let mut app = make_app_with_lines(&["aa"; 5]);
+        app.textarea
+            .move_cursor(tui_textarea::CursorMove::Jump(4, 0));
+        clamp_scroll(&mut app, make_editor_area(3), 4, 0);
+        assert_eq!(app.scroll_top, 2, "walk-backward must land on row 2");
+    }
+
+    #[test]
+    fn clamp_scroll_walk_backward_reads_prev_line() {
+        // ["aaaa","a","aaaa","a","aa"] at cw=2: "aaaa"→2 rows, rest→1 row.
+        // cursor at row 4; above_visual = 2+1+2+1 = 6 ≥ 3 → scroll.
+        // headroom=2; walk: row-3("a")=1≤2 → consume, row-2("aaaa")=2>1 → break.
+        // scroll_top=3.
+        // Kills: ln105 -→+ (reads row+1=wrong wrap count → scroll_top=2),
+        //        ln105 -→/ (reads same row → wrong count → scroll_top=2).
+        let mut app = make_app_with_lines(&["aaaa", "a", "aaaa", "a", "aa"]);
+        app.textarea
+            .move_cursor(tui_textarea::CursorMove::Jump(4, 0));
+        clamp_scroll(&mut app, make_editor_area(3), 4, 0);
+        assert_eq!(app.scroll_top, 3, "must read line new_top-1, not new_top or new_top+1");
+    }
+
+    #[test]
+    fn clamp_scroll_cursor_in_subrow0_no_scroll() {
+        // "aaaaa" at cw=3 → ["aaa","aa"] (2 sub-rows).  Cursor col=0 → sub-row 0.
+        // above_visual=2, cursor_visual=2, visible=3 → no scroll needed (2 < 3).
+        // Mutations that wrongly compute sub-row as 1 push cursor_visual to 3 → spurious scroll.
+        // Kills: ln88 +→* (char_end=char_start*char_len: first chunk end=0 → cursor falls
+        //        through to last chunk → sub-row 1), ln89 ||→&& (both conditions needed:
+        //        last-chunk fallback fires at chunk 1 → sub-row 1),
+        //        ln89 <→== and <→> (cursor_col=0 never ==/>char_end → last fallback → sub-row 1).
+        let mut app = make_app_with_lines(&["a", "a", "aaaaa"]);
+        app.textarea
+            .move_cursor(tui_textarea::CursorMove::Jump(2, 0));
+        clamp_scroll(&mut app, make_editor_area(3), 5, 0);
+        assert_eq!(app.scroll_top, 0, "cursor in sub-row 0 must not trigger scroll");
+    }
+
+    #[test]
+    fn clamp_scroll_cursor_in_subrow1_exact() {
+        // Same layout; cursor col=3 → in second chunk ["aaa","aa"]: char_end of chunk 0 = 3,
+        // so cursor_col=3 is NOT < 3 → falls to chunk 1 → sub-row 1.
+        // cursor_visual=3, visible=3 → scroll.  headroom=1 → scroll_top=1.
+        // Kills: ln89 ==→!= (disables last-chunk fallback; sub-row stays 0 → no scroll → top=0),
+        //        ln89 <→<= (cursor_col=3 ≤ char_end=3 → sub-row 0 → no scroll → top=0).
+        let mut app = make_app_with_lines(&["a", "a", "aaaaa"]);
+        app.textarea
+            .move_cursor(tui_textarea::CursorMove::Jump(2, 3));
+        clamp_scroll(&mut app, make_editor_area(3), 5, 0);
+        assert_eq!(app.scroll_top, 1, "cursor in sub-row 1 must scroll to expose it");
+    }
+
+    #[test]
+    fn clamp_scroll_padding_affects_headroom() {
+        // 5 "aa" lines (1 row each at cw=2), cursor row 4, visible=6, bottom_padding=2.
+        // cursor_visual=4; 4+2=6 ≥ 6 → scroll.
+        // headroom = 6 − 1 − 0 − 2 = 3 → walk rows 3,2,1 → scroll_top=1.
+        // Kills: ln100 +→- (1+0-2 underflows usize in debug → panic),
+        //        ln100 +→* (1+0*2=1 → headroom=5 → walks all 4 rows → scroll_top=0).
+        let mut app = make_app_with_lines(&["aa"; 5]);
+        app.textarea
+            .move_cursor(tui_textarea::CursorMove::Jump(4, 0));
+        clamp_scroll(&mut app, make_editor_area(6), 4, 2);
+        assert_eq!(app.scroll_top, 1, "padding must reduce headroom correctly");
+    }
+
     // ── get_selection_text tests ──────────────────────────────────────────────
 
     fn make_key(code: KeyCode) -> crossterm::event::KeyEvent {
