@@ -23,6 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - v1 polish: italic startup warning, `delimiter_blend` config token, parent-dir creation on save (#35)
 
 ### Fixed
+- investigate fenced code block beige color (#113)
 - bug: indented list items wrap as if not indented — text clips edge (#111)
 - Wide char (CJK) scroll redraw artifact — gap fills with stale content from above (#71)
 - Free-scroll jitters and snaps back due to blanket free_scroll reset on every event (#99)

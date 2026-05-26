@@ -547,7 +547,7 @@ pub fn build_decoration_map(
                     text,
                     range.end.saturating_sub(1).max(range.start),
                 );
-                let fence_bg_style = Style::default().bg(theme.fenced_bg);
+                let fence_bg_style = Style::default().fg(theme.text).bg(theme.fenced_bg);
                 // Fence ``` delimiters blend toward muted, same standard as other delimiters.
                 let fence_delim_style = Style::default()
                     .fg(blend_colors(
