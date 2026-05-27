@@ -512,7 +512,7 @@ mod tests {
     use crate::decoration::{DecorationMap, StyledSpan};
     use crate::status::StatusLine;
 
-    use super::status::build_normal_status_bar;
+    use super::status::{build_normal_status_bar, build_timed_message_bar};
     use super::*;
 
     fn make_app() -> App {
@@ -886,6 +886,66 @@ mod tests {
     fn status_bar_no_panic() {
         let app = make_app();
         let _ = build_normal_status_bar(&app);
+    }
+
+    // --- build_timed_message_bar ---
+
+    #[test]
+    fn timed_bar_includes_filename() {
+        let app = make_app();
+        let line = build_timed_message_bar(&app, "Saved.");
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(text.contains("foo.md"), "timed message bar must include the filename");
+    }
+
+    #[test]
+    fn timed_bar_includes_message_text() {
+        let app = make_app();
+        let line = build_timed_message_bar(&app, "Saved.");
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(text.contains("Saved."), "timed message bar must include the message text");
+    }
+
+    #[test]
+    fn timed_bar_message_span_is_bold_accent() {
+        let app = make_app();
+        let theme = Theme::default_theme();
+        let line = build_timed_message_bar(&app, "Saved.");
+        assert!(
+            line.spans.iter().any(|s| s.content.contains("Saved.")
+                && s.style.fg == Some(theme.accent)
+                && s.style.add_modifier.contains(Modifier::BOLD)),
+            "message span must be bold accent"
+        );
+    }
+
+    #[test]
+    fn timed_bar_has_no_hints_bg() {
+        // The hints zone (ui_bg) must not appear — it should dissolve into canvas_bg.
+        let app = make_app();
+        let theme = Theme::default_theme();
+        let line = build_timed_message_bar(&app, "Saved.");
+        assert!(
+            !line.spans.iter().any(|s| s.style.bg == Some(theme.ui_bg)),
+            "timed message bar must not use hints_bg on any span"
+        );
+    }
+
+    #[test]
+    fn timed_bar_dirty_shows_dirty_marker() {
+        let mut app = make_app();
+        app.is_dirty = true;
+        let line = build_timed_message_bar(&app, "Saved.");
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(text.contains("[*]"), "timed message bar must show [*] when dirty");
+    }
+
+    #[test]
+    fn timed_bar_clean_has_no_dirty_marker() {
+        let app = make_app();
+        let line = build_timed_message_bar(&app, "Saved.");
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(!text.contains("[*]"), "timed message bar must not show [*] when clean");
     }
 
     #[test]
