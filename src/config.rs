@@ -76,7 +76,8 @@ pub struct LayoutConfig {
     pub tab_width: Option<u16>,
     /// Use Powerline/Nerd Font filled-arrow glyphs (U+E0B0) in the status bar
     /// instead of the universal box-drawing separator `│`.
-    /// Requires a Nerd Font or Powerline-patched font. Default false.
+    /// Requires a Nerd Font or Powerline-patched font. Default true.
+    /// Set `powerline_glyphs = false` to opt out if your font lacks glyph U+E0B0.
     pub powerline_glyphs: Option<bool>,
 }
 
@@ -349,6 +350,64 @@ impl Theme {
 // Config file loading
 // ---------------------------------------------------------------------------
 
+/// Commented template written to `~/.config/yame/config.toml` on first run.
+///
+/// All values shown are the Catppuccin Mocha defaults.  The `[theme]`,
+/// `[headings]`, and `[layout]` sections are fully commented out — uncomment
+/// any line to override the derived default.
+pub const DEFAULT_CONFIG_TEMPLATE: &str = r##"# yame configuration — ~/.config/yame/config.toml
+# Reload in-app at any time with Ctrl+R.
+#
+# All values shown are the Catppuccin Mocha defaults.
+# Uncomment and edit any line to override it.
+
+# ── Base palette ──────────────────────────────────────────────────────────────
+# These six colors drive the entire theme.
+[palette]
+text    = "#cdd6f4"   # body text
+accent  = "#cba6f7"   # headings, links, bullets
+muted   = "#585b70"   # blockquotes, URLs, completed todos
+code    = "#a6e3a1"   # inline code and fenced blocks
+bg      = "#11111b"   # editor background
+warning = "#f38ba8"   # dirty flag, warnings
+
+# ── Per-element overrides ─────────────────────────────────────────────────────
+# Uncomment any line to pin that value instead of deriving it from the palette.
+[theme]
+# bold_color          = "#cdd6f4"
+# italic_color        = "#cdd6f4"
+# strikethrough_color = "#9399b2"
+# blockquote_color    = "#9399b2"
+# link_text_color     = "#cbb0f6"
+# link_url_color      = "#585b70"
+# todo_done           = "#585b70"
+# rule_color          = "#585b70"
+# code_bg             = "#27312f"
+# fenced_bg           = "#20212c"
+# heading_bg          = "#2d273c"
+# selection_bg        = "#816a9f"
+# selection_fg        = "#11111b"
+# ui_bg               = "#242531"
+# ui_bar              = "#11111b"
+# ui_text             = "#cdd6f4"
+# delimiter_blend     = 0.4        # 0.0 = full muted · 1.0 = full span color
+
+# ── Per-level heading colors ──────────────────────────────────────────────────
+[headings]
+# h1 = "#cba6f7"
+# h2 = "#cba6f7"
+# h3 = "#cbadf7"
+# h4 = "#ccb4f6"
+# h5 = "#ccb9f6"
+# h6 = "#ccbef6"
+
+# ── Layout ────────────────────────────────────────────────────────────────────
+[layout]
+# min_cols         = 60     # minimum editing-column width in characters
+# tab_width        = 4      # spaces per tab character expanded on load
+# powerline_glyphs = true   # set false to use the universal │ separator (no Nerd Font required)
+"##;
+
 pub fn config_path() -> PathBuf {
     let base = std::env::var("XDG_CONFIG_HOME")
         .map(PathBuf::from)
@@ -369,6 +428,12 @@ pub fn load_config() -> (Config, Vec<String>) {
     let mut warnings = Vec::new();
 
     if !path.exists() {
+        // Scaffold a commented starter config so the user can discover all options.
+        // Failures are silently ignored — yame works fine without the file.
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(&path, DEFAULT_CONFIG_TEMPLATE);
         return (Config::default(), warnings);
     }
 
@@ -405,11 +470,13 @@ pub fn load_config() -> (Config, Vec<String>) {
     }
 }
 
-/// Detect italic support from $TERM.
-pub fn supports_italic() -> bool {
-    let term = std::env::var("TERM").unwrap_or_default();
+/// Returns true if the given `term` string indicates italic support.
+///
+/// Separated from env reading so the logic can be unit-tested without
+/// touching `$TERM` and causing parallel-test races.
+pub fn term_supports_italic(term: &str) -> bool {
     matches!(
-        term.as_str(),
+        term,
         "xterm-256color"
             | "tmux-256color"
             | "screen-256color"
@@ -419,6 +486,18 @@ pub fn supports_italic() -> bool {
             | "wezterm"
             | "foot"
     ) || term.starts_with("xterm-kitty")
+}
+
+/// Detect italic support from the current `$TERM` environment variable.
+///
+/// This is a thin shim that reads the process environment; the actual
+/// matching logic lives in [`term_supports_italic`], which is fully tested.
+/// Mutating *this* function's body (e.g. always returning `true`/`false`)
+/// cannot be caught by unit tests because the only call site is inside
+/// `run()`, which is `#[mutants::skip]`.
+#[mutants::skip]
+pub fn supports_italic() -> bool {
+    term_supports_italic(&std::env::var("TERM").unwrap_or_default())
 }
 
 // ---------------------------------------------------------------------------
@@ -434,6 +513,32 @@ mod tests {
     #[test]
     fn blend_midpoint() {
         assert_eq!(blend((255, 0, 0), (0, 0, 0), 0.5), (128, 0, 0));
+    }
+
+    // --- blend_colors ---
+
+    #[test]
+    fn blend_colors_returns_correct_rgb() {
+        // blend pure red with pure black at t=0.5 → approximately (128, 0, 0).
+        // The return must NOT be Color::default() (= Color::Reset).
+        let result = blend_colors(Color::Rgb(255, 0, 0), Color::Rgb(0, 0, 0), 0.5);
+        assert_eq!(
+            result,
+            Color::Rgb(128, 0, 0),
+            "blend_colors must interpolate RGB values correctly"
+        );
+    }
+
+    #[test]
+    fn blend_colors_at_zero_returns_b() {
+        let result = blend_colors(Color::Rgb(255, 0, 0), Color::Rgb(10, 20, 30), 0.0);
+        assert_eq!(result, Color::Rgb(10, 20, 30), "t=0 must return b");
+    }
+
+    #[test]
+    fn blend_colors_at_one_returns_a() {
+        let result = blend_colors(Color::Rgb(255, 0, 0), Color::Rgb(10, 20, 30), 1.0);
+        assert_eq!(result, Color::Rgb(255, 0, 0), "t=1 must return a");
     }
 
     #[test]
@@ -521,31 +626,88 @@ mod tests {
 
     #[test]
     fn italic_unsupported_for_dumb_term() {
-        let old = std::env::var("TERM").ok();
-        // SAFETY: single-threaded test context.
-        unsafe { std::env::set_var("TERM", "dumb") };
-        let result = supports_italic();
-        unsafe {
-            match old {
-                Some(v) => std::env::set_var("TERM", v),
-                None => std::env::remove_var("TERM"),
-            }
-        }
-        assert!(!result);
+        assert!(!term_supports_italic("dumb"));
+    }
+
+    #[test]
+    fn italic_unsupported_for_empty_term() {
+        assert!(!term_supports_italic(""));
     }
 
     #[test]
     fn italic_supported_for_xterm_256() {
-        let old = std::env::var("TERM").ok();
-        // SAFETY: single-threaded test context.
-        unsafe { std::env::set_var("TERM", "xterm-256color") };
-        let result = supports_italic();
-        unsafe {
-            match old {
-                Some(v) => std::env::set_var("TERM", v),
-                None => std::env::remove_var("TERM"),
-            }
-        }
-        assert!(result);
+        assert!(term_supports_italic("xterm-256color"));
+    }
+
+    #[test]
+    fn italic_supported_for_kitty() {
+        assert!(term_supports_italic("kitty"));
+    }
+
+    #[test]
+    fn italic_supported_for_xterm_kitty_prefix() {
+        assert!(term_supports_italic("xterm-kitty"));
+    }
+
+    // --- DEFAULT_CONFIG_TEMPLATE ---
+
+    /// The scaffold template written on first run must be valid TOML so the
+    /// next Ctrl+R doesn't fail with a parse error.
+    #[test]
+    fn default_template_is_valid_toml() {
+        let result = toml::from_str::<Config>(DEFAULT_CONFIG_TEMPLATE);
+        assert!(
+            result.is_ok(),
+            "DEFAULT_CONFIG_TEMPLATE failed to parse as Config: {:?}",
+            result.err()
+        );
+    }
+
+    /// powerline_glyphs is commented out in the template (None) so it defers
+    /// to the code default of `true`.  If it were accidentally uncommented as
+    /// `false` the default behaviour would silently break.
+    #[test]
+    fn default_template_powerline_glyphs_is_unset() {
+        let cfg: Config =
+            toml::from_str(DEFAULT_CONFIG_TEMPLATE).expect("template must be valid TOML");
+        assert_eq!(
+            cfg.layout.powerline_glyphs, None,
+            "template must leave powerline_glyphs unset so the code default (true) applies"
+        );
+        // Confirm the resolution: None → unwrap_or(true) → enabled.
+        assert!(cfg.layout.powerline_glyphs.unwrap_or(true));
+    }
+
+    /// The palette values embedded in the template must match Config::default()
+    /// so that scaffolded configs produce the same theme as no config at all.
+    #[test]
+    fn default_template_palette_matches_defaults() {
+        let cfg: Config =
+            toml::from_str(DEFAULT_CONFIG_TEMPLATE).expect("template must be valid TOML");
+        let defaults = Config::default();
+        assert_eq!(
+            cfg.palette.text, defaults.palette.text,
+            "template palette.text differs from Config::default()"
+        );
+        assert_eq!(
+            cfg.palette.accent, defaults.palette.accent,
+            "template palette.accent differs from Config::default()"
+        );
+        assert_eq!(
+            cfg.palette.bg, defaults.palette.bg,
+            "template palette.bg differs from Config::default()"
+        );
+        assert_eq!(
+            cfg.palette.muted, defaults.palette.muted,
+            "template palette.muted differs from Config::default()"
+        );
+        assert_eq!(
+            cfg.palette.code, defaults.palette.code,
+            "template palette.code differs from Config::default()"
+        );
+        assert_eq!(
+            cfg.palette.warning, defaults.palette.warning,
+            "template palette.warning differs from Config::default()"
+        );
     }
 }

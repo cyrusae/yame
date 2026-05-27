@@ -9,6 +9,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [0.1.0-alpha.1] - 2026-05-25
 
 ### Added
+- config: default to Nerd Font Powerline glyphs, add opt-out (#122)
+- feat: yame write-config — write commented default config to XDG path (#117)
+- feat: yame init — output shell wrapper function (eval-style) (#116)
+- feat: -h/--help flag and no-args help text (#115)
 - Todo items: indent continuation to text-start after full [ ] marker (#95)
 - v1.5: blockquote continuation indent on soft-wrapped lines (#39)
 - v1.5: tab character expansion on load (#40)
@@ -23,6 +27,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - v1 polish: italic startup warning, `delimiter_blend` config token, parent-dir creation on save (#35)
 
 ### Fixed
+- bug: bold/italic inside blockquote bleeds to full line (#120)
+- fix flaky italic env-var tests (#119)
+- investigate fenced code block beige color (#113)
+- bug: indented list items wrap as if not indented — text clips edge (#111)
 - Wide char (CJK) scroll redraw artifact — gap fills with stale content from above (#71)
 - Free-scroll jitters and snaps back due to blanket free_scroll reset on every event (#99)
 - Coloring of italic+bold non-adjacent nesting shows muted (#98)
@@ -46,6 +54,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Italic default color now matches text color (not accent blend) (#60)
 
 ### Changed
+- feat: visual-line Up/Down navigation (wrap-aware cursor movement) (#126)
+- docs: update README for recent feature changes (#123)
+- test: kill surviving mutants in supports_italic, wrap_line_indented, apply_selection_overlay (#124)
+- ui: Saved flash over second pill only with bg color (#121)
+- v0.1.0 version bump (#118)
+- planning: yame init + help flag + v0.1.0 pre-publish review (#114)
+- expand integration tests: strikethrough, links, rules, fenced, headings, template TOML (#102)
+- chore: replace duplicate mutants.toml with symlink to .cargo/mutants.toml (#112)
+- mutant triage: skip annotations + handle_pair_wrap fix + backlog issues (#106)
+- kill wrap_line + wrap_char_ranges arithmetic mutants: +/* and boundary operators (#107)
+- kill link_split_char_idx mutants + skip timeout line (words.rs): 7 logic + 1 infinite-loop timeout (#110)
+- kill clamp_scroll walk-backward loop mutants: 18 surviving arithmetic + comparison operators (#108)
+- extract handle_key_event: decouple key dispatch from I/O for testability (#103)
+- kill misc input/app mutants: handle_key_event is_nav branch (lines 269/275) + expand_tabs double-tab (#109)
+- decoration mutant pass: add_byte_range_span field invariants + emit_* boundary arithmetic (#105)
+- kill surviving mutants: selection overlay, clamp_scroll, pair_wrap, navigation, status, config (#104)
+- Auto-scaffold ~/.config/yame/config.toml on first run (#101)
 - Alpha release prep: version bump, Cargo.toml metadata, README polish, crates.io publish (#100)
 - Rework Saved/warning status message display on UI bar (#76)
 - Decouple scroll from cursor: scroll should pan without moving cursor (#56)

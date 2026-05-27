@@ -1,12 +1,1 @@
-# cargo-mutants configuration  https://mutants.rs/
-
-# Multiply the measured baseline test time for per-mutant timeout.
-# 2× is comfortable for a small crate; tighten to 1.5 once the suite is fast.
-timeout_multiplier = 2.0
-
-# Hard floor so a cold cache doesn't time out on fast machines.
-minimum_test_timeout = 20
-
-# I/O-only functions are annotated with #[mutants::skip] directly in source
-# (see src/main.rs, src/app.rs, src/clipboard.rs, src/config.rs, src/renderer.rs).
-# No file-level exclusions needed — per-item annotations are more precise.
+.cargo/mutants.toml

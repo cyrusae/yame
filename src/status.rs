@@ -124,4 +124,25 @@ mod tests {
         };
         assert_eq!(s.message(), None);
     }
+
+    #[test]
+    fn set_dismissible_sets_dismissible_mode() {
+        let mut s = StatusLine::default();
+        s.set_dismissible("oops");
+        assert!(
+            matches!(s.mode, StatusMode::DismissibleMessage(_)),
+            "set_dismissible must set DismissibleMessage mode"
+        );
+    }
+
+    #[test]
+    fn message_returns_text_for_dismissible() {
+        let mut s = StatusLine::default();
+        s.set_dismissible("config error");
+        assert_eq!(
+            s.message(),
+            Some("config error"),
+            "message() must return the DismissibleMessage text"
+        );
+    }
 }

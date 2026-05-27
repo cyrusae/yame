@@ -1,0 +1,7 @@
+# Custom theme fixture for integration tests.
+# Uses a distinctive accent color so that theme-derived values
+# (heading_bg, link_text, selection_bg, etc.) are clearly distinct
+# from the Catppuccin Mocha defaults.  All other palette keys are
+# omitted so they fall back to their defaults — only accent changes.
+[palette]
+accent = "#ff0000"

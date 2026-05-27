@@ -37,6 +37,16 @@ pub struct App {
     /// can pan freely without snapping back to the cursor.  Cleared at the top
     /// of every draw cycle regardless of whether it was set.
     pub free_scroll: bool,
+    /// The visual-column offset (within the current visual subrow) to aim for
+    /// while navigating Up/Down.  Set on the first arrow press of a vertical
+    /// gesture and preserved across subsequent Up/Down presses so the cursor
+    /// returns to its original column after passing through shorter lines.
+    /// Cleared by any non-vertical-nav key (see `handle_key_event`).
+    pub sticky_col: Option<usize>,
+    /// Content width in terminal columns (column_width − 2×GUTTER) as of the
+    /// last render frame.  Written by the event loop before dispatching each key
+    /// event so `handle_visual_move` can use the same wrapping the renderer used.
+    pub content_width: usize,
     /// Lazily-initialised system clipboard handle. `None` until the first copy/paste,
     /// then reused for the session to avoid reconnecting on every operation (expensive
     /// on Wayland where arboard opens a new display-server connection each time).
@@ -82,6 +92,8 @@ impl App {
             config_warnings,
             scroll_top: 0,
             free_scroll: false,
+            sticky_col: None,
+            content_width: 0,
             clipboard: None,
             initial_file_empty,
         })
@@ -187,6 +199,15 @@ mod tests {
         assert_eq!(expand_tabs("\t\t", 4), "        ");
     }
 
+    // Kills: app.rs:126 replace += with *= in expand_tabs.
+    // With `col *= spaces`: after "a" col=1, first \t gives spaces=3 → col=3 (not 4),
+    // second \t then gives spaces=1 (not 4) → result "a    " (5 chars) ≠ "a       " (8 chars).
+    #[test]
+    fn expand_tabs_double_tab_with_offset() {
+        // "a" → col 1; \t → 3 spaces (col 4); \t → 4 spaces (col 8) = "a       "
+        assert_eq!(expand_tabs("a\t\t", 4), "a       ");
+    }
+
     #[test]
     fn expand_tabs_tab_width_two() {
         assert_eq!(expand_tabs("\t", 2), "  ");
@@ -218,6 +239,8 @@ mod tests {
             config_warnings: vec![],
             scroll_top: 0,
             free_scroll: false,
+            sticky_col: None,
+            content_width: 0,
             clipboard: None,
             initial_file_empty: false,
         }

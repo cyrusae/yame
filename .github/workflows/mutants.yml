@@ -48,12 +48,13 @@ jobs:
         # mutations are structurally unkillable (e.g. `char_start: 0` defaulting to 0,
         # redundant guards that are provably dead for valid GFM input). Missed mutants
         # are visible in the uploaded artifact; they do not block merge.
+        # timeout_multiplier, minimum_test_timeout, and exclude_re are read from
+        # .cargo/mutants.toml (the canonical config file for cargo-mutants v24+).
         continue-on-error: true
         run: |
           if [ -s changes.diff ]; then
             cargo mutants \
               --in-diff changes.diff \
-              --timeout-multiplier 2.0 \
               --jobs 4
           else
             echo "Diff is empty — nothing to mutate."

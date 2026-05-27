@@ -24,18 +24,171 @@ fn setup_panic_hook() {
     }));
 }
 
+// ---------------------------------------------------------------------------
+// Subcommand dispatch
+// ---------------------------------------------------------------------------
+
+enum Command {
+    Edit(PathBuf),
+    Init { shell: Option<String> },
+    WriteConfig,
+}
+
+/// Returns the shell wrapper function string for `eval "$(yame init)"`.
+///
+/// The output is identical for bash and zsh — the function body uses constructs
+/// common to both.  The `shell` argument is accepted for forward-compatibility
+/// and explicit dotfile documentation; it does not change the output today.
+fn shell_init_str(_shell: &str) -> String {
+    r#"yame() {
+  if (( $# != 1 )) || [[ "$1" =~ ^- ]]; then
+    command yame "$@"
+    return
+  fi
+
+  # If the argument is an exact path, open it directly.
+  if [[ -f "$1" ]]; then
+    command yame "$1"
+    return
+  fi
+
+  # Require fd and fzf; fall back to plain invocation if either is missing.
+  if ! command -v fd &>/dev/null || ! command -v fzf &>/dev/null; then
+    command yame "$@"
+    return
+  fi
+
+  local target
+
+  # Tier 1: fuzzy-find a Markdown file.
+  target=$(fd --type f --extension md "$1" 2>/dev/null | fzf --select-1 --exit-0 --preview 'head -20 {}')
+
+  # Tier 2: fuzzy-find any file (including hidden), skipping heavy directories.
+  if [[ -z "$target" ]]; then
+    target=$(fd --type f --hidden -E "node_modules" -E ".git" -E "target" "$1" 2>/dev/null | fzf --select-1 --exit-0 --preview 'head -20 {}')
+  fi
+
+  if [[ -n "$target" ]]; then
+    command yame "$target"
+  else
+    printf "yame: no file matching '%s' found. Open new file? [y/N] " "$1" >&2
+    read -r ans && [[ "$ans" =~ ^[Yy]$ ]] && command yame "$1"
+  fi
+}"#
+    .to_string()
+}
+
+#[mutants::skip] // Reads $SHELL env var and calls process::exit — not unit-testable.
+fn detect_shell() -> String {
+    match std::env::var("SHELL") {
+        Ok(path) if path.contains("zsh") => "zsh".to_string(),
+        Ok(path) if path.contains("bash") => "bash".to_string(),
+        Ok(path) => {
+            eprintln!("================================================================");
+            eprintln!("yame init: unsupported shell.");
+            eprintln!("================================================================");
+            eprintln!("'yame init' currently only supports Bash and Zsh.");
+            eprintln!();
+            eprintln!("Detected shell: {path}");
+            eprintln!("To set up yame's shell integration manually, see:");
+            eprintln!("  https://github.com/cyrusae/yame");
+            eprintln!("================================================================");
+            std::process::exit(1);
+        }
+        Err(_) => {
+            eprintln!("================================================================");
+            eprintln!("yame init: $SHELL is unset.");
+            eprintln!("================================================================");
+            eprintln!("Pass the shell name explicitly:");
+            eprintln!("  eval \"$(yame init bash)\"");
+            eprintln!("  eval \"$(yame init zsh)\"");
+            eprintln!("================================================================");
+            std::process::exit(1);
+        }
+    }
+}
+
+#[mutants::skip] // Prints to stdout and calls process::exit — not unit-testable.
+fn print_help() {
+    println!("yame — yet another markdown editor");
+    println!();
+    println!("USAGE");
+    println!("  yame <file>           Open <file> for editing (created if it doesn't exist)");
+    println!("  yame init             Print shell integration function (eval in .bashrc/.zshrc)");
+    println!("  yame write-config     Write default config to ~/.config/yame/config.toml");
+    println!("  yame --help           Show this help");
+    println!();
+    println!("KEYBINDINGS");
+    println!("  Ctrl+S  Save          Ctrl+Z  Undo        Ctrl+C  Copy selection");
+    println!("  Ctrl+X  Exit          Ctrl+Y  Redo        Ctrl+V  Paste");
+    println!("  Ctrl+R  Reload config");
+    println!("  Arrow keys · Home/End · PgUp/PgDn · mouse click / drag / scroll");
+    println!();
+    println!("CONFIG  ~/.config/yame/config.toml  (respects $XDG_CONFIG_HOME)");
+    println!();
+    println!("  https://github.com/cyrusae/yame");
+}
+
 #[mutants::skip] // Reads std::env::args() — side-effectful, not unit-testable.
-fn parse_args() -> Result<PathBuf, ()> {
+fn parse_args() -> Result<Command, ()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    match args.len() {
-        1 => Ok(PathBuf::from(&args[0])),
+
+    if args.iter().any(|a| a == "-h" || a == "--help") {
+        print_help();
+        std::process::exit(0);
+    }
+
+    match args.as_slice() {
+        [] => {
+            print_help();
+            std::process::exit(0);
+        }
+        [a] if a == "init" => Ok(Command::Init { shell: None }),
+        [a, s] if a == "init" => Ok(Command::Init { shell: Some(s.clone()) }),
+        [a] if a == "write-config" => Ok(Command::WriteConfig),
+        [path] => Ok(Command::Edit(PathBuf::from(path))),
         _ => {
-            eprintln!("yame — yet another markdown editor\n");
-            eprintln!("Usage: yame <file.md>");
-            eprintln!("       Opens <file.md> for editing, creating it if it does not exist.");
-            eprintln!("\nNote: a file named exactly 'init' is a valid target; yame init");
-            eprintln!("      support is planned but not yet implemented.");
+            eprintln!("error: unexpected arguments");
+            eprintln!("Run 'yame --help' for usage.");
             Err(())
+        }
+    }
+}
+
+#[mutants::skip] // Filesystem + stdin I/O — not unit-testable.
+fn run_write_config() {
+    use std::io::Write;
+    use yame::config::{DEFAULT_CONFIG_TEMPLATE, config_path};
+
+    let path = config_path();
+
+    if path.exists() {
+        print!(
+            "Config already exists at {}.\nOverwrite? [y/N] ",
+            path.display()
+        );
+        let _ = io::stdout().flush();
+        let mut input = String::new();
+        if io::stdin().read_line(&mut input).is_err() {
+            eprintln!("error: could not read input");
+            std::process::exit(1);
+        }
+        if !input.trim().eq_ignore_ascii_case("y") {
+            println!("Aborted — config unchanged.");
+            return;
+        }
+    }
+
+    if let Some(dir) = path.parent() && let Err(e) = std::fs::create_dir_all(dir) {
+        eprintln!("error: could not create config directory: {e}");
+        std::process::exit(1);
+    }
+
+    match std::fs::write(&path, DEFAULT_CONFIG_TEMPLATE) {
+        Ok(()) => println!("Config written to {}", path.display()),
+        Err(e) => {
+            eprintln!("error: could not write config: {e}");
+            std::process::exit(1);
         }
     }
 }
@@ -55,7 +208,7 @@ fn run(file_path: PathBuf) -> io::Result<()> {
     );
 
     let tab_width = config.layout.tab_width.unwrap_or(4) as usize;
-    let powerline_glyphs = config.layout.powerline_glyphs.unwrap_or(false);
+    let powerline_glyphs = config.layout.powerline_glyphs.unwrap_or(true);
     let mut app = App::new(
         file_path,
         theme,
@@ -92,10 +245,31 @@ fn run(file_path: PathBuf) -> io::Result<()> {
 
 #[mutants::skip] // Entry point — calls process::exit, not unit-testable.
 fn main() {
-    let file_path = parse_args().unwrap_or_else(|_| std::process::exit(1));
-    if let Err(e) = run(file_path) {
-        eprintln!("error: {e}");
-        std::process::exit(1);
+    let command = parse_args().unwrap_or_else(|_| std::process::exit(1));
+    match command {
+        Command::Edit(path) => {
+            if let Err(e) = run(path) {
+                eprintln!("error: {e}");
+                std::process::exit(1);
+            }
+        }
+        Command::Init { shell } => {
+            let shell_name = shell.unwrap_or_else(detect_shell);
+            if shell_name != "bash" && shell_name != "zsh" {
+                eprintln!("================================================================");
+                eprintln!("yame init: unsupported shell '{shell_name}'.");
+                eprintln!("================================================================");
+                eprintln!("Supported shells: bash, zsh");
+                eprintln!("  eval \"$(yame init bash)\"");
+                eprintln!("  eval \"$(yame init zsh)\"");
+                eprintln!("================================================================");
+                std::process::exit(1);
+            }
+            println!("{}", shell_init_str(&shell_name));
+        }
+        Command::WriteConfig => {
+            run_write_config();
+        }
     }
 }
 
@@ -136,6 +310,8 @@ mod tests {
             config_warnings: vec![],
             scroll_top: 0,
             free_scroll: false,
+            sticky_col: None,
+            content_width: 0,
             clipboard: None,
             initial_file_empty: false,
         }
@@ -225,6 +401,85 @@ mod tests {
     fn clamp_scroll_zero_height_does_not_panic() {
         let mut app = make_app_with_lines(&["a"; 5]);
         clamp_scroll(&mut app, make_editor_area(0), TEST_COL, 3);
+    }
+
+    // col_width=4 → cw = 4 − 2×GUTTER(1) = 2.
+    // col_width=5 → cw = 5 − 2×GUTTER(1) = 3.
+    // (make_editor_area only provides height; col_width is a separate parameter.)
+
+    #[test]
+    fn clamp_scroll_scroll_down_exact_new_top() {
+        // 5 lines of "aa" (1 visual row each at cw=2).  Cursor at row 4, visible=3, padding=0.
+        // above_visual=4, cursor_visual=4 ≥ 3 → scroll down.
+        // headroom=2 → walk backward through rows 3 and 2 (1 row each) → scroll_top=2.
+        // Kills: ln66 *→+ (wider cw=1 → 2 rows/line → scroll_top=3), ln99 +→* (0≥3?=no →
+        //        no scroll), ln103 >→< (loop never runs → scroll_top=4),
+        //        ln106 >→== / >→< (underflow), >→>= (breaks one step early → scroll_top=3),
+        //        ln110 -=→+= and -=→/= (remaining never shrinks → scroll_top=0).
+        let mut app = make_app_with_lines(&["aa"; 5]);
+        app.textarea
+            .move_cursor(tui_textarea::CursorMove::Jump(4, 0));
+        clamp_scroll(&mut app, make_editor_area(3), 4, 0);
+        assert_eq!(app.scroll_top, 2, "walk-backward must land on row 2");
+    }
+
+    #[test]
+    fn clamp_scroll_walk_backward_reads_prev_line() {
+        // ["aaaa","a","aaaa","a","aa"] at cw=2: "aaaa"→2 rows, rest→1 row.
+        // cursor at row 4; above_visual = 2+1+2+1 = 6 ≥ 3 → scroll.
+        // headroom=2; walk: row-3("a")=1≤2 → consume, row-2("aaaa")=2>1 → break.
+        // scroll_top=3.
+        // Kills: ln105 -→+ (reads row+1=wrong wrap count → scroll_top=2),
+        //        ln105 -→/ (reads same row → wrong count → scroll_top=2).
+        let mut app = make_app_with_lines(&["aaaa", "a", "aaaa", "a", "aa"]);
+        app.textarea
+            .move_cursor(tui_textarea::CursorMove::Jump(4, 0));
+        clamp_scroll(&mut app, make_editor_area(3), 4, 0);
+        assert_eq!(app.scroll_top, 3, "must read line new_top-1, not new_top or new_top+1");
+    }
+
+    #[test]
+    fn clamp_scroll_cursor_in_subrow0_no_scroll() {
+        // "aaaaa" at cw=3 → ["aaa","aa"] (2 sub-rows).  Cursor col=0 → sub-row 0.
+        // above_visual=2, cursor_visual=2, visible=3 → no scroll needed (2 < 3).
+        // Mutations that wrongly compute sub-row as 1 push cursor_visual to 3 → spurious scroll.
+        // Kills: ln88 +→* (char_end=char_start*char_len: first chunk end=0 → cursor falls
+        //        through to last chunk → sub-row 1), ln89 ||→&& (both conditions needed:
+        //        last-chunk fallback fires at chunk 1 → sub-row 1),
+        //        ln89 <→== and <→> (cursor_col=0 never ==/>char_end → last fallback → sub-row 1).
+        let mut app = make_app_with_lines(&["a", "a", "aaaaa"]);
+        app.textarea
+            .move_cursor(tui_textarea::CursorMove::Jump(2, 0));
+        clamp_scroll(&mut app, make_editor_area(3), 5, 0);
+        assert_eq!(app.scroll_top, 0, "cursor in sub-row 0 must not trigger scroll");
+    }
+
+    #[test]
+    fn clamp_scroll_cursor_in_subrow1_exact() {
+        // Same layout; cursor col=3 → in second chunk ["aaa","aa"]: char_end of chunk 0 = 3,
+        // so cursor_col=3 is NOT < 3 → falls to chunk 1 → sub-row 1.
+        // cursor_visual=3, visible=3 → scroll.  headroom=1 → scroll_top=1.
+        // Kills: ln89 ==→!= (disables last-chunk fallback; sub-row stays 0 → no scroll → top=0),
+        //        ln89 <→<= (cursor_col=3 ≤ char_end=3 → sub-row 0 → no scroll → top=0).
+        let mut app = make_app_with_lines(&["a", "a", "aaaaa"]);
+        app.textarea
+            .move_cursor(tui_textarea::CursorMove::Jump(2, 3));
+        clamp_scroll(&mut app, make_editor_area(3), 5, 0);
+        assert_eq!(app.scroll_top, 1, "cursor in sub-row 1 must scroll to expose it");
+    }
+
+    #[test]
+    fn clamp_scroll_padding_affects_headroom() {
+        // 5 "aa" lines (1 row each at cw=2), cursor row 4, visible=6, bottom_padding=2.
+        // cursor_visual=4; 4+2=6 ≥ 6 → scroll.
+        // headroom = 6 − 1 − 0 − 2 = 3 → walk rows 3,2,1 → scroll_top=1.
+        // Kills: ln100 +→- (1+0-2 underflows usize in debug → panic),
+        //        ln100 +→* (1+0*2=1 → headroom=5 → walks all 4 rows → scroll_top=0).
+        let mut app = make_app_with_lines(&["aa"; 5]);
+        app.textarea
+            .move_cursor(tui_textarea::CursorMove::Jump(4, 0));
+        clamp_scroll(&mut app, make_editor_area(6), 4, 2);
+        assert_eq!(app.scroll_top, 1, "padding must reduce headroom correctly");
     }
 
     // ── get_selection_text tests ──────────────────────────────────────────────
@@ -403,6 +658,423 @@ mod tests {
         assert!(
             is_navigation_key(&k),
             "plain Up must remain a navigation key"
+        );
+    }
+
+    #[test]
+    fn ctrl_z_is_not_navigation_key() {
+        // Ctrl+Z is an edit key (undo), not navigation — no debounce skip.
+        let k = ctrl_key(KeyCode::Char('z'));
+        assert!(
+            !is_navigation_key(&k),
+            "Ctrl+Z must not be a navigation key"
+        );
+    }
+
+    #[test]
+    fn char_a_is_not_navigation_key() {
+        // Ordinary characters are not navigation keys.
+        let k = make_key(KeyCode::Char('a'));
+        assert!(!is_navigation_key(&k), "char 'a' must not be a navigation key");
+    }
+
+    // ── shell_init_str tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn shell_init_str_contains_function_declaration() {
+        let s = super::shell_init_str("bash");
+        assert!(s.contains("yame()"), "output must declare a yame() function");
+    }
+
+    #[test]
+    fn shell_init_str_contains_fd_fzf_guard() {
+        let s = super::shell_init_str("bash");
+        assert!(
+            s.contains("command -v fd") && s.contains("command -v fzf"),
+            "output must guard on fd and fzf availability"
+        );
+    }
+
+    #[test]
+    fn shell_init_str_uses_command_yame_passthrough() {
+        let s = super::shell_init_str("bash");
+        assert!(
+            s.contains("command yame"),
+            "output must use 'command yame' to bypass the wrapper"
+        );
+    }
+
+    #[test]
+    fn shell_init_str_tier2_includes_hidden_flag() {
+        let s = super::shell_init_str("zsh");
+        assert!(
+            s.contains("--hidden"),
+            "tier-2 search must include --hidden so dotfiles can be found"
+        );
+    }
+
+    #[test]
+    fn shell_init_str_excludes_correct_target_dir() {
+        // Must use -E "target" (correct), not -E "target/*" (wrong glob).
+        let s = super::shell_init_str("bash");
+        assert!(
+            s.contains(r#"-E "target""#),
+            r#"must exclude target directory with -E "target""#
+        );
+        assert!(
+            !s.contains(r#"-E "target/*""#),
+            r#"must NOT use the wrong glob form -E "target/*""#
+        );
+    }
+
+    #[test]
+    fn shell_init_str_fallback_prompts_before_creating() {
+        let s = super::shell_init_str("zsh");
+        assert!(
+            s.contains("printf"),
+            "fallback must display a prompt before creating a new file"
+        );
+        assert!(
+            s.contains("[y/N]"),
+            "fallback prompt must show [y/N] confirmation"
+        );
+    }
+
+    #[test]
+    fn shell_init_str_bash_and_zsh_produce_same_output() {
+        assert_eq!(
+            super::shell_init_str("bash"),
+            super::shell_init_str("zsh"),
+            "bash and zsh init output must be identical (single function body)"
+        );
+    }
+
+    // ── handle_pair_wrap: one test per pair character ────────────────────────
+
+    fn select_all(app: &mut App, len: usize) {
+        app.textarea.start_selection();
+        for _ in 0..len {
+            app.textarea.move_cursor(tui_textarea::CursorMove::Forward);
+        }
+    }
+
+    #[test]
+    fn pair_wrap_paren_wraps_selection() {
+        let mut app = make_app_with_lines(&["hi"]);
+        select_all(&mut app, 2);
+        handle_pair_wrap(&mut app, make_key(KeyCode::Char('(')));
+        assert_eq!(app.textarea.lines()[0], "(hi)");
+    }
+
+    #[test]
+    fn pair_wrap_brace_wraps_selection() {
+        let mut app = make_app_with_lines(&["hi"]);
+        select_all(&mut app, 2);
+        handle_pair_wrap(&mut app, make_key(KeyCode::Char('{')));
+        assert_eq!(app.textarea.lines()[0], "{hi}");
+    }
+
+    #[test]
+    fn pair_wrap_double_quote_wraps_selection() {
+        let mut app = make_app_with_lines(&["hi"]);
+        select_all(&mut app, 2);
+        handle_pair_wrap(&mut app, make_key(KeyCode::Char('"')));
+        assert_eq!(app.textarea.lines()[0], "\"hi\"");
+    }
+
+    #[test]
+    fn pair_wrap_single_quote_wraps_selection() {
+        let mut app = make_app_with_lines(&["hi"]);
+        select_all(&mut app, 2);
+        handle_pair_wrap(&mut app, make_key(KeyCode::Char('\'')));
+        assert_eq!(app.textarea.lines()[0], "'hi'");
+    }
+
+    #[test]
+    fn pair_wrap_backtick_wraps_selection() {
+        let mut app = make_app_with_lines(&["hi"]);
+        select_all(&mut app, 2);
+        handle_pair_wrap(&mut app, make_key(KeyCode::Char('`')));
+        assert_eq!(app.textarea.lines()[0], "`hi`");
+    }
+
+    #[test]
+    fn pair_wrap_underscore_wraps_selection() {
+        let mut app = make_app_with_lines(&["hi"]);
+        select_all(&mut app, 2);
+        handle_pair_wrap(&mut app, make_key(KeyCode::Char('_')));
+        assert_eq!(app.textarea.lines()[0], "_hi_");
+    }
+
+    // ── get_selection_text boundary tests ────────────────────────────────────
+
+    #[test]
+    fn get_selection_multiline_start_col_respected() {
+        // Selection begins mid-line. The col_start must be honoured so we only
+        // get characters from col_start onward for the first row.
+        let mut app = make_app_with_lines(&["abcde", "fghij"]);
+        // Move cursor to col 2 on row 0, then start selection from there
+        for _ in 0..2 {
+            app.textarea.move_cursor(tui_textarea::CursorMove::Forward);
+        }
+        app.textarea.start_selection();
+        // Extend to end of next line
+        app.textarea.move_cursor(tui_textarea::CursorMove::Down);
+        app.textarea.move_cursor(tui_textarea::CursorMove::End);
+        let text = get_selection_text(&app).unwrap_or_default();
+        assert!(
+            text.starts_with("cde"),
+            "first-row selection must start at col_start, got: {:?}",
+            text
+        );
+        assert!(!text.starts_with("ab"), "chars before col_start must be excluded");
+    }
+
+    #[test]
+    fn get_selection_multiline_end_col_respected() {
+        // Selection ends mid-line. The col_end must be honoured so we only get
+        // characters up to col_end for the last row.
+        let mut app = make_app_with_lines(&["abc", "defgh"]);
+        app.textarea.start_selection();
+        // Move to row 1, col 3 (selecting "abc\ndef")
+        app.textarea.move_cursor(tui_textarea::CursorMove::Down);
+        for _ in 0..3 {
+            app.textarea.move_cursor(tui_textarea::CursorMove::Forward);
+        }
+        let text = get_selection_text(&app).unwrap_or_default();
+        assert!(
+            text.ends_with("def"),
+            "last-row selection must end at col_end, got: {:?}",
+            text
+        );
+        assert!(
+            !text.contains('g'),
+            "chars after col_end must be excluded, got: {:?}",
+            text
+        );
+    }
+
+    #[test]
+    fn get_selection_multiline_no_trailing_newline() {
+        // The final row must NOT have a trailing '\n' even in a multiline selection.
+        let mut app = make_app_with_lines(&["abc", "def"]);
+        app.textarea.start_selection();
+        app.textarea.move_cursor(tui_textarea::CursorMove::Down);
+        app.textarea.move_cursor(tui_textarea::CursorMove::End);
+        let text = get_selection_text(&app).unwrap_or_default();
+        assert!(
+            !text.ends_with('\n'),
+            "selection must not have trailing newline, got: {:?}",
+            text
+        );
+    }
+
+    // ── clamp_scroll boundary tests ──────────────────────────────────────────
+
+    #[test]
+    fn clamp_scroll_cursor_at_exact_scroll_top_unchanged() {
+        // cursor_row == scroll_top: cursor is exactly at the top of the viewport.
+        // The `cursor_row < scroll_top` guard must NOT trigger here.
+        let mut app = make_app_with_lines(&["a"; 20]);
+        app.scroll_top = 3;
+        app.textarea
+            .move_cursor(tui_textarea::CursorMove::Jump(3, 0));
+        clamp_scroll(&mut app, make_editor_area(10), TEST_COL, 0);
+        assert_eq!(
+            app.scroll_top, 3,
+            "cursor == scroll_top must not scroll up"
+        );
+    }
+
+    #[test]
+    fn clamp_scroll_cursor_subrow_on_wrapped_line() {
+        // A long line (> column width) wraps into multiple visual rows.
+        // With cursor at the last character, cursor_subrow must be computed
+        // correctly so scroll_top advances by the right amount.
+        // TEST_COL=82 → cw=80. A 100-char line wraps into 2 visual rows.
+        let long = "x".repeat(100);
+        let mut lines: Vec<&str> = vec![long.as_str()];
+        lines.extend(std::iter::repeat("a").take(10));
+        let mut app = make_app_with_lines(&lines);
+        // Position cursor at char 99 (second wrapped sub-row of line 0).
+        app.textarea
+            .move_cursor(tui_textarea::CursorMove::Jump(0, 99));
+        // Viewport height=3, padding=1 → cursor_visual + 1 may exceed visible.
+        clamp_scroll(&mut app, make_editor_area(3), TEST_COL, 1);
+        // scroll_top stays 0 because line 0 is the first line — just assert no panic
+        // and that scroll_top hasn't gone negative.
+        assert_eq!(
+            app.scroll_top, 0,
+            "wrapped cursor on line 0 must not push scroll_top below 0"
+        );
+    }
+
+    #[test]
+    fn clamp_scroll_bottom_padding_exact_boundary() {
+        // Cursor at exactly visible_rows - bottom_padding - 1 should NOT scroll.
+        // Cursor at exactly visible_rows - bottom_padding should scroll.
+        // height=10, padding=3: cursor at row 6 (0-indexed) → cursor_visual=6 < 10-3=7 → no scroll
+        let mut app = make_app_with_lines(&["a"; 20]);
+        app.scroll_top = 0;
+        app.textarea
+            .move_cursor(tui_textarea::CursorMove::Jump(6, 0));
+        clamp_scroll(&mut app, make_editor_area(10), TEST_COL, 3);
+        assert_eq!(
+            app.scroll_top, 0,
+            "cursor at visible_rows - padding - 1 must not scroll"
+        );
+    }
+
+    // ── handle_key_event tests ───────────────────────────────────────────────
+
+    use super::input::{handle_key_event, KeyOutcome};
+
+    #[test]
+    fn handle_key_event_resets_free_scroll() {
+        let mut app = make_app();
+        app.free_scroll = true;
+        let k = make_key(KeyCode::Up);
+        handle_key_event(&mut app, k);
+        // Up key is a navigation key → goes through `_` arm → free_scroll cleared.
+        // (Ctrl+Up would set it back to true, but plain Up does not.)
+        assert!(!app.free_scroll, "any key press must clear free_scroll");
+    }
+
+    #[test]
+    fn handle_key_event_ctrl_s_returns_save() {
+        let mut app = make_app();
+        let k = ctrl_key(KeyCode::Char('s'));
+        assert_eq!(handle_key_event(&mut app, k), KeyOutcome::Save);
+    }
+
+    #[test]
+    fn handle_key_event_ctrl_x_clean_returns_exit() {
+        let mut app = make_app();
+        app.is_dirty = false;
+        let k = ctrl_key(KeyCode::Char('x'));
+        assert_eq!(handle_key_event(&mut app, k), KeyOutcome::Exit);
+    }
+
+    #[test]
+    fn handle_key_event_ctrl_x_dirty_shows_prompt() {
+        let mut app = make_app();
+        app.is_dirty = true;
+        let k = ctrl_key(KeyCode::Char('x'));
+        assert_eq!(handle_key_event(&mut app, k), KeyOutcome::Continue);
+        assert!(
+            matches!(app.status.mode, StatusMode::ExitPrompt),
+            "dirty Ctrl+X must raise ExitPrompt"
+        );
+    }
+
+    #[test]
+    fn handle_key_event_ctrl_r_returns_reload_config() {
+        let mut app = make_app();
+        let k = ctrl_key(KeyCode::Char('r'));
+        assert_eq!(handle_key_event(&mut app, k), KeyOutcome::ReloadConfig);
+    }
+
+    #[test]
+    fn handle_key_event_ctrl_z_undoes_and_sets_force_redecorate() {
+        let mut app = make_app_with_lines(&["hello"]);
+        // Type a character to have something to undo.
+        app.textarea
+            .input(crossterm::event::KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+        app.force_redecorate = false;
+        let k = ctrl_key(KeyCode::Char('z'));
+        let outcome = handle_key_event(&mut app, k);
+        assert_eq!(outcome, KeyOutcome::Continue);
+        assert!(app.force_redecorate, "Ctrl+Z must set force_redecorate");
+        assert!(
+            app.last_keystroke.is_some(),
+            "Ctrl+Z must set last_keystroke"
+        );
+    }
+
+    #[test]
+    fn handle_key_event_ctrl_y_redoes_and_sets_force_redecorate() {
+        let mut app = make_app_with_lines(&["hello"]);
+        app.force_redecorate = false;
+        let k = ctrl_key(KeyCode::Char('y'));
+        let outcome = handle_key_event(&mut app, k);
+        assert_eq!(outcome, KeyOutcome::Continue);
+        assert!(app.force_redecorate, "Ctrl+Y must set force_redecorate");
+    }
+
+    #[test]
+    fn handle_key_event_ctrl_up_scrolls_up_and_sets_free_scroll() {
+        let mut app = make_app_with_lines(&["a"; 10]);
+        app.scroll_top = 5;
+        let k = ctrl_key(KeyCode::Up);
+        handle_key_event(&mut app, k);
+        assert_eq!(app.scroll_top, 4, "Ctrl+Up must decrement scroll_top");
+        assert!(app.free_scroll, "Ctrl+Up must set free_scroll");
+    }
+
+    #[test]
+    fn handle_key_event_ctrl_up_saturates_at_zero() {
+        let mut app = make_app_with_lines(&["a"; 5]);
+        app.scroll_top = 0;
+        handle_key_event(&mut app, ctrl_key(KeyCode::Up));
+        assert_eq!(app.scroll_top, 0, "Ctrl+Up at top must not underflow");
+    }
+
+    #[test]
+    fn handle_key_event_ctrl_down_scrolls_down_and_sets_free_scroll() {
+        let mut app = make_app_with_lines(&["a"; 10]);
+        app.scroll_top = 0;
+        let k = ctrl_key(KeyCode::Down);
+        handle_key_event(&mut app, k);
+        assert_eq!(app.scroll_top, 1, "Ctrl+Down must increment scroll_top");
+        assert!(app.free_scroll, "Ctrl+Down must set free_scroll");
+    }
+
+    #[test]
+    fn handle_key_event_ctrl_down_saturates_at_last_line() {
+        let mut app = make_app_with_lines(&["a"; 3]);
+        app.scroll_top = 2; // already at max (len - 1 = 2)
+        handle_key_event(&mut app, ctrl_key(KeyCode::Down));
+        assert_eq!(app.scroll_top, 2, "Ctrl+Down at bottom must not exceed last line");
+    }
+
+    #[test]
+    fn handle_key_event_exit_prompt_y_returns_save_and_exit() {
+        let mut app = make_app();
+        app.is_dirty = true;
+        app.status.mode = StatusMode::ExitPrompt;
+        let outcome = handle_key_event(&mut app, make_key(KeyCode::Char('Y')));
+        assert_eq!(outcome, KeyOutcome::SaveAndExit);
+    }
+
+    #[test]
+    fn handle_key_event_exit_prompt_n_returns_exit() {
+        let mut app = make_app();
+        app.status.mode = StatusMode::ExitPrompt;
+        let outcome = handle_key_event(&mut app, make_key(KeyCode::Char('n')));
+        assert_eq!(outcome, KeyOutcome::Exit);
+    }
+
+    #[test]
+    fn handle_key_event_exit_prompt_esc_cancels_to_normal() {
+        let mut app = make_app();
+        app.status.mode = StatusMode::ExitPrompt;
+        let outcome = handle_key_event(&mut app, make_key(KeyCode::Esc));
+        assert_eq!(outcome, KeyOutcome::Continue);
+        assert!(
+            matches!(app.status.mode, StatusMode::Normal),
+            "Esc in exit prompt must restore Normal mode"
+        );
+    }
+
+    #[test]
+    fn handle_key_event_exit_prompt_unknown_key_continues() {
+        let mut app = make_app();
+        app.status.mode = StatusMode::ExitPrompt;
+        let outcome = handle_key_event(&mut app, make_key(KeyCode::Char('z')));
+        assert_eq!(outcome, KeyOutcome::Continue);
+        assert!(
+            matches!(app.status.mode, StatusMode::ExitPrompt),
+            "unknown key in exit prompt must not change mode"
         );
     }
 }

@@ -1,0 +1,139 @@
+# cargo-mutants configuration  https://mutants.rs/
+# Read by cargo-mutants v24+ from `.cargo/mutants.toml` (workspace root).
+# `mutants.toml` at the project root is a symlink to this file.
+
+# Multiply the measured baseline test time for per-mutant timeout.
+# 2× is comfortable for a small crate; tighten to 1.5 once the suite is fast.
+timeout_multiplier = 2.0
+
+# Hard floor so a cold cache doesn't time out on fast machines.
+minimum_test_timeout = 20
+
+# I/O-only functions are annotated with #[mutants::skip] directly in source
+# (see src/main.rs, src/app.rs, src/clipboard.rs, src/config.rs, src/renderer.rs,
+# src/input.rs).  No file-level exclusions needed — per-item annotations are more precise.
+#
+# Mutants that cannot be killed by any test are excluded here with an explanation.
+exclude_re = [
+    # Clipboard Ctrl+C / Ctrl+V match arms in handle_key_event: arboard requires a live
+    # display server (X11 / Wayland / macOS pasteboard), which is unavailable in CI.
+    # The underlying handle_copy / handle_paste are already annotated #[mutants::skip]
+    # in clipboard.rs for the same reason.
+    "delete match arm.*Char.'c'.*in handle_key_event",
+    "delete match arm.*Char.'v'.*in handle_key_event",
+
+    # Equivalent mutant: `KeyModifiers::CONTROL | KeyModifiers::ALT` and
+    # `KeyModifiers::CONTROL ^ KeyModifiers::ALT` produce the same bitmask (0x06)
+    # because the two flags occupy non-overlapping bits.  No test can observe a
+    # difference, so this mutant is structurally unkillable.
+    "replace \\| with \\^ in handle_pair_wrap",
+
+    # `chunk_end = char_start + ci + 1` in wrap_line's inner for-loop (renderer/mod.rs:75).
+    # The `+→*` mutations on this line are structurally unkillable: whenever
+    # `remaining_display > width` (the invariant for entering the inner loop) the
+    # break at line 71 (`chunk_end = char_start + ci`) always fires first and
+    # overwrites whatever line 75 last wrote.  The intermediate updates are dead.
+    "renderer/mod\\.rs:75:.*replace \\+ with \\*",
+
+    # `last_space = Some(char_start + ci)` on wrap_line's space-tracking line (renderer/mod.rs:77).
+    # `+→*`: when the first char of a chunk (ci=0) is a space, `char_start * 0 = 0` →
+    # next_start = 1, but char_start was already > 1 → walks backward → infinite loop.
+    "renderer/mod\\.rs:77:.*replace \\+ with \\*",
+
+    # `if chunk_end == char_start` pathological-wide-char guard (renderer/mod.rs:81).
+    # `==→!=` inverts the guard: pathological CJK chars (wider than width) fall into
+    # the normal path where break_at may equal char_start → chunk never advances →
+    # infinite loop.
+    "renderer/mod\\.rs:81:.*replace == with != in wrap_line",
+
+    # `next_start = sp + 1` in the soft-wrap break logic (renderer/mod.rs:96).
+    # `+→-`: when sp equals char_start, next_start = sp-1 < char_start → walks
+    # backward through previously consumed chars → infinite loop.
+    # `+→*`: sp*1 = sp → next_start = sp = char_start of same break → re-processes
+    # the same chunk forever → infinite loop.
+    "renderer/mod\\.rs:96:.*replace \\+ with [-*] in wrap_line",
+
+    # `2 * GUTTER` in clamp_scroll's content-width formula (commands.rs:66).
+    # `replace * with /` is equivalent when GUTTER=1: 2*1 == 2/1 == 2.
+    # No test can distinguish these two expressions with the current GUTTER value.
+    "commands\\.rs:66:.*replace \\* with /",
+
+    # `cursor_row < app.scroll_top` scroll-up guard (commands.rs:70).
+    # `replace < with <=`: when cursor_row == scroll_top the mutation executes
+    # `app.scroll_top = cursor_row`, which is a no-op (same value). No test can
+    # observe the difference.
+    "commands\\.rs:70:.*replace < with <=",
+
+    # `i + 1 == char_ranges.len()` last-segment fallback in the sub-row loop
+    # (commands.rs:89).  `replace + with *` changes this to `i == len`, which
+    # is never true inside the for-loop bounds.  This disables the fallback, but
+    # the fallback is only needed when cursor_col equals the line length exactly —
+    # a position TextArea does not produce in practice.
+    "commands\\.rs:89:.*replace \\+ with \\*",
+
+    # `char_start += 1` in wrap_line's pathological CJK path (renderer/mod.rs:90).
+    # The `*= 1` mutation is a no-op that leaves char_start at the same position
+    # forever → infinite loop / timeout.  The `-= 1` mutation IS caught by the
+    # wrap_cjk_pathological_single_col test (usize underflow → panic in debug).
+    "renderer/mod\\.rs:90:.*replace \\+= with \\*=",
+
+    # `i += 1` loop-advance in link_split_char_idx (decoration/words.rs:29).
+    # `i *= 1` is a no-op that leaves i = 0 forever → guaranteed infinite loop / timeout.
+    # All logic mutants in this function are caught by the words.rs test suite.
+    "decoration/words\\.rs:29:.*replace \\+= with \\*= in link_split_char_idx",
+
+    # `if block_end > pos { pos = block_end; }` in emit_content_around_existing
+    # (decoration/mod.rs:82).  `>→>=` is equivalent: when block_end == pos the
+    # assignment `pos = block_end` is a no-op (sets pos to itself).  No test can
+    # observe any difference.
+    "decoration/mod\\.rs:82:.*replace > with >= in emit_content_around_existing",
+
+    # `.filter(|s| s.char_end > range_start && s.char_start < range_end)` overlap
+    # guard in emit_content_around_existing (decoration/mod.rs:69).
+    #   · `>→>=` (col 40): admits spans where char_end == range_start (adjacent, not
+    #     overlapping).  The map-to-intersection on line 70 clamps this to a zero-width
+    #     block (range_start, range_start), which the subsequent gap-filling loop ignores
+    #     (`pos < block_start` is false; `block_end > pos` is false).  No cell changes.
+    #   · `<→<=` (col 70): admits spans where char_start == range_end (adjacent on the
+    #     right).  Same zero-width outcome: (range_end, range_end).  Unkillable.
+    "decoration/mod\\.rs:69:40:.*replace > with >=",
+    "decoration/mod\\.rs:69:70:.*replace < with <=",
+
+    # Note: `delete field` mutations in spans.rs:91-92 (is_blockquote, full_line_bg) are
+    # killed by add_byte_range_span_propagates_span_params_fields in decoration/mod.rs.
+    # cargo-mutants v27 `delete field` mutations cannot be excluded via exclude_re —
+    # they require an actual test with non-default SpanParams values.
+
+    # apply_selection_overlay: `visual_row < visible` in the outer while-loop.
+    # Column 22 is where `visual_row` starts in `while visual_row < visible && ...`.
+    # `<→<=` is equivalent: the inner for-loop's `if visual_row >= visible { break; }`
+    # fires immediately on the extra iteration, so no cell is ever written.
+    # Using :col: anchor (not :line:) because line numbers drift as comments are added.
+    "renderer/mod\\.rs:\\d+:22: replace < with <= in apply_selection_overlay",
+
+    # apply_selection_overlay: `row_sel_start < row_sel_end` inner if-guard.
+    # Column 34 is where `row_sel_start` starts in `if row_sel_start < row_sel_end`.
+    # `<→<=` is equivalent: when equal, x_start = GUTTER + ci + offset and
+    # x_end = GUTTER + offset (no ci term), so x_start >= x_end and the
+    # `for x in x_start..x_end` range is always empty — no cells are coloured.
+    "renderer/mod\\.rs:\\d+:34: replace < with <= in apply_selection_overlay",
+
+    # emit_bold_italic_spans early-return guard (decoration/mod.rs:127) and
+    # push-span guards (lines 147, 155, 163).  All are structurally unkillable
+    # for well-formed Markdown input:
+    #  · content_start > content_end: impossible — inner delimiters never invert the
+    #    content window for real `***` / `**_` syntax.
+    #  · content_start >= end_char_excl: impossible — content always precedes the
+    #    outer range end.
+    #  · `||→&&` on the combined guard: only observable if both conditions are
+    #    simultaneously true, which is also impossible.
+    #  · `>→>=` on the three push guards (lines 147/155/163): the equality cases
+    #    (content_start == start_char, content_end == content_start,
+    #    end_char_excl == content_end) require zero-width content or zero-width
+    #    delimiters — unreachable for any syntactically valid bold+italic span.
+    "decoration/mod\\.rs:127:.*replace \\|\\| with \\&\\& in emit_bold_italic_spans",
+    "decoration/mod\\.rs:127:22:.*replace > with .* in emit_bold_italic_spans",
+    "decoration/mod\\.rs:147:22:.*replace > with >= in emit_bold_italic_spans",
+    "decoration/mod\\.rs:155:20:.*replace > with >= in emit_bold_italic_spans",
+    "decoration/mod\\.rs:163:22:.*replace > with >= in emit_bold_italic_spans",
+]
