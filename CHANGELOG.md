@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [0.1.0-alpha.1] - 2026-05-25
 
 ### Added
+- feat: -h/--help flag and no-args help text (#115)
 - Todo items: indent continuation to text-start after full [ ] marker (#95)
 - v1.5: blockquote continuation indent on soft-wrapped lines (#39)
 - v1.5: tab character expansion on load (#40)

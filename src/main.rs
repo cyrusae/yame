@@ -24,17 +24,45 @@ fn setup_panic_hook() {
     }));
 }
 
+#[mutants::skip] // Prints to stdout and calls process::exit — not unit-testable.
+fn print_help() {
+    println!("yame — yet another markdown editor");
+    println!();
+    println!("USAGE");
+    println!("  yame <file>           Open <file> for editing (created if it doesn't exist)");
+    println!("  yame init             Print shell integration function (eval in .bashrc/.zshrc)");
+    println!("  yame write-config     Write default config to ~/.config/yame/config.toml");
+    println!("  yame --help           Show this help");
+    println!();
+    println!("KEYBINDINGS");
+    println!("  Ctrl+S  Save          Ctrl+Z  Undo        Ctrl+C  Copy selection");
+    println!("  Ctrl+X  Exit          Ctrl+Y  Redo        Ctrl+V  Paste");
+    println!("  Ctrl+R  Reload config");
+    println!("  Arrow keys · Home/End · PgUp/PgDn · mouse click / drag / scroll");
+    println!();
+    println!("CONFIG  ~/.config/yame/config.toml  (respects $XDG_CONFIG_HOME)");
+    println!();
+    println!("  https://github.com/cyrusae/yame");
+}
+
 #[mutants::skip] // Reads std::env::args() — side-effectful, not unit-testable.
 fn parse_args() -> Result<PathBuf, ()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    match args.len() {
-        1 => Ok(PathBuf::from(&args[0])),
+
+    if args.iter().any(|a| a == "-h" || a == "--help") {
+        print_help();
+        std::process::exit(0);
+    }
+
+    match args.as_slice() {
+        [] => {
+            print_help();
+            std::process::exit(0);
+        }
+        [path] => Ok(PathBuf::from(path)),
         _ => {
-            eprintln!("yame — yet another markdown editor\n");
-            eprintln!("Usage: yame <file.md>");
-            eprintln!("       Opens <file.md> for editing, creating it if it does not exist.");
-            eprintln!("\nNote: a file named exactly 'init' is a valid target; yame init");
-            eprintln!("      support is planned but not yet implemented.");
+            eprintln!("error: unexpected arguments");
+            eprintln!("Run 'yame --help' for usage.");
             Err(())
         }
     }
