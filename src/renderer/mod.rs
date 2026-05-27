@@ -182,6 +182,54 @@ pub fn wrap_char_ranges(line: &str, wrapped: &[&str]) -> Vec<(usize, usize)> {
     result
 }
 
+/// Find which visual subrow the cursor sits on within a soft-wrapped logical
+/// line.
+///
+/// Wraps `line` with [`wrap_line_indented`] using `(first_width, cont_width)`
+/// so the result matches what the renderer draws. Pass `cont_width ==
+/// first_width` for lines without a continuation indent.
+///
+/// Returns `(subrow_index, char_start_of_subrow, total_subrows)`.
+pub fn cursor_subrow_info(
+    line: &str,
+    cursor_col: usize,
+    first_width: usize,
+    cont_width: usize,
+) -> (usize, usize, usize) {
+    let wrapped = wrap_line_indented(line, first_width.max(1), cont_width.max(1));
+    let char_ranges = wrap_char_ranges(line, &wrapped);
+    let total = char_ranges.len().max(1);
+    for (i, &(char_start, char_len)) in char_ranges.iter().enumerate() {
+        if cursor_col < char_start + char_len || i + 1 == char_ranges.len() {
+            return (i, char_start, total);
+        }
+    }
+    (0, 0, total)
+}
+
+/// Find the logical char column for a given `(target_subrow, target_vcol)`
+/// within a soft-wrapped logical line.
+///
+/// `target_vcol` is the visual-column offset within the subrow (i.e. the
+/// sticky column from a vertical-navigation gesture).  Clamps to the last
+/// character of the subrow so the cursor never overshoots a short row.
+pub fn char_col_at_visual(
+    line: &str,
+    target_subrow: usize,
+    target_vcol: usize,
+    first_width: usize,
+    cont_width: usize,
+) -> usize {
+    let wrapped = wrap_line_indented(line, first_width.max(1), cont_width.max(1));
+    let char_ranges = wrap_char_ranges(line, &wrapped);
+    let last_idx = char_ranges.len().saturating_sub(1);
+    let (char_start, char_len) = char_ranges
+        .get(target_subrow)
+        .copied()
+        .unwrap_or_else(|| char_ranges.get(last_idx).copied().unwrap_or((0, 0)));
+    (char_start + target_vcol).min(char_start + char_len)
+}
+
 /// Blank columns on each side of the text content within the editor column.
 pub const GUTTER: u16 = 1;
 
@@ -541,9 +589,75 @@ mod tests {
             config_warnings: vec![],
             scroll_top: 0,
             free_scroll: false,
+            sticky_col: None,
+            content_width: 0,
             clipboard: None,
             initial_file_empty: false,
         }
+    }
+
+    // --- cursor_subrow_info ---
+
+    #[test]
+    fn subrow_info_unwrapped_line_is_subrow_zero() {
+        // "hello" fits in width 10; cursor at col 3 is on subrow 0.
+        let (sub, char_start, total) = cursor_subrow_info("hello", 3, 10, 10);
+        assert_eq!(sub, 0);
+        assert_eq!(char_start, 0);
+        assert_eq!(total, 1);
+    }
+
+    #[test]
+    fn subrow_info_cursor_on_first_visual_row() {
+        // "abcde fghij" with width 8 wraps: ["abcde", "fghij"]
+        // char_ranges = [(0,5),(6,5)]. Cursor at col 2 → subrow 0.
+        let (sub, char_start, total) = cursor_subrow_info("abcde fghij", 2, 8, 8);
+        assert_eq!(sub, 0);
+        assert_eq!(char_start, 0);
+        assert_eq!(total, 2);
+    }
+
+    #[test]
+    fn subrow_info_cursor_on_second_visual_row() {
+        // Same wrap; cursor at col 6 (first char of "fghij") → subrow 1.
+        let (sub, char_start, total) = cursor_subrow_info("abcde fghij", 6, 8, 8);
+        assert_eq!(sub, 1);
+        assert_eq!(char_start, 6);
+        assert_eq!(total, 2);
+    }
+
+    #[test]
+    fn subrow_info_empty_line_is_subrow_zero() {
+        let (sub, char_start, total) = cursor_subrow_info("", 0, 10, 10);
+        assert_eq!(sub, 0);
+        assert_eq!(char_start, 0);
+        assert_eq!(total, 1);
+    }
+
+    // --- char_col_at_visual ---
+
+    #[test]
+    fn char_col_at_visual_no_wrap() {
+        // Unwrapped line; subrow 0, vcol 3 → char col 3.
+        assert_eq!(char_col_at_visual("hello world", 0, 3, 20, 20), 3);
+    }
+
+    #[test]
+    fn char_col_at_visual_second_subrow() {
+        // "abcde fghij" width 8 → [(0,5),(6,5)]. Subrow 1, vcol 2 → char 8.
+        assert_eq!(char_col_at_visual("abcde fghij", 1, 2, 8, 8), 8);
+    }
+
+    #[test]
+    fn char_col_at_visual_clamps_to_end_of_subrow() {
+        // vcol=99 on a 5-char subrow starting at 0 → clamped to 5.
+        assert_eq!(char_col_at_visual("hello", 0, 99, 20, 20), 5);
+    }
+
+    #[test]
+    fn char_col_at_visual_clamps_to_last_subrow_when_index_oob() {
+        // target_subrow=5 on a 1-subrow line → falls back to subrow 0.
+        assert_eq!(char_col_at_visual("hi", 5, 0, 20, 20), 0);
     }
 
     // --- shorten_path ---

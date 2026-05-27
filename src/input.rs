@@ -261,7 +261,15 @@ pub(super) fn handle_key_event(
             KeyOutcome::Continue
         }
 
+        // Visual-line Up/Down: step by displayed row, not by logical line.
+        (KeyModifiers::NONE, KeyCode::Down) => handle_visual_move(app, true, false),
+        (KeyModifiers::NONE, KeyCode::Up) => handle_visual_move(app, false, false),
+        (KeyModifiers::SHIFT, KeyCode::Down) => handle_visual_move(app, true, true),
+        (KeyModifiers::SHIFT, KeyCode::Up) => handle_visual_move(app, false, true),
+
         _ => {
+            // Any non-vertical-nav key ends the sticky-column gesture.
+            app.sticky_col = None;
             app.status.dismiss();
             app.config_warnings.clear();
             let is_nav = is_navigation_key(&k);
@@ -284,6 +292,110 @@ pub(super) fn handle_key_event(
             KeyOutcome::Continue
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Visual-line navigation
+// ---------------------------------------------------------------------------
+
+/// Move the cursor one visual row up (`go_down = false`) or down (`go_down =
+/// true`), honouring soft-wrap so the cursor steps through displayed rows
+/// rather than jumping over wrapped text to the next logical line.
+///
+/// Uses `app.content_width` (kept current by the event loop) and
+/// `app.decoration_map` (for continuation-indent widths on list/blockquote
+/// lines) to use exactly the same wrapping as the renderer.
+///
+/// `app.sticky_col` is set on the first call of a vertical gesture and
+/// preserved on subsequent Up/Down presses; any other key clears it (see the
+/// `_` arm of `handle_key_event`).
+fn handle_visual_move(app: &mut App, go_down: bool, selecting: bool) -> KeyOutcome {
+    let cw = app.content_width;
+    if cw == 0 {
+        // Geometry not yet known (before first render); fall back to native.
+        let code = if go_down { KeyCode::Down } else { KeyCode::Up };
+        let mods = if selecting {
+            KeyModifiers::SHIFT
+        } else {
+            KeyModifiers::NONE
+        };
+        app.textarea
+            .input(crossterm::event::KeyEvent::new(code, mods));
+        app.recompute_dirty();
+        return KeyOutcome::Continue;
+    }
+
+    let (cur_row, cur_col) = app.textarea.cursor();
+    let lines = app.textarea.lines();
+
+    // Wrap widths for the current logical line (matches renderer).
+    let cur_ci = app
+        .decoration_map
+        .get(&cur_row)
+        .map(|decs| decs.iter().map(|s| s.continuation_indent).max().unwrap_or(0))
+        .unwrap_or(0) as usize;
+    let cur_cont = cw.saturating_sub(cur_ci).max(1);
+    let cur_line = lines.get(cur_row).map_or("", |s| s.as_str());
+
+    let (cur_subrow, cur_char_start, cur_total) =
+        renderer::cursor_subrow_info(cur_line, cur_col, cw, cur_cont);
+
+    // Establish (or recover) the sticky column for this gesture.
+    let vcol = *app.sticky_col.get_or_insert(cur_col - cur_char_start);
+
+    // Determine target (logical row, subrow-within-that-row).
+    let (tgt_row, tgt_subrow) = if go_down {
+        if cur_subrow + 1 < cur_total {
+            (cur_row, cur_subrow + 1)
+        } else if cur_row + 1 < lines.len() {
+            (cur_row + 1, 0)
+        } else {
+            return KeyOutcome::Continue; // already at last visual row
+        }
+    } else {
+        if cur_subrow > 0 {
+            (cur_row, cur_subrow - 1)
+        } else if cur_row > 0 {
+            let prev = cur_row - 1;
+            let prev_ci = app
+                .decoration_map
+                .get(&prev)
+                .map(|decs| decs.iter().map(|s| s.continuation_indent).max().unwrap_or(0))
+                .unwrap_or(0) as usize;
+            let prev_cont = cw.saturating_sub(prev_ci).max(1);
+            let prev_line = lines.get(prev).map_or("", |s| s.as_str());
+            let prev_total = renderer::wrap_line_indented(prev_line, cw, prev_cont)
+                .len()
+                .max(1);
+            (prev, prev_total - 1)
+        } else {
+            return KeyOutcome::Continue; // already at first visual row
+        }
+    };
+
+    // Convert (tgt_subrow, vcol) → logical char column in the target line.
+    let tgt_line = lines.get(tgt_row).map_or("", |s| s.as_str());
+    let tgt_ci = app
+        .decoration_map
+        .get(&tgt_row)
+        .map(|decs| decs.iter().map(|s| s.continuation_indent).max().unwrap_or(0))
+        .unwrap_or(0) as usize;
+    let tgt_cont = cw.saturating_sub(tgt_ci).max(1);
+    let tgt_col = renderer::char_col_at_visual(tgt_line, tgt_subrow, vcol, cw, tgt_cont);
+
+    // Apply or extend selection.
+    if selecting {
+        if app.textarea.selection_range().is_none() {
+            app.textarea.start_selection();
+        }
+    } else {
+        app.textarea.cancel_selection();
+    }
+
+    app.textarea
+        .move_cursor(CursorMove::Jump(tgt_row as u16, tgt_col as u16));
+    app.recompute_dirty();
+    KeyOutcome::Continue
 }
 
 // ---------------------------------------------------------------------------
@@ -340,6 +452,13 @@ pub(super) fn event_loop<B: ratatui::backend::Backend>(
             } else {
                 pre_layout.column
             };
+            // Keep content_width current so handle_visual_move wraps identically
+            // to the renderer.  Computed here (pre-draw) so it is valid before
+            // the first key event arrives.
+            app.content_width = (pre_editor_area.width as usize)
+                .saturating_sub(renderer::GUTTER as usize + renderer::GUTTER as usize)
+                .max(1);
+
             // Clamp is skipped while the user is free-scrolling (mouse wheel or
             // Ctrl+Up/Down).  free_scroll persists until a key press, mouse click,
             // drag, or terminal resize clears it (scroll and hover events do not).
@@ -527,6 +646,8 @@ mod tests {
             config_warnings: vec![],
             scroll_top: 0,
             free_scroll: false,
+            sticky_col: None,
+            content_width: 0,
             clipboard: None,
             initial_file_empty: false,
         }
@@ -578,5 +699,95 @@ mod tests {
             app.force_redecorate,
             "Enter adds a line — force_redecorate must be true"
         );
+    }
+
+    // ── Visual-line navigation ───────────────────────────────────────────────
+
+    fn nav_app(lines: Vec<&str>, content_width: usize) -> App {
+        let mut app = make_app();
+        app.content_width = content_width;
+        app.textarea = TextArea::new(lines.into_iter().map(String::from).collect());
+        app
+    }
+
+    // Down stays within the same logical line when it wraps.
+    // "abcde fghij" at width 8 wraps: first row "abcde" (cols 0-4),
+    // second row "fghij" (cols 6-10). Cursor at col 0 → Down → col 6.
+    #[test]
+    fn visual_down_within_wrapped_line() {
+        let mut app = nav_app(vec!["abcde fghij"], 8);
+        app.textarea.move_cursor(CursorMove::Jump(0, 0));
+        handle_key_event(&mut app, key(KeyCode::Down));
+        assert_eq!(app.textarea.cursor(), (0, 6), "Down must land on second visual row of same logical line");
+    }
+
+    // Up reverses the within-line move.
+    #[test]
+    fn visual_up_within_wrapped_line() {
+        let mut app = nav_app(vec!["abcde fghij"], 8);
+        app.textarea.move_cursor(CursorMove::Jump(0, 6));
+        handle_key_event(&mut app, key(KeyCode::Up));
+        assert_eq!(app.textarea.cursor(), (0, 0), "Up must return to first visual row of same logical line");
+    }
+
+    // Down on the last visual row of line 0 crosses to line 1.
+    #[test]
+    fn visual_down_crosses_logical_line() {
+        let mut app = nav_app(vec!["abc", "def"], 20);
+        app.textarea.move_cursor(CursorMove::Jump(0, 2));
+        handle_key_event(&mut app, key(KeyCode::Down));
+        assert_eq!(app.textarea.cursor(), (1, 2), "Down from last visual row must cross to next logical line");
+    }
+
+    // Up on the first visual row of line 1 crosses back to line 0.
+    #[test]
+    fn visual_up_crosses_logical_line() {
+        let mut app = nav_app(vec!["abc", "def"], 20);
+        app.textarea.move_cursor(CursorMove::Jump(1, 2));
+        handle_key_event(&mut app, key(KeyCode::Up));
+        assert_eq!(app.textarea.cursor(), (0, 2), "Up from first visual row must cross back to previous logical line");
+    }
+
+    // Sticky col is set on the first Down and preserved on the second, so
+    // moving through a short middle line restores the column on a longer line.
+    // Lines: ["abcde", "ab", "abcde"], width 20 (no wrapping).
+    // Cursor at (0, 4): Down → (1, 2) [clamped]; Down → (2, 4) [restored].
+    #[test]
+    fn sticky_col_preserved_through_short_line() {
+        let mut app = nav_app(vec!["abcde", "ab", "abcde"], 20);
+        app.textarea.move_cursor(CursorMove::Jump(0, 4));
+        handle_key_event(&mut app, key(KeyCode::Down));
+        assert_eq!(app.textarea.cursor(), (1, 2), "clamped to short line");
+        handle_key_event(&mut app, key(KeyCode::Down));
+        assert_eq!(app.textarea.cursor(), (2, 4), "sticky col must restore original column on longer line");
+    }
+
+    // Any non-vertical-nav key must clear sticky_col.
+    #[test]
+    fn sticky_col_cleared_by_non_vertical_key() {
+        let mut app = nav_app(vec!["abcde", "ab", "abcde"], 20);
+        app.textarea.move_cursor(CursorMove::Jump(0, 4));
+        handle_key_event(&mut app, key(KeyCode::Down)); // sets sticky_col = 4
+        assert!(app.sticky_col.is_some(), "sticky_col set after Down");
+        handle_key_event(&mut app, key(KeyCode::Right)); // non-vertical → clears
+        assert!(app.sticky_col.is_none(), "sticky_col must be cleared by Right");
+    }
+
+    // Down at the last line/row is a no-op (cursor stays put).
+    #[test]
+    fn visual_down_at_last_row_is_noop() {
+        let mut app = nav_app(vec!["abc"], 20);
+        app.textarea.move_cursor(CursorMove::Jump(0, 1));
+        handle_key_event(&mut app, key(KeyCode::Down));
+        assert_eq!(app.textarea.cursor(), (0, 1), "Down at last row must not move cursor");
+    }
+
+    // Up at the first row is a no-op.
+    #[test]
+    fn visual_up_at_first_row_is_noop() {
+        let mut app = nav_app(vec!["abc"], 20);
+        app.textarea.move_cursor(CursorMove::Jump(0, 1));
+        handle_key_event(&mut app, key(KeyCode::Up));
+        assert_eq!(app.textarea.cursor(), (0, 1), "Up at first row must not move cursor");
     }
 }

@@ -310,6 +310,8 @@ mod tests {
             config_warnings: vec![],
             scroll_top: 0,
             free_scroll: false,
+            sticky_col: None,
+            content_width: 0,
             clipboard: None,
             initial_file_empty: false,
         }

@@ -37,6 +37,16 @@ pub struct App {
     /// can pan freely without snapping back to the cursor.  Cleared at the top
     /// of every draw cycle regardless of whether it was set.
     pub free_scroll: bool,
+    /// The visual-column offset (within the current visual subrow) to aim for
+    /// while navigating Up/Down.  Set on the first arrow press of a vertical
+    /// gesture and preserved across subsequent Up/Down presses so the cursor
+    /// returns to its original column after passing through shorter lines.
+    /// Cleared by any non-vertical-nav key (see `handle_key_event`).
+    pub sticky_col: Option<usize>,
+    /// Content width in terminal columns (column_width − 2×GUTTER) as of the
+    /// last render frame.  Written by the event loop before dispatching each key
+    /// event so `handle_visual_move` can use the same wrapping the renderer used.
+    pub content_width: usize,
     /// Lazily-initialised system clipboard handle. `None` until the first copy/paste,
     /// then reused for the session to avoid reconnecting on every operation (expensive
     /// on Wayland where arboard opens a new display-server connection each time).
@@ -82,6 +92,8 @@ impl App {
             config_warnings,
             scroll_top: 0,
             free_scroll: false,
+            sticky_col: None,
+            content_width: 0,
             clipboard: None,
             initial_file_empty,
         })
@@ -227,6 +239,8 @@ mod tests {
             config_warnings: vec![],
             scroll_top: 0,
             free_scroll: false,
+            sticky_col: None,
+            content_width: 0,
             clipboard: None,
             initial_file_empty: false,
         }

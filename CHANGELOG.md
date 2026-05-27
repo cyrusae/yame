@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [0.1.0-alpha.1] - 2026-05-25
 
 ### Added
+- config: default to Nerd Font Powerline glyphs, add opt-out (#122)
 - feat: yame write-config — write commented default config to XDG path (#117)
 - feat: yame init — output shell wrapper function (eval-style) (#116)
 - feat: -h/--help flag and no-args help text (#115)
@@ -26,6 +27,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - v1 polish: italic startup warning, `delimiter_blend` config token, parent-dir creation on save (#35)
 
 ### Fixed
+- bug: bold/italic inside blockquote bleeds to full line (#120)
 - fix flaky italic env-var tests (#119)
 - investigate fenced code block beige color (#113)
 - bug: indented list items wrap as if not indented — text clips edge (#111)
@@ -52,6 +54,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Italic default color now matches text color (not accent blend) (#60)
 
 ### Changed
+- feat: visual-line Up/Down navigation (wrap-aware cursor movement) (#126)
+- docs: update README for recent feature changes (#123)
+- test: kill surviving mutants in supports_italic, wrap_line_indented, apply_selection_overlay (#124)
+- ui: Saved flash over second pill only with bg color (#121)
 - v0.1.0 version bump (#118)
 - planning: yame init + help flag + v0.1.0 pre-publish review (#114)
 - expand integration tests: strikethrough, links, rules, fenced, headings, template TOML (#102)
