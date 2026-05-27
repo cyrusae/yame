@@ -104,29 +104,19 @@ exclude_re = [
     # cargo-mutants v27 `delete field` mutations cannot be excluded via exclude_re —
     # they require an actual test with non-default SpanParams values.
 
-    # `2 * GUTTER` in apply_selection_overlay's content-width formula (renderer/mod.rs:346).
-    # `replace * with /` is equivalent when GUTTER=1: 2*1 == 2/1 == 2.
-    "renderer/mod\\.rs:346:.*replace \\* with /",
+    # apply_selection_overlay: `visual_row < visible` in the outer while-loop.
+    # Column 22 is where `visual_row` starts in `while visual_row < visible && ...`.
+    # `<→<=` is equivalent: the inner for-loop's `if visual_row >= visible { break; }`
+    # fires immediately on the extra iteration, so no cell is ever written.
+    # Using :col: anchor (not :line:) because line numbers drift as comments are added.
+    "renderer/mod\\.rs:\\d+:22: replace < with <= in apply_selection_overlay",
 
-    # apply_selection_overlay outer while-loop guards (renderer/mod.rs:355).
-    #   · `&&→||`: when visual_row ≥ visible the inner for-loop immediately `break`s
-    #     before writing any cells, and the outer `if log_row > sel_row_end { break; }`
-    #     guard fires before `view.lines[log_row]` is ever accessed, so no buffer change
-    #     or out-of-bounds access is possible.
-    #   · `<→<=` on visual_row (line 355:22): the inner for-loop's early-exit guard
-    #     (`if visual_row >= visible { break; }`) fires before any highlighting when
-    #     visual_row == visible, so no cell is ever set — same observable result.
-    #   · `<→<=` on log_row (line 355:43): when log_row == total the `if log_row >
-    #     sel_row_end { break; }` guard always fires first because sel_row_end < total,
-    #     so `view.lines[log_row]` is never accessed — no panic or buffer mutation.
-    "renderer/mod\\.rs:355:32:.*replace \\&\\& with \\|\\| in apply_selection_overlay",
-    "renderer/mod\\.rs:355:22:.*replace < with <= in apply_selection_overlay",
-    "renderer/mod\\.rs:355:43:.*replace < with <= in apply_selection_overlay",
-
-    # `if row_sel_start < row_sel_end` guard (renderer/mod.rs:404).
-    # `<→<=` allows row_sel_start == row_sel_end, but that makes x_start == x_end so
-    # the `for x in x_start..x_end` range is empty — no cells are set.  Unkillable.
-    "renderer/mod\\.rs:404:.*replace < with <= in apply_selection_overlay",
+    # apply_selection_overlay: `row_sel_start < row_sel_end` inner if-guard.
+    # Column 34 is where `row_sel_start` starts in `if row_sel_start < row_sel_end`.
+    # `<→<=` is equivalent: when equal, x_start = GUTTER + ci + offset and
+    # x_end = GUTTER + offset (no ci term), so x_start >= x_end and the
+    # `for x in x_start..x_end` range is always empty — no cells are coloured.
+    "renderer/mod\\.rs:\\d+:34: replace < with <= in apply_selection_overlay",
 
     # emit_bold_italic_spans early-return guard (decoration/mod.rs:127) and
     # push-span guards (lines 147, 155, 163).  All are structurally unkillable

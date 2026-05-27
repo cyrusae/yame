@@ -76,7 +76,8 @@ pub struct LayoutConfig {
     pub tab_width: Option<u16>,
     /// Use Powerline/Nerd Font filled-arrow glyphs (U+E0B0) in the status bar
     /// instead of the universal box-drawing separator `│`.
-    /// Requires a Nerd Font or Powerline-patched font. Default false.
+    /// Requires a Nerd Font or Powerline-patched font. Default true.
+    /// Set `powerline_glyphs = false` to opt out if your font lacks glyph U+E0B0.
     pub powerline_glyphs: Option<bool>,
 }
 
@@ -404,7 +405,7 @@ warning = "#f38ba8"   # dirty flag, warnings
 [layout]
 # min_cols         = 60     # minimum editing-column width in characters
 # tab_width        = 4      # spaces per tab character expanded on load
-# powerline_glyphs = false  # true requires a Nerd Font patched terminal font
+# powerline_glyphs = true   # set false to use the universal │ separator (no Nerd Font required)
 "##;
 
 pub fn config_path() -> PathBuf {
@@ -488,6 +489,13 @@ pub fn term_supports_italic(term: &str) -> bool {
 }
 
 /// Detect italic support from the current `$TERM` environment variable.
+///
+/// This is a thin shim that reads the process environment; the actual
+/// matching logic lives in [`term_supports_italic`], which is fully tested.
+/// Mutating *this* function's body (e.g. always returning `true`/`false`)
+/// cannot be caught by unit tests because the only call site is inside
+/// `run()`, which is `#[mutants::skip]`.
+#[mutants::skip]
 pub fn supports_italic() -> bool {
     term_supports_italic(&std::env::var("TERM").unwrap_or_default())
 }
@@ -653,6 +661,21 @@ mod tests {
             "DEFAULT_CONFIG_TEMPLATE failed to parse as Config: {:?}",
             result.err()
         );
+    }
+
+    /// powerline_glyphs is commented out in the template (None) so it defers
+    /// to the code default of `true`.  If it were accidentally uncommented as
+    /// `false` the default behaviour would silently break.
+    #[test]
+    fn default_template_powerline_glyphs_is_unset() {
+        let cfg: Config =
+            toml::from_str(DEFAULT_CONFIG_TEMPLATE).expect("template must be valid TOML");
+        assert_eq!(
+            cfg.layout.powerline_glyphs, None,
+            "template must leave powerline_glyphs unset so the code default (true) applies"
+        );
+        // Confirm the resolution: None → unwrap_or(true) → enabled.
+        assert!(cfg.layout.powerline_glyphs.unwrap_or(true));
     }
 
     /// The palette values embedded in the template must match Config::default()

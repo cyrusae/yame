@@ -208,7 +208,7 @@ fn run(file_path: PathBuf) -> io::Result<()> {
     );
 
     let tab_width = config.layout.tab_width.unwrap_or(4) as usize;
-    let powerline_glyphs = config.layout.powerline_glyphs.unwrap_or(false);
+    let powerline_glyphs = config.layout.powerline_glyphs.unwrap_or(true);
     let mut app = App::new(
         file_path,
         theme,

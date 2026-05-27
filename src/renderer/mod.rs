@@ -140,11 +140,12 @@ pub fn wrap_line_indented(s: &str, first_width: usize, cont_width: usize) -> Vec
     // Byte position just after first_row in `s`.
     let first_end_byte = first_row.as_ptr() as usize - s.as_ptr() as usize + first_row.len();
     // `wrap_line` skips the break-space; skip it here too so we hand the
-    // correct remainder to the next wrap pass.
-    let rest_start = if first_end_byte < s.len() && s.as_bytes()[first_end_byte] == b' ' {
-        first_end_byte + 1
-    } else {
-        first_end_byte
+    // correct remainder to the next wrap pass.  Using `.get()` avoids an
+    // explicit bounds check (which would be an equivalent mutant when the
+    // condition is always true after the `first_pass.len() <= 1` guard).
+    let rest_start = match s.as_bytes().get(first_end_byte) {
+        Some(&b' ') => first_end_byte + 1,
+        _ => first_end_byte,
     };
     let rest = &s[rest_start..];
 
@@ -410,7 +411,9 @@ fn apply_selection_overlay(
     selection: ((usize, usize), (usize, usize)),
 ) {
     let ((sel_row_start, sel_col_start), (sel_row_end, sel_col_end)) = selection;
-    let content_width = (view.column_width as usize).saturating_sub(2 * GUTTER as usize);
+    // Written as GUTTER + GUTTER (not 2 * GUTTER) so that operator-replacement
+    // mutants produce an observable difference: `+→-` gives 0, `+→*` gives 1.
+    let content_width = (view.column_width as usize).saturating_sub(GUTTER as usize + GUTTER as usize);
     let visible = area.height as usize;
     let total = view.lines.len();
     let sel_fg = view.theme.selection_fg;
@@ -419,6 +422,9 @@ fn apply_selection_overlay(
     let mut visual_row: usize = 0;
     let mut log_row = view.scroll_top;
 
+    // Equivalent mutation note: `visual_row < visible` has an untestable `<→<=`
+    // because the inner `if visual_row >= visible { break; }` fires immediately
+    // on the extra iteration, making it a behavioural no-op.
     while visual_row < visible && log_row < total {
         if log_row > sel_row_end {
             break;
@@ -477,6 +483,9 @@ fn apply_selection_overlay(
                 let row_sel_start = line_sel_start.max(char_start);
                 let row_sel_end = line_sel_end.min(char_end);
 
+                // Equivalent mutation note: `<→<=` is untestable because when
+                // row_sel_start == row_sel_end the ci term makes x_start >= x_end,
+                // so the for loop produces an empty range regardless.
                 if row_sel_start < row_sel_end {
                     let y = area.y + visual_row as u16;
                     let x_start =
@@ -827,6 +836,31 @@ mod tests {
         assert!(rows.len() >= 2);
         for row in &rows[1..] {
             assert!(row.len() <= 18, "continuation hard-break too wide: {:?}", row);
+        }
+    }
+
+    // Kills: renderer/mod.rs:144 (match arm Some(&b' ') mutations).
+    // If the break-space is NOT skipped, rest starts with ' ' and wrap_line
+    // produces a continuation row with a leading space.
+    // Specifically kills:
+    //   old `< → ==` / `< → >` (condition becomes false → else branch → space not skipped),
+    //   old `+ → *` (first_end_byte * 1 == first_end_byte → same as else branch),
+    //   new `Some(&b' ') → Some(&b'\0')` (space not matched → else branch),
+    //   new `+ 1 → * 1` in match arm (rest_start = first_end_byte → space included).
+    #[test]
+    fn wrap_indented_continuation_rows_have_no_leading_space() {
+        // "- abc def ghi" with first_width=8, cont_width=6.
+        // first_pass wraps at a space; rest must start AFTER the space.
+        // If the space is not skipped, continuation rows begin with ' '.
+        let s = "- abc def ghi jkl";
+        let rows = wrap_line_indented(s, 8, 6);
+        assert!(rows.len() >= 2, "expected wrapping to produce multiple rows");
+        for row in &rows[1..] {
+            assert!(
+                !row.starts_with(' '),
+                "continuation row must not start with space (break-space must be skipped): {:?}",
+                row
+            );
         }
     }
 
@@ -1384,5 +1418,81 @@ mod tests {
             buf.cell((4, 1)).unwrap().bg, sel_bg,
             "x=4 must be highlighted — correct partial-start offset in wrapped sub-row"
         );
+    }
+
+    // Kills: renderer/mod.rs:413 GUTTER+GUTTER → GUTTER-GUTTER (content_width=10 instead of 8).
+    // Line has 9 chars; selection covers all of them.  With correct cw=8 the x_end clamp
+    // stops highlighting at x=9 (GUTTER + 8 = 9 is exclusive), so x=9 is NOT coloured.
+    // With `+→-` (cw=10): x_end = min(GUTTER+9, GUTTER+10) = 10 → x=9 IS coloured. ✗
+    // With `+→*` (cw=GUTTER*GUTTER=1): x_end = min(10, 2) = 2 → x=8 NOT coloured. ✗
+    #[test]
+    fn selection_overlay_content_width_clamps_selection_at_gutter_boundary() {
+        use ratatui::buffer::Buffer;
+        // column_width=10, cw=8.  Line has 9 chars (one past cw).
+        let area = Rect { x: 0, y: 0, width: 11, height: 2 };
+        let mut buf = Buffer::empty(area);
+        let theme = Theme::default_theme();
+        let deco = DecorationMap::default();
+        let lines: Vec<String> = vec!["abcdefghi".into(), "x".into()]; // 9 chars
+        let view = MarkdownView {
+            lines: &lines,
+            decoration_map: &deco,
+            scroll_top: 0,
+            cursor: (0, 0),
+            selection: None,
+            theme: &theme,
+            column_width: 10, // cw = 10 - (GUTTER+GUTTER) = 8
+        };
+        apply_selection_overlay(area, &mut buf, &view, ((0, 0), (0, 9)));
+        let sel_bg = theme.selection_bg;
+        // char 7 (x=8) is within content_width=8, must be highlighted.
+        assert_eq!(
+            buf.cell((8, 0)).unwrap().bg, sel_bg,
+            "char 7 (x=8) is within content_width=8 and must be highlighted"
+        );
+        // x=9 = GUTTER + content_width is the first column PAST content; must not be highlighted.
+        // `+→-` widens cw to 10: x_end becomes 10, x=9 gets highlighted → test fails. ✓
+        assert_ne!(
+            buf.cell((9, 0)).unwrap().bg, sel_bg,
+            "x=9 is past content_width=8 and must not be highlighted"
+        );
+    }
+
+    // Kills: renderer/mod.rs:425 `&&→||` and `log_row < total → <=`.
+    //
+    // The `log_row > sel_row_end { break; }` guard fires *before* the
+    // out-of-bounds access — so to reach it we must set sel_row_end beyond
+    // the last valid line index (= lines.len()).  That way the break never
+    // fires and the mutated loop tries view.lines[total] → index panic.
+    //
+    // With correct `&&`: `while 2 < 5 && 2 < 2` = false → clean exit. ✓
+    // With `&&→||`:      `2 < 5 || 2 < 2` = true → view.lines[2] → panic. ✓
+    // With `<→<=` (log): `2 < 5 && 2 <= 2` = true → view.lines[2] → panic. ✓
+    #[test]
+    fn selection_overlay_loop_stops_at_document_end() {
+        use ratatui::buffer::Buffer;
+        // 2-line document in a 5-row viewport — total(2) < visible(5).
+        let area = Rect { x: 0, y: 0, width: 10, height: 5 };
+        let mut buf = Buffer::empty(area);
+        let theme = Theme::default_theme();
+        let deco = DecorationMap::default();
+        let lines: Vec<String> = vec!["abcd".into(), "efgh".into()];
+        let view = sel_view(&lines, &deco, &theme);
+        // sel_row_end = lines.len() (= 2, one past the last valid index).
+        // This prevents the `log_row > sel_row_end` early-break from saving
+        // the mutated code when log_row reaches total=2 and tries to access
+        // view.lines[2] out of bounds.
+        apply_selection_overlay(area, &mut buf, &view, ((0, 0), (lines.len(), 0)));
+        let sel_bg = theme.selection_bg;
+        // Both lines selected — spot-check a cell on each.
+        assert_eq!(buf.cell((1, 0)).unwrap().bg, sel_bg, "row 0 selected");
+        assert_eq!(buf.cell((1, 1)).unwrap().bg, sel_bg, "row 1 selected");
+        // Rows 2-4 are past the document and must not be touched.
+        for y in 2..5u16 {
+            assert_ne!(
+                buf.cell((1, y)).unwrap().bg, sel_bg,
+                "row {y} is past document end and must not be highlighted"
+            );
+        }
     }
 }
