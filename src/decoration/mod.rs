@@ -657,14 +657,22 @@ pub fn build_decoration_map(
                 );
 
                 let indicator_style = Style::default().fg(theme.muted);
-                let content_style = Style::default().fg(theme.blockquote_color);
 
                 for line in start_line..=end_line {
                     let line_len = line_char_len(&line_starts, text, line);
                     if line_len == 0 {
                         continue;
                     }
-                    // ▌ indicator at char 0 (covers the `>` char visually)
+                    // ▌ indicator at char 0 (covers the `>` char visually).
+                    //
+                    // The rest of the line is intentionally left unspanned so that inline
+                    // decorations (bold, italic, code, links) emit their own spans without
+                    // a wide content span blocking `emit_content_around_existing`.
+                    //
+                    // The renderer detects `is_blockquote` on this indicator span and
+                    // applies `theme.blockquote_color` as the default fg for any
+                    // undecorated text on the line, preserving the blockquote visual style
+                    // while letting inline markup render at its own correct colors.
                     push_span(
                         &mut map,
                         line,
@@ -679,21 +687,6 @@ pub fn build_decoration_map(
                             ..Default::default()
                         },
                     );
-                    // rest of line content
-                    if line_len > 1 {
-                        push_span(
-                            &mut map,
-                            line,
-                            StyledSpan {
-                                char_start: 1,
-                                char_end: line_len,
-                                style: content_style,
-                                is_blockquote: true,
-                                continuation_indent: 2,
-                                ..Default::default()
-                            },
-                        );
-                    }
                 }
             }
 
@@ -1526,6 +1519,72 @@ mod tests {
         );
     }
 
+    #[test]
+    fn blockquote_plain_text_has_only_indicator_span() {
+        // With no inline markup, only the indicator span (0..1) should exist.
+        // Undecorated text gets blockquote_color from the renderer's default style.
+        let text = "> just text";
+        let map = build_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        assert_eq!(
+            spans.len(),
+            1,
+            "plain blockquote should have exactly one span (the indicator); got {spans:?}"
+        );
+        assert_eq!(spans[0].char_start, 0);
+        assert_eq!(spans[0].char_end, 1);
+    }
+
+    /// Regression test for #120: bold inside a blockquote must emit a span with
+    /// `bold_color + BOLD`.  Before the fix, the wide content span (char 1..N) that
+    /// blockquotes used to emit blocked `emit_content_around_existing`, preventing
+    /// the bold content span from being placed at all.
+    #[test]
+    fn blockquote_bold_emits_bold_color_span() {
+        let text = "> **bold**";
+        let theme = make_theme();
+        let map = build_map(text, &theme, true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.style.fg == Some(theme.bold_color)
+                    && s.style.add_modifier.contains(Modifier::BOLD)),
+            "bold inside blockquote must produce a span with bold_color + BOLD"
+        );
+    }
+
+    /// Regression test for #120: `add_modifier_to_existing` used to apply BOLD to
+    /// the wide content span (char 1..N), making the **entire** blockquote line render
+    /// bold — including text before and after the `**` delimiters.
+    #[test]
+    fn blockquote_bold_does_not_bleed_full_line() {
+        let text = "> text **bold** text";
+        let map = build_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        // No span rooted at char 1 (the old wide content span start) should carry BOLD.
+        assert!(
+            !spans
+                .iter()
+                .any(|s| s.char_start == 1 && s.style.add_modifier.contains(Modifier::BOLD)),
+            "BOLD must not bleed onto a span starting at char 1 (regression #120)"
+        );
+    }
+
+    /// Same regression guard as above, for italic.
+    #[test]
+    fn blockquote_italic_does_not_bleed_full_line() {
+        let text = "> text *italic* text";
+        let map = build_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        assert!(
+            !spans
+                .iter()
+                .any(|s| s.char_start == 1 && s.style.add_modifier.contains(Modifier::ITALIC)),
+            "ITALIC must not bleed onto a span starting at char 1 (regression #120)"
+        );
+    }
+
     // ---- g. Links ----
 
     #[test]
@@ -1873,16 +1932,23 @@ mod tests {
         );
     }
 
-    // ---- Blockquote content span ----
+    // ---- Blockquote span structure (post-#120 fix) ----
+    //
+    // The wide content span (char 1..N) was removed so inline decorations (bold,
+    // italic, etc.) can emit correctly inside blockquotes.  Only the indicator
+    // span (0..1) is emitted; the renderer uses its `is_blockquote` flag to apply
+    // `blockquote_color` as the default fg for undecorated text on the line.
 
     #[test]
-    fn blockquote_content_span_has_is_blockquote() {
+    fn blockquote_only_indicator_carries_is_blockquote() {
+        // After the #120 fix, the indicator (0..1) is the only blockquote span.
+        // No wide content span at char_start >= 1 should exist.
         let text = "> quoted text";
         let map = build_map(text, &make_theme(), true);
         let spans = map.get(&0).expect("line 0 should have spans");
         assert!(
-            spans.iter().any(|s| s.is_blockquote && s.char_start >= 1),
-            "blockquote content span must have is_blockquote=true"
+            !spans.iter().any(|s| s.is_blockquote && s.char_start >= 1),
+            "no wide content span (char_start >= 1, is_blockquote) should exist after #120 fix"
         );
     }
 
@@ -1898,19 +1964,6 @@ mod tests {
                 .iter()
                 .any(|s| s.is_blockquote && s.char_start == 0 && s.continuation_indent == 2),
             "blockquote indicator span must have continuation_indent=2"
-        );
-    }
-
-    #[test]
-    fn blockquote_content_span_has_continuation_indent_2() {
-        let text = "> quoted text";
-        let map = build_map(text, &make_theme(), true);
-        let spans = map.get(&0).expect("line 0 should have spans");
-        assert!(
-            spans
-                .iter()
-                .any(|s| s.is_blockquote && s.char_start >= 1 && s.continuation_indent == 2),
-            "blockquote content span must have continuation_indent=2"
         );
     }
 

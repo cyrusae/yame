@@ -155,6 +155,44 @@ fn parse_args() -> Result<Command, ()> {
     }
 }
 
+#[mutants::skip] // Filesystem + stdin I/O — not unit-testable.
+fn run_write_config() {
+    use std::io::Write;
+    use yame::config::{DEFAULT_CONFIG_TEMPLATE, config_path};
+
+    let path = config_path();
+
+    if path.exists() {
+        print!(
+            "Config already exists at {}.\nOverwrite? [y/N] ",
+            path.display()
+        );
+        let _ = io::stdout().flush();
+        let mut input = String::new();
+        if io::stdin().read_line(&mut input).is_err() {
+            eprintln!("error: could not read input");
+            std::process::exit(1);
+        }
+        if !input.trim().eq_ignore_ascii_case("y") {
+            println!("Aborted — config unchanged.");
+            return;
+        }
+    }
+
+    if let Some(dir) = path.parent() && let Err(e) = std::fs::create_dir_all(dir) {
+        eprintln!("error: could not create config directory: {e}");
+        std::process::exit(1);
+    }
+
+    match std::fs::write(&path, DEFAULT_CONFIG_TEMPLATE) {
+        Ok(()) => println!("Config written to {}", path.display()),
+        Err(e) => {
+            eprintln!("error: could not write config: {e}");
+            std::process::exit(1);
+        }
+    }
+}
+
 #[mutants::skip] // Full terminal I/O orchestration — not unit-testable.
 fn run(file_path: PathBuf) -> io::Result<()> {
     setup_panic_hook();
@@ -230,9 +268,7 @@ fn main() {
             println!("{}", shell_init_str(&shell_name));
         }
         Command::WriteConfig => {
-            eprintln!("error: 'yame write-config' is not yet available in this release");
-            eprintln!("It will be implemented in a future update.");
-            std::process::exit(1);
+            run_write_config();
         }
     }
 }

@@ -354,7 +354,7 @@ impl Theme {
 /// All values shown are the Catppuccin Mocha defaults.  The `[theme]`,
 /// `[headings]`, and `[layout]` sections are fully commented out — uncomment
 /// any line to override the derived default.
-const DEFAULT_CONFIG_TEMPLATE: &str = r##"# yame configuration — ~/.config/yame/config.toml
+pub const DEFAULT_CONFIG_TEMPLATE: &str = r##"# yame configuration — ~/.config/yame/config.toml
 # Reload in-app at any time with Ctrl+R.
 #
 # All values shown are the Catppuccin Mocha defaults.
@@ -469,11 +469,13 @@ pub fn load_config() -> (Config, Vec<String>) {
     }
 }
 
-/// Detect italic support from $TERM.
-pub fn supports_italic() -> bool {
-    let term = std::env::var("TERM").unwrap_or_default();
+/// Returns true if the given `term` string indicates italic support.
+///
+/// Separated from env reading so the logic can be unit-tested without
+/// touching `$TERM` and causing parallel-test races.
+pub fn term_supports_italic(term: &str) -> bool {
     matches!(
-        term.as_str(),
+        term,
         "xterm-256color"
             | "tmux-256color"
             | "screen-256color"
@@ -483,6 +485,11 @@ pub fn supports_italic() -> bool {
             | "wezterm"
             | "foot"
     ) || term.starts_with("xterm-kitty")
+}
+
+/// Detect italic support from the current `$TERM` environment variable.
+pub fn supports_italic() -> bool {
+    term_supports_italic(&std::env::var("TERM").unwrap_or_default())
 }
 
 // ---------------------------------------------------------------------------
@@ -611,32 +618,27 @@ mod tests {
 
     #[test]
     fn italic_unsupported_for_dumb_term() {
-        let old = std::env::var("TERM").ok();
-        // SAFETY: single-threaded test context.
-        unsafe { std::env::set_var("TERM", "dumb") };
-        let result = supports_italic();
-        unsafe {
-            match old {
-                Some(v) => std::env::set_var("TERM", v),
-                None => std::env::remove_var("TERM"),
-            }
-        }
-        assert!(!result);
+        assert!(!term_supports_italic("dumb"));
+    }
+
+    #[test]
+    fn italic_unsupported_for_empty_term() {
+        assert!(!term_supports_italic(""));
     }
 
     #[test]
     fn italic_supported_for_xterm_256() {
-        let old = std::env::var("TERM").ok();
-        // SAFETY: single-threaded test context.
-        unsafe { std::env::set_var("TERM", "xterm-256color") };
-        let result = supports_italic();
-        unsafe {
-            match old {
-                Some(v) => std::env::set_var("TERM", v),
-                None => std::env::remove_var("TERM"),
-            }
-        }
-        assert!(result);
+        assert!(term_supports_italic("xterm-256color"));
+    }
+
+    #[test]
+    fn italic_supported_for_kitty() {
+        assert!(term_supports_italic("kitty"));
+    }
+
+    #[test]
+    fn italic_supported_for_xterm_kitty_prefix() {
+        assert!(term_supports_italic("xterm-kitty"));
     }
 
     // --- DEFAULT_CONFIG_TEMPLATE ---

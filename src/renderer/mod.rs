@@ -323,7 +323,23 @@ impl Widget for MarkdownView<'_> {
                     }
                 } else {
                     use unicode_width::UnicodeWidthChar;
-                    let row_default = default_style.bg(line_bg);
+                    // Blockquote lines: use blockquote_color as the default fg for any
+                    // undecorated text. The wide content span was removed from the
+                    // decoration pipeline (fix for #120) so that inline markup (bold,
+                    // italic, etc.) can emit their own correctly-colored spans. The
+                    // renderer restores the blockquote color here for plain text gaps.
+                    // Read from `line_decs` (all logical spans), not `row_spans` (filtered
+                    // to the visual row's char range), so continuation rows also apply it.
+                    let is_blockquote_line = line_decs
+                        .map(|decs| decs.iter().any(|s| s.is_blockquote))
+                        .unwrap_or(false);
+                    let row_default = if is_blockquote_line {
+                        Style::default()
+                            .fg(self.theme.blockquote_color)
+                            .bg(line_bg)
+                    } else {
+                        default_style.bg(line_bg)
+                    };
                     let segments = split_into_spans(row_str, &row_spans, row_default);
                     let mut x = area.x + GUTTER + continuation_indent;
                     for span in &segments {

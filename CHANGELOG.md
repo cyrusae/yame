@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [0.1.0-alpha.1] - 2026-05-25
 
 ### Added
+- feat: yame write-config — write commented default config to XDG path (#117)
 - feat: yame init — output shell wrapper function (eval-style) (#116)
 - feat: -h/--help flag and no-args help text (#115)
 - Todo items: indent continuation to text-start after full [ ] marker (#95)
@@ -25,6 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - v1 polish: italic startup warning, `delimiter_blend` config token, parent-dir creation on save (#35)
 
 ### Fixed
+- fix flaky italic env-var tests (#119)
 - investigate fenced code block beige color (#113)
 - bug: indented list items wrap as if not indented — text clips edge (#111)
 - Wide char (CJK) scroll redraw artifact — gap fills with stale content from above (#71)
@@ -50,6 +52,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Italic default color now matches text color (not accent blend) (#60)
 
 ### Changed
+- v0.1.0 version bump (#118)
+- planning: yame init + help flag + v0.1.0 pre-publish review (#114)
 - expand integration tests: strikethrough, links, rules, fenced, headings, template TOML (#102)
 - chore: replace duplicate mutants.toml with symlink to .cargo/mutants.toml (#112)
 - mutant triage: skip annotations + handle_pair_wrap fix + backlog issues (#106)
