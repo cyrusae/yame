@@ -173,10 +173,7 @@ pub(super) fn handle_pair_wrap(app: &mut App, k: crossterm::event::KeyEvent) -> 
 /// perform next. File writes, config reloads, and loop termination are the
 /// responsibility of the caller (`event_loop`).  This separation makes the
 /// entire key-dispatch path unit-testable without a real terminal or filesystem.
-pub(super) fn handle_key_event(
-    app: &mut App,
-    k: crossterm::event::KeyEvent,
-) -> KeyOutcome {
+pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> KeyOutcome {
     // Any key press re-engages cursor-clamping scroll.
     // Ctrl+Up/Down immediately override this below by setting free_scroll = true again.
     app.free_scroll = false;
@@ -200,11 +197,11 @@ pub(super) fn handle_key_event(
 
     // ── Normal editing mode ─────────────────────────────────────────────────
     match (k.modifiers, k.code) {
-        (KeyModifiers::CONTROL, KeyCode::Char('s'))
-        | (KeyModifiers::SUPER, KeyCode::Char('s')) => KeyOutcome::Save,
+        (KeyModifiers::CONTROL, KeyCode::Char('s')) | (KeyModifiers::SUPER, KeyCode::Char('s')) => {
+            KeyOutcome::Save
+        }
 
-        (KeyModifiers::CONTROL, KeyCode::Char('x'))
-        | (KeyModifiers::NONE, KeyCode::Esc) => {
+        (KeyModifiers::CONTROL, KeyCode::Char('x')) | (KeyModifiers::NONE, KeyCode::Esc) => {
             if handle_exit(app) {
                 KeyOutcome::Exit
             } else {
@@ -212,14 +209,12 @@ pub(super) fn handle_key_event(
             }
         }
 
-        (KeyModifiers::CONTROL, KeyCode::Char('c'))
-        | (KeyModifiers::SUPER, KeyCode::Char('c')) => {
+        (KeyModifiers::CONTROL, KeyCode::Char('c')) | (KeyModifiers::SUPER, KeyCode::Char('c')) => {
             yame::clipboard::handle_copy(app);
             KeyOutcome::Continue
         }
 
-        (KeyModifiers::CONTROL, KeyCode::Char('v'))
-        | (KeyModifiers::SUPER, KeyCode::Char('v')) => {
+        (KeyModifiers::CONTROL, KeyCode::Char('v')) | (KeyModifiers::SUPER, KeyCode::Char('v')) => {
             yame::clipboard::handle_paste(app);
             app.force_redecorate = true;
             KeyOutcome::Continue
@@ -332,7 +327,12 @@ fn handle_visual_move(app: &mut App, go_down: bool, selecting: bool) -> KeyOutco
     let cur_ci = app
         .decoration_map
         .get(&cur_row)
-        .map(|decs| decs.iter().map(|s| s.continuation_indent).max().unwrap_or(0))
+        .map(|decs| {
+            decs.iter()
+                .map(|s| s.continuation_indent)
+                .max()
+                .unwrap_or(0)
+        })
         .unwrap_or(0) as usize;
     let cur_cont = cw.saturating_sub(cur_ci).max(1);
     let cur_line = lines.get(cur_row).map_or("", |s| s.as_str());
@@ -360,7 +360,12 @@ fn handle_visual_move(app: &mut App, go_down: bool, selecting: bool) -> KeyOutco
             let prev_ci = app
                 .decoration_map
                 .get(&prev)
-                .map(|decs| decs.iter().map(|s| s.continuation_indent).max().unwrap_or(0))
+                .map(|decs| {
+                    decs.iter()
+                        .map(|s| s.continuation_indent)
+                        .max()
+                        .unwrap_or(0)
+                })
                 .unwrap_or(0) as usize;
             let prev_cont = cw.saturating_sub(prev_ci).max(1);
             let prev_line = lines.get(prev).map_or("", |s| s.as_str());
@@ -378,7 +383,12 @@ fn handle_visual_move(app: &mut App, go_down: bool, selecting: bool) -> KeyOutco
     let tgt_ci = app
         .decoration_map
         .get(&tgt_row)
-        .map(|decs| decs.iter().map(|s| s.continuation_indent).max().unwrap_or(0))
+        .map(|decs| {
+            decs.iter()
+                .map(|s| s.continuation_indent)
+                .max()
+                .unwrap_or(0)
+        })
         .unwrap_or(0) as usize;
     let tgt_cont = cw.saturating_sub(tgt_ci).max(1);
     let tgt_col = renderer::char_col_at_visual(tgt_line, tgt_subrow, vcol, cw, tgt_cont);
@@ -526,33 +536,31 @@ pub(super) fn event_loop<B: ratatui::backend::Backend>(
 
         if event::poll(POLL_TIMEOUT)? {
             match event::read()? {
-                Event::Key(k) => {
-                    match handle_key_event(app, k) {
-                        KeyOutcome::Continue => {}
-                        KeyOutcome::Save => {
-                            handle_save(app)?;
-                        }
-                        KeyOutcome::SaveAndExit => {
-                            handle_save(app)?;
-                            break;
-                        }
-                        KeyOutcome::Exit => break,
-                        KeyOutcome::ReloadConfig => {
-                            let (new_config, new_warnings) = load_config();
-                            let mut warnings = new_warnings;
-                            app.theme = Theme::from_config(
-                                &new_config.palette,
-                                &new_config.theme,
-                                &new_config.headings,
-                                &mut warnings,
-                            );
-                            app.config_warnings = warnings;
-                            app.status
-                                .set_timed("Config reloaded.", Duration::from_millis(1500));
-                            app.last_keystroke = Some(std::time::Instant::now());
-                        }
+                Event::Key(k) => match handle_key_event(app, k) {
+                    KeyOutcome::Continue => {}
+                    KeyOutcome::Save => {
+                        handle_save(app)?;
                     }
-                }
+                    KeyOutcome::SaveAndExit => {
+                        handle_save(app)?;
+                        break;
+                    }
+                    KeyOutcome::Exit => break,
+                    KeyOutcome::ReloadConfig => {
+                        let (new_config, new_warnings) = load_config();
+                        let mut warnings = new_warnings;
+                        app.theme = Theme::from_config(
+                            &new_config.palette,
+                            &new_config.theme,
+                            &new_config.headings,
+                            &mut warnings,
+                        );
+                        app.config_warnings = warnings;
+                        app.status
+                            .set_timed("Config reloaded.", Duration::from_millis(1500));
+                        app.last_keystroke = Some(std::time::Instant::now());
+                    }
+                },
                 Event::Mouse(mouse) => match mouse.kind {
                     MouseEventKind::ScrollDown => {
                         let max = app.textarea.lines().len().saturating_sub(1);
@@ -665,7 +673,11 @@ mod tests {
     fn typing_char_reaches_textarea() {
         let mut app = make_app();
         handle_key_event(&mut app, key(KeyCode::Char('a')));
-        assert_eq!(app.textarea.lines()[0], "a", "typed char must reach textarea");
+        assert_eq!(
+            app.textarea.lines()[0],
+            "a",
+            "typed char must reach textarea"
+        );
     }
 
     // Kills: input.rs:269:16 delete ! in handle_key_event.
@@ -718,7 +730,11 @@ mod tests {
         let mut app = nav_app(vec!["abcde fghij"], 8);
         app.textarea.move_cursor(CursorMove::Jump(0, 0));
         handle_key_event(&mut app, key(KeyCode::Down));
-        assert_eq!(app.textarea.cursor(), (0, 6), "Down must land on second visual row of same logical line");
+        assert_eq!(
+            app.textarea.cursor(),
+            (0, 6),
+            "Down must land on second visual row of same logical line"
+        );
     }
 
     // Up reverses the within-line move.
@@ -727,7 +743,11 @@ mod tests {
         let mut app = nav_app(vec!["abcde fghij"], 8);
         app.textarea.move_cursor(CursorMove::Jump(0, 6));
         handle_key_event(&mut app, key(KeyCode::Up));
-        assert_eq!(app.textarea.cursor(), (0, 0), "Up must return to first visual row of same logical line");
+        assert_eq!(
+            app.textarea.cursor(),
+            (0, 0),
+            "Up must return to first visual row of same logical line"
+        );
     }
 
     // Down on the last visual row of line 0 crosses to line 1.
@@ -736,7 +756,11 @@ mod tests {
         let mut app = nav_app(vec!["abc", "def"], 20);
         app.textarea.move_cursor(CursorMove::Jump(0, 2));
         handle_key_event(&mut app, key(KeyCode::Down));
-        assert_eq!(app.textarea.cursor(), (1, 2), "Down from last visual row must cross to next logical line");
+        assert_eq!(
+            app.textarea.cursor(),
+            (1, 2),
+            "Down from last visual row must cross to next logical line"
+        );
     }
 
     // Up on the first visual row of line 1 crosses back to line 0.
@@ -745,7 +769,11 @@ mod tests {
         let mut app = nav_app(vec!["abc", "def"], 20);
         app.textarea.move_cursor(CursorMove::Jump(1, 2));
         handle_key_event(&mut app, key(KeyCode::Up));
-        assert_eq!(app.textarea.cursor(), (0, 2), "Up from first visual row must cross back to previous logical line");
+        assert_eq!(
+            app.textarea.cursor(),
+            (0, 2),
+            "Up from first visual row must cross back to previous logical line"
+        );
     }
 
     // Sticky col is set on the first Down and preserved on the second, so
@@ -759,7 +787,11 @@ mod tests {
         handle_key_event(&mut app, key(KeyCode::Down));
         assert_eq!(app.textarea.cursor(), (1, 2), "clamped to short line");
         handle_key_event(&mut app, key(KeyCode::Down));
-        assert_eq!(app.textarea.cursor(), (2, 4), "sticky col must restore original column on longer line");
+        assert_eq!(
+            app.textarea.cursor(),
+            (2, 4),
+            "sticky col must restore original column on longer line"
+        );
     }
 
     // Any non-vertical-nav key must clear sticky_col.
@@ -770,7 +802,10 @@ mod tests {
         handle_key_event(&mut app, key(KeyCode::Down)); // sets sticky_col = 4
         assert!(app.sticky_col.is_some(), "sticky_col set after Down");
         handle_key_event(&mut app, key(KeyCode::Right)); // non-vertical → clears
-        assert!(app.sticky_col.is_none(), "sticky_col must be cleared by Right");
+        assert!(
+            app.sticky_col.is_none(),
+            "sticky_col must be cleared by Right"
+        );
     }
 
     // Down at the last line/row is a no-op (cursor stays put).
@@ -779,7 +814,11 @@ mod tests {
         let mut app = nav_app(vec!["abc"], 20);
         app.textarea.move_cursor(CursorMove::Jump(0, 1));
         handle_key_event(&mut app, key(KeyCode::Down));
-        assert_eq!(app.textarea.cursor(), (0, 1), "Down at last row must not move cursor");
+        assert_eq!(
+            app.textarea.cursor(),
+            (0, 1),
+            "Down at last row must not move cursor"
+        );
     }
 
     // Up at the first row is a no-op.
@@ -788,6 +827,10 @@ mod tests {
         let mut app = nav_app(vec!["abc"], 20);
         app.textarea.move_cursor(CursorMove::Jump(0, 1));
         handle_key_event(&mut app, key(KeyCode::Up));
-        assert_eq!(app.textarea.cursor(), (0, 1), "Up at first row must not move cursor");
+        assert_eq!(
+            app.textarea.cursor(),
+            (0, 1),
+            "Up at first row must not move cursor"
+        );
     }
 }

@@ -144,7 +144,9 @@ fn parse_args() -> Result<Command, ()> {
             std::process::exit(0);
         }
         [a] if a == "init" => Ok(Command::Init { shell: None }),
-        [a, s] if a == "init" => Ok(Command::Init { shell: Some(s.clone()) }),
+        [a, s] if a == "init" => Ok(Command::Init {
+            shell: Some(s.clone()),
+        }),
         [a] if a == "write-config" => Ok(Command::WriteConfig),
         [path] => Ok(Command::Edit(PathBuf::from(path))),
         _ => {
@@ -179,7 +181,9 @@ fn run_write_config() {
         }
     }
 
-    if let Some(dir) = path.parent() && let Err(e) = std::fs::create_dir_all(dir) {
+    if let Some(dir) = path.parent()
+        && let Err(e) = std::fs::create_dir_all(dir)
+    {
         eprintln!("error: could not create config directory: {e}");
         std::process::exit(1);
     }
@@ -435,7 +439,10 @@ mod tests {
         app.textarea
             .move_cursor(tui_textarea::CursorMove::Jump(4, 0));
         clamp_scroll(&mut app, make_editor_area(3), 4, 0);
-        assert_eq!(app.scroll_top, 3, "must read line new_top-1, not new_top or new_top+1");
+        assert_eq!(
+            app.scroll_top, 3,
+            "must read line new_top-1, not new_top or new_top+1"
+        );
     }
 
     #[test]
@@ -451,7 +458,10 @@ mod tests {
         app.textarea
             .move_cursor(tui_textarea::CursorMove::Jump(2, 0));
         clamp_scroll(&mut app, make_editor_area(3), 5, 0);
-        assert_eq!(app.scroll_top, 0, "cursor in sub-row 0 must not trigger scroll");
+        assert_eq!(
+            app.scroll_top, 0,
+            "cursor in sub-row 0 must not trigger scroll"
+        );
     }
 
     #[test]
@@ -465,7 +475,10 @@ mod tests {
         app.textarea
             .move_cursor(tui_textarea::CursorMove::Jump(2, 3));
         clamp_scroll(&mut app, make_editor_area(3), 5, 0);
-        assert_eq!(app.scroll_top, 1, "cursor in sub-row 1 must scroll to expose it");
+        assert_eq!(
+            app.scroll_top, 1,
+            "cursor in sub-row 1 must scroll to expose it"
+        );
     }
 
     #[test]
@@ -675,7 +688,10 @@ mod tests {
     fn char_a_is_not_navigation_key() {
         // Ordinary characters are not navigation keys.
         let k = make_key(KeyCode::Char('a'));
-        assert!(!is_navigation_key(&k), "char 'a' must not be a navigation key");
+        assert!(
+            !is_navigation_key(&k),
+            "char 'a' must not be a navigation key"
+        );
     }
 
     // ── shell_init_str tests ──────────────────────────────────────────────────
@@ -683,7 +699,10 @@ mod tests {
     #[test]
     fn shell_init_str_contains_function_declaration() {
         let s = super::shell_init_str("bash");
-        assert!(s.contains("yame()"), "output must declare a yame() function");
+        assert!(
+            s.contains("yame()"),
+            "output must declare a yame() function"
+        );
     }
 
     #[test]
@@ -827,7 +846,10 @@ mod tests {
             "first-row selection must start at col_start, got: {:?}",
             text
         );
-        assert!(!text.starts_with("ab"), "chars before col_start must be excluded");
+        assert!(
+            !text.starts_with("ab"),
+            "chars before col_start must be excluded"
+        );
     }
 
     #[test]
@@ -880,10 +902,7 @@ mod tests {
         app.textarea
             .move_cursor(tui_textarea::CursorMove::Jump(3, 0));
         clamp_scroll(&mut app, make_editor_area(10), TEST_COL, 0);
-        assert_eq!(
-            app.scroll_top, 3,
-            "cursor == scroll_top must not scroll up"
-        );
+        assert_eq!(app.scroll_top, 3, "cursor == scroll_top must not scroll up");
     }
 
     #[test]
@@ -927,7 +946,7 @@ mod tests {
 
     // ── handle_key_event tests ───────────────────────────────────────────────
 
-    use super::input::{handle_key_event, KeyOutcome};
+    use super::input::{KeyOutcome, handle_key_event};
 
     #[test]
     fn handle_key_event_resets_free_scroll() {
@@ -978,8 +997,10 @@ mod tests {
     fn handle_key_event_ctrl_z_undoes_and_sets_force_redecorate() {
         let mut app = make_app_with_lines(&["hello"]);
         // Type a character to have something to undo.
-        app.textarea
-            .input(crossterm::event::KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+        app.textarea.input(crossterm::event::KeyEvent::new(
+            KeyCode::Char('x'),
+            KeyModifiers::NONE,
+        ));
         app.force_redecorate = false;
         let k = ctrl_key(KeyCode::Char('z'));
         let outcome = handle_key_event(&mut app, k);
@@ -1034,7 +1055,10 @@ mod tests {
         let mut app = make_app_with_lines(&["a"; 3]);
         app.scroll_top = 2; // already at max (len - 1 = 2)
         handle_key_event(&mut app, ctrl_key(KeyCode::Down));
-        assert_eq!(app.scroll_top, 2, "Ctrl+Down at bottom must not exceed last line");
+        assert_eq!(
+            app.scroll_top, 2,
+            "Ctrl+Down at bottom must not exceed last line"
+        );
     }
 
     #[test]
