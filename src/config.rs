@@ -419,11 +419,7 @@ pub fn config_path() -> PathBuf {
             .map(PathBuf::from)
             .unwrap_or_else(|_| {
                 std::env::var("USERPROFILE")
-                    .map(|p| {
-                        PathBuf::from(p)
-                            .join("AppData")
-                            .join("Roaming")
-                    })
+                    .map(|p| PathBuf::from(p).join("AppData").join("Roaming"))
                     .unwrap_or_default()
             });
         return base.join("yame").join("config.toml");
@@ -513,7 +509,7 @@ pub fn term_supports_italic(term: &str) -> bool {
             | "wezterm"
             | "foot"
             | "cygwin"   // MSYS2 / Git Bash default TERM
-            | "mintty"   // mintty terminal emulator (Git for Windows)
+            | "mintty" // mintty terminal emulator (Git for Windows)
     ) || term.starts_with("xterm-kitty")
 }
 
