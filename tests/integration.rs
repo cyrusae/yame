@@ -100,7 +100,11 @@ fn fixture_multiple_heading_levels_decorated() {
     let (map, _) = build_decoration_map(text, &theme, true);
     let heading_lines = map
         .values()
-        .filter(|spans| spans.iter().any(|s| s.full_line_bg == Some(theme.heading_bg)))
+        .filter(|spans| {
+            spans
+                .iter()
+                .any(|s| s.full_line_bg == Some(theme.heading_bg))
+        })
         .count();
     assert!(
         heading_lines >= 4,

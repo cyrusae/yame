@@ -276,7 +276,12 @@ impl Widget for MarkdownView<'_> {
             // Compute the continuation indent before wrapping so continuation
             // rows are wrapped at the narrower effective width.
             let line_ci = line_decs
-                .map(|decs| decs.iter().map(|s| s.continuation_indent).max().unwrap_or(0))
+                .map(|decs| {
+                    decs.iter()
+                        .map(|s| s.continuation_indent)
+                        .max()
+                        .unwrap_or(0)
+                })
                 .unwrap_or(0) as usize;
             let wrapped = wrap_line_indented(
                 line,
@@ -383,9 +388,7 @@ impl Widget for MarkdownView<'_> {
                         .map(|decs| decs.iter().any(|s| s.is_blockquote))
                         .unwrap_or(false);
                     let row_default = if is_blockquote_line {
-                        Style::default()
-                            .fg(self.theme.blockquote_color)
-                            .bg(line_bg)
+                        Style::default().fg(self.theme.blockquote_color).bg(line_bg)
                     } else {
                         default_style.bg(line_bg)
                     };
@@ -461,7 +464,8 @@ fn apply_selection_overlay(
     let ((sel_row_start, sel_col_start), (sel_row_end, sel_col_end)) = selection;
     // Written as GUTTER + GUTTER (not 2 * GUTTER) so that operator-replacement
     // mutants produce an observable difference: `+→-` gives 0, `+→*` gives 1.
-    let content_width = (view.column_width as usize).saturating_sub(GUTTER as usize + GUTTER as usize);
+    let content_width =
+        (view.column_width as usize).saturating_sub(GUTTER as usize + GUTTER as usize);
     let visible = area.height as usize;
     let total = view.lines.len();
     let sel_fg = view.theme.selection_fg;
@@ -482,7 +486,12 @@ fn apply_selection_overlay(
         let line_ci = view
             .decoration_map
             .get(&log_row)
-            .map(|decs| decs.iter().map(|s| s.continuation_indent).max().unwrap_or(0))
+            .map(|decs| {
+                decs.iter()
+                    .map(|s| s.continuation_indent)
+                    .max()
+                    .unwrap_or(0)
+            })
             .unwrap_or(0) as usize;
         let wrapped = wrap_line_indented(
             line,
@@ -911,7 +920,10 @@ mod tests {
         // This test verifies continuation rows don't exceed cont_width characters.
         let s = "- word1 word2 word3 word4 word5 word6 word7";
         let rows = wrap_line_indented(s, 20, 18);
-        assert!(rows.len() >= 2, "expected wrapping to produce multiple rows");
+        assert!(
+            rows.len() >= 2,
+            "expected wrapping to produce multiple rows"
+        );
         // First row may use up to first_width.
         assert!(rows[0].len() <= 20, "first row too wide: {:?}", rows[0]);
         // All continuation rows must fit within cont_width.
@@ -949,7 +961,11 @@ mod tests {
         let rows = wrap_line_indented(s, 20, 18);
         assert!(rows.len() >= 2);
         for row in &rows[1..] {
-            assert!(row.len() <= 18, "continuation hard-break too wide: {:?}", row);
+            assert!(
+                row.len() <= 18,
+                "continuation hard-break too wide: {:?}",
+                row
+            );
         }
     }
 
@@ -968,7 +984,10 @@ mod tests {
         // If the space is not skipped, continuation rows begin with ' '.
         let s = "- abc def ghi jkl";
         let rows = wrap_line_indented(s, 8, 6);
-        assert!(rows.len() >= 2, "expected wrapping to produce multiple rows");
+        assert!(
+            rows.len() >= 2,
+            "expected wrapping to produce multiple rows"
+        );
         for row in &rows[1..] {
             assert!(
                 !row.starts_with(' '),
@@ -1000,7 +1019,10 @@ mod tests {
         let line = "a b c";
         let wrapped = wrap_line(line, 2);
         assert_eq!(wrapped, vec!["a", "b", "c"]);
-        assert_eq!(wrap_char_ranges(line, &wrapped), vec![(0, 1), (2, 1), (4, 1)]);
+        assert_eq!(
+            wrap_char_ranges(line, &wrapped),
+            vec![(0, 1), (2, 1), (4, 1)]
+        );
     }
 
     // --- build_normal_status_bar ---
@@ -1043,7 +1065,10 @@ mod tests {
         let app = make_app();
         let line = build_timed_message_bar(&app, "Saved.");
         let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert!(text.contains("foo.md"), "timed message bar must include the filename");
+        assert!(
+            text.contains("foo.md"),
+            "timed message bar must include the filename"
+        );
     }
 
     #[test]
@@ -1051,7 +1076,10 @@ mod tests {
         let app = make_app();
         let line = build_timed_message_bar(&app, "Saved.");
         let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert!(text.contains("Saved."), "timed message bar must include the message text");
+        assert!(
+            text.contains("Saved."),
+            "timed message bar must include the message text"
+        );
     }
 
     #[test]
@@ -1085,7 +1113,10 @@ mod tests {
         app.is_dirty = true;
         let line = build_timed_message_bar(&app, "Saved.");
         let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert!(text.contains("[*]"), "timed message bar must show [*] when dirty");
+        assert!(
+            text.contains("[*]"),
+            "timed message bar must show [*] when dirty"
+        );
     }
 
     #[test]
@@ -1093,7 +1124,10 @@ mod tests {
         let app = make_app();
         let line = build_timed_message_bar(&app, "Saved.");
         let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert!(!text.contains("[*]"), "timed message bar must not show [*] when clean");
+        assert!(
+            !text.contains("[*]"),
+            "timed message bar must not show [*] when clean"
+        );
     }
 
     #[test]
@@ -1235,7 +1269,12 @@ mod tests {
         // content_width = 10 - 2*GUTTER = 8. Lines fit without wrapping.
         // Expected highlighted buffer cells: x=2, x=3  (= GUTTER + char_offset).
         use ratatui::buffer::Buffer;
-        let area = Rect { x: 0, y: 0, width: 10, height: 3 };
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 10,
+            height: 3,
+        };
         let mut buf = Buffer::empty(area);
         let theme = Theme::default_theme();
         let deco = DecorationMap::default();
@@ -1245,10 +1284,18 @@ mod tests {
         apply_selection_overlay(area, &mut buf, &view, ((0, 1), (0, 3)));
 
         let sel_bg = theme.selection_bg;
-        assert_ne!(buf.cell((1, 0)).unwrap().bg, sel_bg, "char 0 before selection");
+        assert_ne!(
+            buf.cell((1, 0)).unwrap().bg,
+            sel_bg,
+            "char 0 before selection"
+        );
         assert_eq!(buf.cell((2, 0)).unwrap().bg, sel_bg, "char 1 selected");
         assert_eq!(buf.cell((3, 0)).unwrap().bg, sel_bg, "char 2 selected");
-        assert_ne!(buf.cell((4, 0)).unwrap().bg, sel_bg, "char 3 after selection");
+        assert_ne!(
+            buf.cell((4, 0)).unwrap().bg,
+            sel_bg,
+            "char 3 after selection"
+        );
         assert_ne!(buf.cell((1, 1)).unwrap().bg, sel_bg, "row 1 not selected");
     }
 
@@ -1259,7 +1306,12 @@ mod tests {
         // Row 1: chars 0..2 → x=1, x=2
         // Row 2: no highlight
         use ratatui::buffer::Buffer;
-        let area = Rect { x: 0, y: 0, width: 10, height: 4 };
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 10,
+            height: 4,
+        };
         let mut buf = Buffer::empty(area);
         let theme = Theme::default_theme();
         let deco = DecorationMap::default();
@@ -1278,7 +1330,11 @@ mod tests {
         // Row 1: chars 0 and 1 highlighted
         assert_eq!(buf.cell((1, 1)).unwrap().bg, sel_bg, "row 1 char 0");
         assert_eq!(buf.cell((2, 1)).unwrap().bg, sel_bg, "row 1 char 1");
-        assert_ne!(buf.cell((3, 1)).unwrap().bg, sel_bg, "row 1 char 2 not selected");
+        assert_ne!(
+            buf.cell((3, 1)).unwrap().bg,
+            sel_bg,
+            "row 1 char 2 not selected"
+        );
         // Row 2: no highlight
         assert_ne!(buf.cell((1, 2)).unwrap().bg, sel_bg, "row 2 not selected");
     }
@@ -1288,7 +1344,12 @@ mod tests {
         // 3-row selection: the middle row has neither a start-col nor end-col
         // constraint — it should be highlighted from char 0 to line end.
         use ratatui::buffer::Buffer;
-        let area = Rect { x: 0, y: 0, width: 10, height: 4 };
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 10,
+            height: 4,
+        };
         let mut buf = Buffer::empty(area);
         let theme = Theme::default_theme();
         let deco = DecorationMap::default();
@@ -1306,14 +1367,23 @@ mod tests {
         assert_eq!(buf.cell((4, 1)).unwrap().bg, sel_bg, "middle row char 3");
         // Row 2: only char 0 highlighted (col_end = 1)
         assert_eq!(buf.cell((1, 2)).unwrap().bg, sel_bg, "last row char 0");
-        assert_ne!(buf.cell((2, 2)).unwrap().bg, sel_bg, "last row char 1 excluded");
+        assert_ne!(
+            buf.cell((2, 2)).unwrap().bg,
+            sel_bg,
+            "last row char 1 excluded"
+        );
     }
 
     #[test]
     fn selection_overlay_row_after_sel_end_not_highlighted() {
         // log_row > sel_row_end → the loop must break and leave that row clean.
         use ratatui::buffer::Buffer;
-        let area = Rect { x: 0, y: 0, width: 10, height: 3 };
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 10,
+            height: 3,
+        };
         let mut buf = Buffer::empty(area);
         let theme = Theme::default_theme();
         let deco = DecorationMap::default();
@@ -1325,15 +1395,28 @@ mod tests {
 
         let sel_bg = theme.selection_bg;
         // Row 1 (past sel_row_end) must not be touched.
-        assert_ne!(buf.cell((1, 1)).unwrap().bg, sel_bg, "row after sel_row_end");
-        assert_ne!(buf.cell((1, 2)).unwrap().bg, sel_bg, "two rows past sel_row_end");
+        assert_ne!(
+            buf.cell((1, 1)).unwrap().bg,
+            sel_bg,
+            "row after sel_row_end"
+        );
+        assert_ne!(
+            buf.cell((1, 2)).unwrap().bg,
+            sel_bg,
+            "two rows past sel_row_end"
+        );
     }
 
     #[test]
     fn selection_overlay_row_before_sel_start_not_highlighted() {
         // scroll_top=0, sel_row_start=1: row 0 must not be highlighted.
         use ratatui::buffer::Buffer;
-        let area = Rect { x: 0, y: 0, width: 10, height: 3 };
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 10,
+            height: 3,
+        };
         let mut buf = Buffer::empty(area);
         let theme = Theme::default_theme();
         let deco = DecorationMap::default();
@@ -1345,7 +1428,11 @@ mod tests {
 
         let sel_bg = theme.selection_bg;
         // Row 0 (before sel_row_start) must not be touched.
-        assert_ne!(buf.cell((1, 0)).unwrap().bg, sel_bg, "row before sel_row_start");
+        assert_ne!(
+            buf.cell((1, 0)).unwrap().bg,
+            sel_bg,
+            "row before sel_row_start"
+        );
         // Row 1 IS selected.
         assert_eq!(buf.cell((1, 1)).unwrap().bg, sel_bg, "selected row char 0");
     }
@@ -1354,7 +1441,12 @@ mod tests {
     fn selection_overlay_empty_selection_no_highlight() {
         // row_sel_start == row_sel_end → nothing should be highlighted.
         use ratatui::buffer::Buffer;
-        let area = Rect { x: 0, y: 0, width: 10, height: 2 };
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 10,
+            height: 2,
+        };
         let mut buf = Buffer::empty(area);
         let theme = Theme::default_theme();
         let deco = DecorationMap::default();
@@ -1366,7 +1458,11 @@ mod tests {
 
         let sel_bg = theme.selection_bg;
         for x in 0..10u16 {
-            assert_ne!(buf.cell((x, 0)).unwrap().bg, sel_bg, "zero-width selection must not highlight x={x}");
+            assert_ne!(
+                buf.cell((x, 0)).unwrap().bg,
+                sel_bg,
+                "zero-width selection must not highlight x={x}"
+            );
         }
     }
 
@@ -1377,7 +1473,12 @@ mod tests {
     #[test]
     fn selection_overlay_content_width_last_char_included() {
         use ratatui::buffer::Buffer;
-        let area = Rect { x: 0, y: 0, width: 10, height: 2 };
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 10,
+            height: 2,
+        };
         let mut buf = Buffer::empty(area);
         let theme = Theme::default_theme();
         let deco = DecorationMap::default();
@@ -1386,11 +1487,13 @@ mod tests {
         apply_selection_overlay(area, &mut buf, &view, ((0, 0), (0, 8)));
         let sel_bg = theme.selection_bg;
         assert_eq!(
-            buf.cell((8, 0)).unwrap().bg, sel_bg,
+            buf.cell((8, 0)).unwrap().bg,
+            sel_bg,
             "char 7 at x=8 must be highlighted (last char within content_width=8)"
         );
         assert_ne!(
-            buf.cell((9, 0)).unwrap().bg, sel_bg,
+            buf.cell((9, 0)).unwrap().bg,
+            sel_bg,
             "x=9 is past content_width and must not be highlighted"
         );
     }
@@ -1418,7 +1521,12 @@ mod tests {
     #[test]
     fn selection_overlay_continuation_indent_only_on_wrapped_subrows() {
         use ratatui::buffer::Buffer;
-        let area = Rect { x: 0, y: 0, width: 8, height: 3 };
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 8,
+            height: 3,
+        };
         let mut buf = Buffer::empty(area);
         let theme = Theme::default_theme();
         let mut deco = DecorationMap::default();
@@ -1447,32 +1555,37 @@ mod tests {
         // Sub-row 0, first cell: ci must be 0 for wrap_idx=0.
         // With >→== or >→>=: ci=2 → x_start=3, cell (1,0) not highlighted.
         assert_eq!(
-            buf.cell((1, 0)).unwrap().bg, sel_bg,
+            buf.cell((1, 0)).unwrap().bg,
+            sel_bg,
             "sub-row 0 char 0 (x=1) must be highlighted — no continuation indent on first sub-row"
         );
         // Sub-row 0, last cell (char 5, x=GUTTER+5=6): must reach the full cw.
         // With 409 *→* mutations or 346 *→+: x_end clips 1 cell early → x=6 excluded.
         assert_eq!(
-            buf.cell((6, 0)).unwrap().bg, sel_bg,
+            buf.cell((6, 0)).unwrap().bg,
+            sel_bg,
             "sub-row 0 char 5 (x=6) must be highlighted — last char fills content_width"
         );
         // Sub-row 1, before continuation indent: must not be highlighted.
         // With >→<: ci never applied → x_start=1, cell (1,1) highlighted (wrong).
         assert_ne!(
-            buf.cell((1, 1)).unwrap().bg, sel_bg,
+            buf.cell((1, 1)).unwrap().bg,
+            sel_bg,
             "sub-row 1 x=1 must not be highlighted (before continuation_indent=2)"
         );
         // Sub-row 1, first highlighted cell: x = GUTTER + ci + (char_start - char_start) = 1+2+0 = 3.
         // With >→<: ci=0 → x_start=1, cell (1,1) highlighted instead.
         // With 407:80 -→+: x_start=1+2+(6+6)=15, out of area → cell (3,1) not highlighted.
         assert_eq!(
-            buf.cell((3, 1)).unwrap().bg, sel_bg,
+            buf.cell((3, 1)).unwrap().bg,
+            sel_bg,
             "sub-row 1 first char (x=3 with ci=2) must be highlighted"
         );
         // Sub-row 1, one past the last char (x=5): must not be highlighted (char_len=4, x_end=5).
         // With 408:65 -→+: x_end=min(1+(10+6),7)=7 → x=5 highlighted (wrong).
         assert_ne!(
-            buf.cell((5, 1)).unwrap().bg, sel_bg,
+            buf.cell((5, 1)).unwrap().bg,
+            sel_bg,
             "sub-row 1 x=5 (past char_len=4) must not be highlighted"
         );
     }
@@ -1488,7 +1601,12 @@ mod tests {
     #[test]
     fn selection_overlay_subrow_partial_start_x_is_exact() {
         use ratatui::buffer::Buffer;
-        let area = Rect { x: 0, y: 0, width: 8, height: 3 };
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 8,
+            height: 3,
+        };
         let mut buf = Buffer::empty(area);
         let theme = Theme::default_theme();
         let mut deco = DecorationMap::default();
@@ -1518,18 +1636,21 @@ mod tests {
 
         // Sub-row 0 must be completely clean (selection col_start=7 > sub-row 0 char_end=6).
         assert_ne!(
-            buf.cell((1, 0)).unwrap().bg, sel_bg,
+            buf.cell((1, 0)).unwrap().bg,
+            sel_bg,
             "sub-row 0 must not be highlighted when selection starts at char 7"
         );
         // x=2 must NOT be highlighted (selection offset is 1, not -1).
         // With +→-: x_start = 1+2-(7-6) = 2 → cell (2,1) highlighted (wrong).
         assert_ne!(
-            buf.cell((2, 1)).unwrap().bg, sel_bg,
+            buf.cell((2, 1)).unwrap().bg,
+            sel_bg,
             "x=2 must not be highlighted — start offset must add (not subtract) the intra-chunk offset"
         );
         // First highlighted cell is x=4 = GUTTER + ci + (row_sel_start - char_start) = 1+2+1.
         assert_eq!(
-            buf.cell((4, 1)).unwrap().bg, sel_bg,
+            buf.cell((4, 1)).unwrap().bg,
+            sel_bg,
             "x=4 must be highlighted — correct partial-start offset in wrapped sub-row"
         );
     }
@@ -1543,7 +1664,12 @@ mod tests {
     fn selection_overlay_content_width_clamps_selection_at_gutter_boundary() {
         use ratatui::buffer::Buffer;
         // column_width=10, cw=8.  Line has 9 chars (one past cw).
-        let area = Rect { x: 0, y: 0, width: 11, height: 2 };
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 11,
+            height: 2,
+        };
         let mut buf = Buffer::empty(area);
         let theme = Theme::default_theme();
         let deco = DecorationMap::default();
@@ -1561,13 +1687,15 @@ mod tests {
         let sel_bg = theme.selection_bg;
         // char 7 (x=8) is within content_width=8, must be highlighted.
         assert_eq!(
-            buf.cell((8, 0)).unwrap().bg, sel_bg,
+            buf.cell((8, 0)).unwrap().bg,
+            sel_bg,
             "char 7 (x=8) is within content_width=8 and must be highlighted"
         );
         // x=9 = GUTTER + content_width is the first column PAST content; must not be highlighted.
         // `+→-` widens cw to 10: x_end becomes 10, x=9 gets highlighted → test fails. ✓
         assert_ne!(
-            buf.cell((9, 0)).unwrap().bg, sel_bg,
+            buf.cell((9, 0)).unwrap().bg,
+            sel_bg,
             "x=9 is past content_width=8 and must not be highlighted"
         );
     }
@@ -1586,7 +1714,12 @@ mod tests {
     fn selection_overlay_loop_stops_at_document_end() {
         use ratatui::buffer::Buffer;
         // 2-line document in a 5-row viewport — total(2) < visible(5).
-        let area = Rect { x: 0, y: 0, width: 10, height: 5 };
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 10,
+            height: 5,
+        };
         let mut buf = Buffer::empty(area);
         let theme = Theme::default_theme();
         let deco = DecorationMap::default();
@@ -1604,7 +1737,8 @@ mod tests {
         // Rows 2-4 are past the document and must not be touched.
         for y in 2..5u16 {
             assert_ne!(
-                buf.cell((1, y)).unwrap().bg, sel_bg,
+                buf.cell((1, y)).unwrap().bg,
+                sel_bg,
                 "row {y} is past document end and must not be highlighted"
             );
         }

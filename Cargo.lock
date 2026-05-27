@@ -1152,7 +1152,7 @@ checksum = "ea6fc2961e4ef194dcbfe56bb845534d0dc8098940c7e5c012a258bfec6701bd"
 
 [[package]]
 name = "yame"
-version = "0.1.0"
+version = "0.1.0-alpha.2"
 dependencies = [
  "arboard",
  "crossterm",

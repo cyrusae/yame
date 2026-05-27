@@ -33,7 +33,10 @@ fn pill1_parts(app: &App) -> (Span<'static>, Color) {
     let dirty_marker = if app.is_dirty { " [*]" } else { "" };
     let path_str = shorten_path(&app.file_path, 3);
     let text = format!(" {path_str}{dirty_marker} ");
-    (Span::styled(text, Style::default().fg(pill_fg).bg(pill_bg)), pill_bg)
+    (
+        Span::styled(text, Style::default().fg(pill_fg).bg(pill_bg)),
+        pill_bg,
+    )
 }
 
 // ---------------------------------------------------------------------------
