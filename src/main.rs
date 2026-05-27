@@ -24,6 +24,90 @@ fn setup_panic_hook() {
     }));
 }
 
+// ---------------------------------------------------------------------------
+// Subcommand dispatch
+// ---------------------------------------------------------------------------
+
+enum Command {
+    Edit(PathBuf),
+    Init { shell: Option<String> },
+    WriteConfig,
+}
+
+/// Returns the shell wrapper function string for `eval "$(yame init)"`.
+///
+/// The output is identical for bash and zsh — the function body uses constructs
+/// common to both.  The `shell` argument is accepted for forward-compatibility
+/// and explicit dotfile documentation; it does not change the output today.
+fn shell_init_str(_shell: &str) -> String {
+    r#"yame() {
+  if (( $# != 1 )) || [[ "$1" =~ ^- ]]; then
+    command yame "$@"
+    return
+  fi
+
+  # If the argument is an exact path, open it directly.
+  if [[ -f "$1" ]]; then
+    command yame "$1"
+    return
+  fi
+
+  # Require fd and fzf; fall back to plain invocation if either is missing.
+  if ! command -v fd &>/dev/null || ! command -v fzf &>/dev/null; then
+    command yame "$@"
+    return
+  fi
+
+  local target
+
+  # Tier 1: fuzzy-find a Markdown file.
+  target=$(fd --type f --extension md "$1" 2>/dev/null | fzf --select-1 --exit-0 --preview 'head -20 {}')
+
+  # Tier 2: fuzzy-find any file (including hidden), skipping heavy directories.
+  if [[ -z "$target" ]]; then
+    target=$(fd --type f --hidden -E "node_modules" -E ".git" -E "target" "$1" 2>/dev/null | fzf --select-1 --exit-0 --preview 'head -20 {}')
+  fi
+
+  if [[ -n "$target" ]]; then
+    command yame "$target"
+  else
+    printf "yame: no file matching '%s' found. Open new file? [y/N] " "$1" >&2
+    read -r ans && [[ "$ans" =~ ^[Yy]$ ]] && command yame "$1"
+  fi
+}"#
+    .to_string()
+}
+
+#[mutants::skip] // Reads $SHELL env var and calls process::exit — not unit-testable.
+fn detect_shell() -> String {
+    match std::env::var("SHELL") {
+        Ok(path) if path.contains("zsh") => "zsh".to_string(),
+        Ok(path) if path.contains("bash") => "bash".to_string(),
+        Ok(path) => {
+            eprintln!("================================================================");
+            eprintln!("yame init: unsupported shell.");
+            eprintln!("================================================================");
+            eprintln!("'yame init' currently only supports Bash and Zsh.");
+            eprintln!();
+            eprintln!("Detected shell: {path}");
+            eprintln!("To set up yame's shell integration manually, see:");
+            eprintln!("  https://github.com/cyrusae/yame");
+            eprintln!("================================================================");
+            std::process::exit(1);
+        }
+        Err(_) => {
+            eprintln!("================================================================");
+            eprintln!("yame init: $SHELL is unset.");
+            eprintln!("================================================================");
+            eprintln!("Pass the shell name explicitly:");
+            eprintln!("  eval \"$(yame init bash)\"");
+            eprintln!("  eval \"$(yame init zsh)\"");
+            eprintln!("================================================================");
+            std::process::exit(1);
+        }
+    }
+}
+
 #[mutants::skip] // Prints to stdout and calls process::exit — not unit-testable.
 fn print_help() {
     println!("yame — yet another markdown editor");
@@ -46,7 +130,7 @@ fn print_help() {
 }
 
 #[mutants::skip] // Reads std::env::args() — side-effectful, not unit-testable.
-fn parse_args() -> Result<PathBuf, ()> {
+fn parse_args() -> Result<Command, ()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     if args.iter().any(|a| a == "-h" || a == "--help") {
@@ -59,7 +143,10 @@ fn parse_args() -> Result<PathBuf, ()> {
             print_help();
             std::process::exit(0);
         }
-        [path] => Ok(PathBuf::from(path)),
+        [a] if a == "init" => Ok(Command::Init { shell: None }),
+        [a, s] if a == "init" => Ok(Command::Init { shell: Some(s.clone()) }),
+        [a] if a == "write-config" => Ok(Command::WriteConfig),
+        [path] => Ok(Command::Edit(PathBuf::from(path))),
         _ => {
             eprintln!("error: unexpected arguments");
             eprintln!("Run 'yame --help' for usage.");
@@ -120,10 +207,33 @@ fn run(file_path: PathBuf) -> io::Result<()> {
 
 #[mutants::skip] // Entry point — calls process::exit, not unit-testable.
 fn main() {
-    let file_path = parse_args().unwrap_or_else(|_| std::process::exit(1));
-    if let Err(e) = run(file_path) {
-        eprintln!("error: {e}");
-        std::process::exit(1);
+    let command = parse_args().unwrap_or_else(|_| std::process::exit(1));
+    match command {
+        Command::Edit(path) => {
+            if let Err(e) = run(path) {
+                eprintln!("error: {e}");
+                std::process::exit(1);
+            }
+        }
+        Command::Init { shell } => {
+            let shell_name = shell.unwrap_or_else(detect_shell);
+            if shell_name != "bash" && shell_name != "zsh" {
+                eprintln!("================================================================");
+                eprintln!("yame init: unsupported shell '{shell_name}'.");
+                eprintln!("================================================================");
+                eprintln!("Supported shells: bash, zsh");
+                eprintln!("  eval \"$(yame init bash)\"");
+                eprintln!("  eval \"$(yame init zsh)\"");
+                eprintln!("================================================================");
+                std::process::exit(1);
+            }
+            println!("{}", shell_init_str(&shell_name));
+        }
+        Command::WriteConfig => {
+            eprintln!("error: 'yame write-config' is not yet available in this release");
+            eprintln!("It will be implemented in a future update.");
+            std::process::exit(1);
+        }
     }
 }
 
@@ -528,6 +638,77 @@ mod tests {
         // Ordinary characters are not navigation keys.
         let k = make_key(KeyCode::Char('a'));
         assert!(!is_navigation_key(&k), "char 'a' must not be a navigation key");
+    }
+
+    // ── shell_init_str tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn shell_init_str_contains_function_declaration() {
+        let s = super::shell_init_str("bash");
+        assert!(s.contains("yame()"), "output must declare a yame() function");
+    }
+
+    #[test]
+    fn shell_init_str_contains_fd_fzf_guard() {
+        let s = super::shell_init_str("bash");
+        assert!(
+            s.contains("command -v fd") && s.contains("command -v fzf"),
+            "output must guard on fd and fzf availability"
+        );
+    }
+
+    #[test]
+    fn shell_init_str_uses_command_yame_passthrough() {
+        let s = super::shell_init_str("bash");
+        assert!(
+            s.contains("command yame"),
+            "output must use 'command yame' to bypass the wrapper"
+        );
+    }
+
+    #[test]
+    fn shell_init_str_tier2_includes_hidden_flag() {
+        let s = super::shell_init_str("zsh");
+        assert!(
+            s.contains("--hidden"),
+            "tier-2 search must include --hidden so dotfiles can be found"
+        );
+    }
+
+    #[test]
+    fn shell_init_str_excludes_correct_target_dir() {
+        // Must use -E "target" (correct), not -E "target/*" (wrong glob).
+        let s = super::shell_init_str("bash");
+        assert!(
+            s.contains(r#"-E "target""#),
+            r#"must exclude target directory with -E "target""#
+        );
+        assert!(
+            !s.contains(r#"-E "target/*""#),
+            r#"must NOT use the wrong glob form -E "target/*""#
+        );
+    }
+
+    #[test]
+    fn shell_init_str_fallback_prompts_before_creating() {
+        let s = super::shell_init_str("zsh");
+        assert!(
+            s.contains("printf"),
+            "fallback must display a prompt before creating a new file"
+        );
+        assert!(
+            s.contains("[y/N]"),
+            "fallback prompt must show [y/N] confirmation"
+        );
+    }
+
+    #[test]
+    fn shell_init_str_bash_and_zsh_produce_same_output() {
+        assert_eq!(
+            super::shell_init_str("bash"),
+            super::shell_init_str("zsh"),
+            "bash and zsh init output must be identical (single function body)"
+        );
     }
 
     // ── handle_pair_wrap: one test per pair character ────────────────────────
