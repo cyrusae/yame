@@ -34,6 +34,18 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy -- -D warnings
 
+  test-windows:
+    name: Test (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+      - run: cargo nextest run --all
+
   deny:
     name: Deny (licenses + advisories)
     runs-on: ubuntu-latest

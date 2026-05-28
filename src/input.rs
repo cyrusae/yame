@@ -417,7 +417,10 @@ pub(super) fn event_loop<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
     layout_config: &LayoutConfig,
-) -> io::Result<()> {
+) -> io::Result<()>
+where
+    io::Error: From<B::Error>,
+{
     const POLL_TIMEOUT: Duration = Duration::from_millis(16);
     const DEBOUNCE: Duration = Duration::from_millis(50);
     const BOTTOM_PADDING: usize = 3;

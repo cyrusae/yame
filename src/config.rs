@@ -350,12 +350,14 @@ impl Theme {
 // Config file loading
 // ---------------------------------------------------------------------------
 
-/// Commented template written to `~/.config/yame/config.toml` on first run.
+/// Commented template written to the platform config directory on first run.
 ///
 /// All values shown are the Catppuccin Mocha defaults.  The `[theme]`,
 /// `[headings]`, and `[layout]` sections are fully commented out — uncomment
 /// any line to override the derived default.
-pub const DEFAULT_CONFIG_TEMPLATE: &str = r##"# yame configuration — ~/.config/yame/config.toml
+pub const DEFAULT_CONFIG_TEMPLATE: &str = r##"# yame configuration
+# Unix:    ~/.config/yame/config.toml  (respects $XDG_CONFIG_HOME)
+# Windows: %APPDATA%\yame\config.toml
 # Reload in-app at any time with Ctrl+R.
 #
 # All values shown are the Catppuccin Mocha defaults.
@@ -409,15 +411,32 @@ warning = "#f38ba8"   # dirty flag, warnings
 "##;
 
 pub fn config_path() -> PathBuf {
-    let base = std::env::var("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            std::env::var("HOME")
-                .map(PathBuf::from)
-                .unwrap_or_default()
-                .join(".config")
-        });
-    base.join("yame").join("config.toml")
+    // Windows: use %APPDATA%\yame\config.toml, falling back to
+    // %USERPROFILE%\AppData\Roaming if %APPDATA% is unset (rare).
+    #[cfg(windows)]
+    {
+        let base = std::env::var("APPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                std::env::var("USERPROFILE")
+                    .map(|p| PathBuf::from(p).join("AppData").join("Roaming"))
+                    .unwrap_or_default()
+            });
+        return base.join("yame").join("config.toml");
+    }
+    // Unix: respect $XDG_CONFIG_HOME, fall back to ~/.config.
+    #[cfg(not(windows))]
+    {
+        let base = std::env::var("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                std::env::var("HOME")
+                    .map(PathBuf::from)
+                    .unwrap_or_default()
+                    .join(".config")
+            });
+        base.join("yame").join("config.toml")
+    }
 }
 
 /// Load config from disk; fall back to defaults on any error.
@@ -474,6 +493,10 @@ pub fn load_config() -> (Config, Vec<String>) {
 ///
 /// Separated from env reading so the logic can be unit-tested without
 /// touching `$TERM` and causing parallel-test races.
+///
+/// On Windows, [`supports_italic`] checks `WT_SESSION` before calling this;
+/// the strings here cover Git Bash / MSYS2 terminal emulators (`cygwin`,
+/// `mintty`) as well as the standard Unix set.
 pub fn term_supports_italic(term: &str) -> bool {
     matches!(
         term,
@@ -485,18 +508,26 @@ pub fn term_supports_italic(term: &str) -> bool {
             | "rio"
             | "wezterm"
             | "foot"
+            | "cygwin"   // MSYS2 / Git Bash default TERM
+            | "mintty" // mintty terminal emulator (Git for Windows)
     ) || term.starts_with("xterm-kitty")
 }
 
-/// Detect italic support from the current `$TERM` environment variable.
+/// Detect italic support from the current environment.
 ///
-/// This is a thin shim that reads the process environment; the actual
-/// matching logic lives in [`term_supports_italic`], which is fully tested.
-/// Mutating *this* function's body (e.g. always returning `true`/`false`)
-/// cannot be caught by unit tests because the only call site is inside
-/// `run()`, which is `#[mutants::skip]`.
+/// On Windows, Windows Terminal (`WT_SESSION` set) is checked first —
+/// it always supports italics regardless of `$TERM`.  For Git Bash / MSYS2,
+/// the `$TERM` fallback path handles `cygwin` and `mintty` values.
+///
+/// This is a thin shim; the `$TERM`-matching logic lives in
+/// [`term_supports_italic`], which is fully tested.
 #[mutants::skip]
 pub fn supports_italic() -> bool {
+    // Windows Terminal always supports italics.
+    #[cfg(windows)]
+    if std::env::var("WT_SESSION").is_ok() {
+        return true;
+    }
     term_supports_italic(&std::env::var("TERM").unwrap_or_default())
 }
 
@@ -607,8 +638,9 @@ mod tests {
         assert!(warnings.is_empty());
     }
 
-    // --- XDG config path ---
+    // --- XDG config path (Unix only) ---
 
+    #[cfg(not(windows))]
     #[test]
     fn xdg_config_home_used_when_set() {
         // Use a unique env key to avoid cross-test interference.
@@ -619,6 +651,33 @@ mod tests {
         assert_eq!(
             path,
             PathBuf::from("/tmp/custom_yame_test/yame/config.toml")
+        );
+    }
+
+    // --- Windows config path ---
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_appdata_config_path() {
+        // SAFETY: single-threaded test context; no other threads read this var.
+        unsafe { std::env::set_var("APPDATA", r"C:\Users\test\AppData\Roaming") };
+        let path = config_path();
+        unsafe { std::env::remove_var("APPDATA") };
+        assert_eq!(
+            path,
+            PathBuf::from(r"C:\Users\test\AppData\Roaming\yame\config.toml")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_config_path_ends_with_config_toml() {
+        // Even without controlling APPDATA, the result must end with yame\config.toml.
+        let path = config_path();
+        assert!(
+            path.ends_with("yame\\config.toml") || path.ends_with("yame/config.toml"),
+            "Windows config path must end with yame\\config.toml, got: {}",
+            path.display()
         );
     }
 
@@ -647,6 +706,18 @@ mod tests {
     #[test]
     fn italic_supported_for_xterm_kitty_prefix() {
         assert!(term_supports_italic("xterm-kitty"));
+    }
+
+    #[test]
+    fn italic_supported_for_cygwin() {
+        // MSYS2 / Git Bash default TERM value.
+        assert!(term_supports_italic("cygwin"));
+    }
+
+    #[test]
+    fn italic_supported_for_mintty() {
+        // mintty terminal emulator (Git for Windows).
+        assert!(term_supports_italic("mintty"));
     }
 
     // --- DEFAULT_CONFIG_TEMPLATE ---

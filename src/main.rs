@@ -124,7 +124,10 @@ fn print_help() {
     println!("  Ctrl+R  Reload config");
     println!("  Arrow keys · Home/End · PgUp/PgDn · mouse click / drag / scroll");
     println!();
+    #[cfg(not(windows))]
     println!("CONFIG  ~/.config/yame/config.toml  (respects $XDG_CONFIG_HOME)");
+    #[cfg(windows)]
+    println!(r"CONFIG  %APPDATA%\yame\config.toml");
     println!();
     println!("  https://github.com/cyrusae/yame");
 }
