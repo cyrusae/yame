@@ -547,7 +547,7 @@ fn apply_selection_overlay(
                     let y = area.y + visual_row as u16;
                     let x_start =
                         area.x + GUTTER + continuation_indent + (row_sel_start - char_start) as u16;
-                    let x_end = (area.x + GUTTER + (row_sel_end - char_start) as u16)
+                    let x_end = (area.x + GUTTER + continuation_indent + (row_sel_end - char_start) as u16)
                         .min(area.x + GUTTER + content_width as u16);
                     for x in x_start..x_end {
                         buf[(x, y)].set_fg(sel_fg).set_bg(sel_bg);
@@ -1506,16 +1506,16 @@ mod tests {
     // Selection: full line (0..10).
     //
     // Sub-row 0 (wrap_idx=0): ci must be 0 (original: wrap_idx > 0 is false).
-    //   x_start=1, x_end=min(1+6, 1+6)=7. Highlights x=1..6.
+    //   x_start=1+0+0=1, x_end=min(1+0+6, 1+6)=min(7,7)=7. Highlights x=1..6.
     // Sub-row 1 (wrap_idx=1): ci=2 (original: wrap_idx > 0 is true).
-    //   x_start=1+2+0=3, x_end=min(1+(10-6), 1+6)=min(5,7)=5. Highlights x=3..4.
+    //   x_start=1+2+0=3, x_end=min(1+2+(10-6), 1+6)=min(7,7)=7. Highlights x=3..6.
     //
     // Kills:
     //   346:71  *→+ or *→/: cw=5 → sub-row 0 x_end clips at 6, cell (6,0) excluded.
     //   375:56  >→== / >→>=: ci applied to sub-row 0 → x_start=3, cell (1,0) excluded.
     //   375:56  >→<: no ci ever → sub-row 1 x_start=1, cell (1,1) highlighted (wrong).
     //   407:80  -→+: x_start=1+2+(6+6)=15, out of area → cell (3,1) not highlighted.
-    //   408:65  -→+: x_end=min(1+(10+6),7)=7 → cell (5,1) highlighted (wrong).
+    //   408:97  -→+: x_end=min(1+2+(10+6),7)=7 (same); killed instead by (5,1) and (6,1).
     //   409:37  +→*: min clips 1 cell early → cell (6,0) not highlighted.
     //   409:46  +→*: same.
     #[test]
@@ -1573,20 +1573,35 @@ mod tests {
             sel_bg,
             "sub-row 1 x=1 must not be highlighted (before continuation_indent=2)"
         );
-        // Sub-row 1, first highlighted cell: x = GUTTER + ci + (char_start - char_start) = 1+2+0 = 3.
-        // With >→<: ci=0 → x_start=1, cell (1,1) highlighted instead.
+        // Sub-row 1, all four chars "ghij" at x=3..6 must be highlighted.
+        // x_start=GUTTER+ci+0=3, x_end=min(GUTTER+ci+(10-6), GUTTER+cw)=min(7,7)=7.
+        // With >→<: ci=0 → x_start=1, cell (1,1) highlighted instead of (3,1).
         // With 407:80 -→+: x_start=1+2+(6+6)=15, out of area → cell (3,1) not highlighted.
         assert_eq!(
             buf.cell((3, 1)).unwrap().bg,
             sel_bg,
-            "sub-row 1 first char (x=3 with ci=2) must be highlighted"
+            "sub-row 1 char 0 'g' (x=3 with ci=2) must be highlighted"
         );
-        // Sub-row 1, one past the last char (x=5): must not be highlighted (char_len=4, x_end=5).
-        // With 408:65 -→+: x_end=min(1+(10+6),7)=7 → x=5 highlighted (wrong).
-        assert_ne!(
+        assert_eq!(
+            buf.cell((4, 1)).unwrap().bg,
+            sel_bg,
+            "sub-row 1 char 1 'h' (x=4) must be highlighted"
+        );
+        assert_eq!(
             buf.cell((5, 1)).unwrap().bg,
             sel_bg,
-            "sub-row 1 x=5 (past char_len=4) must not be highlighted"
+            "sub-row 1 char 2 'i' (x=5) must be highlighted"
+        );
+        assert_eq!(
+            buf.cell((6, 1)).unwrap().bg,
+            sel_bg,
+            "sub-row 1 char 3 'j' (x=6) must be highlighted"
+        );
+        // x=7 is one past the last char on sub-row 1 — must not be highlighted.
+        assert_ne!(
+            buf.cell((7, 1)).unwrap().bg,
+            sel_bg,
+            "sub-row 1 x=7 (one past char_len=4 with ci=2) must not be highlighted"
         );
     }
 
