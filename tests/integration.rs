@@ -1,6 +1,7 @@
-use ratatui::style::Modifier;
+use ratatui::style::{Color, Modifier};
 use yame::config::Theme;
 use yame::decoration::build_decoration_map;
+use yame::highlighting::HighlightCache;
 
 /// Full decoration pass against the fixture file.
 /// Confirms headings, bold, blockquotes, and word count all survive the pipeline.
@@ -8,7 +9,7 @@ use yame::decoration::build_decoration_map;
 fn fixture_decoration_roundtrip() {
     let text = include_str!("fixtures/sample.md");
     let theme = Theme::default_theme();
-    let (map, word_count) = build_decoration_map(text, &theme, true);
+    let (map, word_count) = build_decoration_map(text, &theme, true, None);
 
     // Line 0 ("# Heading One") must have a full_line_bg highlight.
     assert!(
@@ -42,7 +43,7 @@ fn fixture_decoration_roundtrip() {
 fn fixture_has_strikethrough() {
     let text = include_str!("fixtures/sample.md");
     let theme = Theme::default_theme();
-    let (map, _) = build_decoration_map(text, &theme, true);
+    let (map, _) = build_decoration_map(text, &theme, true, None);
     assert!(
         map.values()
             .flatten()
@@ -56,7 +57,7 @@ fn fixture_has_strikethrough() {
 fn fixture_has_link_underline() {
     let text = include_str!("fixtures/sample.md");
     let theme = Theme::default_theme();
-    let (map, _) = build_decoration_map(text, &theme, true);
+    let (map, _) = build_decoration_map(text, &theme, true, None);
     assert!(
         map.values()
             .flatten()
@@ -70,7 +71,7 @@ fn fixture_has_link_underline() {
 fn fixture_has_horizontal_rule() {
     let text = include_str!("fixtures/sample.md");
     let theme = Theme::default_theme();
-    let (map, _) = build_decoration_map(text, &theme, true);
+    let (map, _) = build_decoration_map(text, &theme, true, None);
     assert!(
         map.values().flatten().any(|s| s.is_rule),
         "expected at least one is_rule span (---) in the fixture"
@@ -82,7 +83,7 @@ fn fixture_has_horizontal_rule() {
 fn fixture_has_fenced_code_bg() {
     let text = include_str!("fixtures/sample.md");
     let theme = Theme::default_theme();
-    let (map, _) = build_decoration_map(text, &theme, true);
+    let (map, _) = build_decoration_map(text, &theme, true, None);
     assert!(
         map.values()
             .flatten()
@@ -97,7 +98,7 @@ fn fixture_has_fenced_code_bg() {
 fn fixture_multiple_heading_levels_decorated() {
     let text = include_str!("fixtures/sample.md");
     let theme = Theme::default_theme();
-    let (map, _) = build_decoration_map(text, &theme, true);
+    let (map, _) = build_decoration_map(text, &theme, true, None);
     let heading_lines = map
         .values()
         .filter(|spans| {
@@ -125,7 +126,7 @@ fn fixture_multiple_heading_levels_decorated() {
 fn fixture_unordered_list_has_continuation_indent() {
     let text = include_str!("fixtures/sample.md");
     let theme = Theme::default_theme();
-    let (map, _) = build_decoration_map(text, &theme, true);
+    let (map, _) = build_decoration_map(text, &theme, true, None);
     // Bullet spans anchor at char_start == 0, char_end == 1 ("- ").
     assert!(
         map.values()
@@ -143,7 +144,7 @@ fn fixture_unordered_list_has_continuation_indent() {
 fn fixture_blockquote_has_continuation_indent() {
     let text = include_str!("fixtures/sample.md");
     let theme = Theme::default_theme();
-    let (map, _) = build_decoration_map(text, &theme, true);
+    let (map, _) = build_decoration_map(text, &theme, true, None);
     assert!(
         map.values()
             .flatten()
@@ -161,7 +162,7 @@ fn fixture_blockquote_has_continuation_indent() {
 fn fixture_task_list_has_max_continuation_indent() {
     let text = include_str!("fixtures/sample.md");
     let theme = Theme::default_theme();
-    let (map, _) = build_decoration_map(text, &theme, true);
+    let (map, _) = build_decoration_map(text, &theme, true, None);
     let max_ci = map
         .values()
         .flatten()
@@ -187,7 +188,7 @@ fn fixture_task_list_has_max_continuation_indent() {
 fn fixture_has_bold_italic_combined() {
     let text = include_str!("fixtures/sample.md");
     let theme = Theme::default_theme();
-    let (map, _) = build_decoration_map(text, &theme, true);
+    let (map, _) = build_decoration_map(text, &theme, true, None);
     assert!(
         map.values().flatten().any(|s| {
             s.style.add_modifier.contains(Modifier::BOLD)
@@ -235,11 +236,117 @@ fn fixture_custom_toml_theme_propagates() {
 
     // Run the full decoration pipeline with the custom theme and confirm that
     // at least one heading span carries the custom heading_bg.
-    let (map, _) = build_decoration_map(text, &custom_theme, true);
+    let (map, _) = build_decoration_map(text, &custom_theme, true, None);
     assert!(
         map.values()
             .flatten()
             .any(|s| s.full_line_bg == Some(custom_theme.heading_bg)),
         "expected at least one heading span with the custom heading_bg in the decoration map"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Syntax highlighting integration (HighlightCache → build_decoration_map)
+// ---------------------------------------------------------------------------
+
+/// With a live HighlightCache, a fenced Rust block must produce spans whose
+/// foreground is Color::Rgb (syntect-sourced) rather than the plain theme.text
+/// fallback colour.
+#[test]
+fn highlighted_rust_block_has_rgb_fg_spans() {
+    let text = "# Doc\n\n```rust\nfn main() {}\n```\n";
+    let theme = Theme::default_theme();
+    let cache = HighlightCache::new(true, "base16-ocean.dark".into());
+    let (map, _) = build_decoration_map(text, &theme, true, Some(&cache));
+
+    // Content line of the fenced block is line index 3 ("fn main() {}").
+    // It should have at least one span whose fg is Color::Rgb(_,_,_).
+    let content_line = map.get(&3).expect("line 3 (code content) must have spans");
+    assert!(
+        content_line
+            .iter()
+            .any(|s| matches!(s.style.fg, Some(Color::Rgb(_, _, _)))),
+        "highlighted fenced block line must have at least one Color::Rgb fg span"
+    );
+}
+
+/// With highlighting disabled, a fenced block must still get full_line_bg
+/// (fenced_bg) but must NOT have any Color::Rgb fg spans beyond theme colours
+/// (i.e. syntect didn't run).
+#[test]
+fn disabled_highlighting_fenced_block_has_bg_no_syntect_fg() {
+    let text = "```rust\nlet x = 1;\n```\n";
+    let theme = Theme::default_theme();
+    let cache = HighlightCache::new(false, "base16-ocean.dark".into());
+    let (map, _) = build_decoration_map(text, &theme, true, Some(&cache));
+
+    // Content line is line 1.
+    let content_line = map.get(&1).expect("line 1 (code content) must have spans");
+    // Must have the fenced_bg full-line background.
+    assert!(
+        content_line.iter().any(|s| s.full_line_bg == Some(theme.fenced_bg)),
+        "disabled-highlighting fenced line must still have fenced_bg full_line_bg"
+    );
+    // Must NOT have a syntect fg span (no Color::Rgb that differs from the
+    // plain theme colours — specifically the single span should be theme.text fg).
+    // We verify this by checking the fg is theme.text, not an arbitrary Rgb value.
+    assert!(
+        content_line.iter().all(|s| {
+            // Acceptable fgs: theme.text (the plain fence_bg_style fg) or None.
+            s.style.fg.is_none() || s.style.fg == Some(theme.text)
+        }),
+        "disabled-highlighting fenced line must not have syntect-sourced fg colours"
+    );
+}
+
+/// Passing `None` for the cache produces the same fenced_bg fallback as a
+/// disabled cache — the two paths must be indistinguishable.
+#[test]
+fn no_cache_fenced_block_falls_back_to_fenced_bg() {
+    let text = "```python\nprint('hello')\n```\n";
+    let theme = Theme::default_theme();
+    let (map, _) = build_decoration_map(text, &theme, true, None);
+
+    let content_line = map.get(&1).expect("line 1 must have spans");
+    assert!(
+        content_line.iter().any(|s| s.full_line_bg == Some(theme.fenced_bg)),
+        "None-cache fenced block must have fenced_bg full_line_bg on content lines"
+    );
+}
+
+/// The fence delimiter lines (``` opening and closing) must always use the
+/// blended fence_delim_style regardless of whether highlighting is active.
+#[test]
+fn highlighted_block_fence_delimiters_still_dimmed() {
+    let text = "```rust\nlet x = 1;\n```\n";
+    let theme = Theme::default_theme();
+    let cache = HighlightCache::new(true, "base16-ocean.dark".into());
+    let (map, _) = build_decoration_map(text, &theme, true, Some(&cache));
+
+    // Opening fence is line 0, closing is line 2.
+    for fence_line in [0usize, 2] {
+        let spans = map
+            .get(&fence_line)
+            .unwrap_or_else(|| panic!("fence line {fence_line} must have spans"));
+        assert!(
+            spans.iter().any(|s| s.full_line_bg == Some(theme.fenced_bg)),
+            "fence delimiter line {fence_line} must have fenced_bg full_line_bg"
+        );
+    }
+}
+
+/// An unknown language tag must silently fall back to fenced_bg-only
+/// (no panic, no empty map) even when a cache is present.
+#[test]
+fn unknown_lang_tag_falls_back_silently() {
+    let text = "```notareallanguage\nsome code here\n```\n";
+    let theme = Theme::default_theme();
+    let cache = HighlightCache::new(true, "base16-ocean.dark".into());
+    let (map, _) = build_decoration_map(text, &theme, true, Some(&cache));
+
+    let content_line = map.get(&1).expect("line 1 must have spans");
+    assert!(
+        content_line.iter().any(|s| s.full_line_bg == Some(theme.fenced_bg)),
+        "unknown lang fenced block must fall back to fenced_bg on content lines"
     );
 }

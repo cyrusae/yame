@@ -6,6 +6,7 @@ use tui_textarea::TextArea;
 
 use crate::config::Theme;
 use crate::decoration::DecorationMap;
+use crate::highlighting::HighlightCache;
 use crate::status::StatusLine;
 
 /// All mutable application state.
@@ -55,6 +56,9 @@ pub struct App {
     /// Prevents handle_save from growing a 0-byte file to a 1-byte bare newline
     /// when the buffer is still empty.  Reset to false after any non-empty save.
     pub initial_file_empty: bool,
+    /// Syntect highlight cache. `None` when highlighting is disabled in config.
+    /// Populated at startup from `[highlighting] enabled` + `syntect_theme`.
+    pub highlight_cache: Option<HighlightCache>,
 }
 
 impl App {
@@ -67,6 +71,7 @@ impl App {
         powerline_glyphs: bool,
         config_warnings: Vec<String>,
         tab_width: usize,
+        highlight_cache: Option<HighlightCache>,
     ) -> io::Result<Self> {
         // Detect whether the file is empty/new before loading, so handle_save can
         // preserve the 0-byte state instead of growing the file to a bare newline.
@@ -96,6 +101,7 @@ impl App {
             content_width: 0,
             clipboard: None,
             initial_file_empty,
+            highlight_cache,
         })
     }
 
@@ -243,6 +249,7 @@ mod tests {
             content_width: 0,
             clipboard: None,
             initial_file_empty: false,
+            highlight_cache: None,
         }
     }
 

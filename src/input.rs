@@ -436,7 +436,8 @@ where
     // Initial decoration pass.
     {
         let text = app.textarea.lines().join("\n");
-        let (map, wc) = build_decoration_map(&text, &app.theme, app.italic_support);
+        let (map, wc) =
+            build_decoration_map(&text, &app.theme, app.italic_support, app.highlight_cache.as_ref());
         app.decoration_map = map;
         app.word_count = wc;
     }
@@ -447,7 +448,12 @@ where
     loop {
         if app.force_redecorate || app.last_keystroke.is_some_and(|t| t.elapsed() >= DEBOUNCE) {
             let text = app.textarea.lines().join("\n");
-            let (map, wc) = build_decoration_map(&text, &app.theme, app.italic_support);
+            let (map, wc) = build_decoration_map(
+                &text,
+                &app.theme,
+                app.italic_support,
+                app.highlight_cache.as_ref(),
+            );
             app.decoration_map = map;
             app.word_count = wc;
             app.last_keystroke = None;
@@ -666,6 +672,7 @@ mod tests {
             content_width: 0,
             clipboard: None,
             initial_file_empty: false,
+            highlight_cache: None,
         }
     }
 

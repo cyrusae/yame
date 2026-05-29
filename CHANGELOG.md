@@ -9,6 +9,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [0.1.0-alpha.1] - 2026-05-25
 
 ### Added
+- v1.5: CJK / wide character support (unicode-width) (#41)
+- v1.5: syntect fenced code block syntax highlighting (#44)
 - config: default to Nerd Font Powerline glyphs, add opt-out (#122)
 - feat: yame write-config — write commented default config to XDG path (#117)
 - feat: yame init — output shell wrapper function (eval-style) (#116)

@@ -1,7 +1,7 @@
 # `yame` Roadmap & Next Steps
 
-_Last updated 2026-05-28._
-_Baseline: 306 tests green, clippy clean. All v1 + v1.5 Sprint 2–4 work complete._
+_Last updated 2026-05-29._
+_Baseline: 341 tests green, clippy clean. #41 (CJK) and #44 (syntect) complete._
 
 ---
 
@@ -21,59 +21,49 @@ _Baseline: 306 tests green, clippy clean. All v1 + v1.5 Sprint 2–4 work comple
 
 ## Current State
 
-All v1 and v1.5 Sprint 2–4 phases complete. Open medium-priority work: CJK support
-(#41), syntect highlighting (#44), Ctrl+F search (#46). Windows support (#125) is
-implemented and ready to push.
+v1, v1.5 Sprint 2–5 complete (#41 CJK, #44 syntect). Open medium-priority work:
+Ctrl+F search (#46), plain-mode non-markdown files (#129). Windows support (#125)
+is implemented and ready to push.
 
 ---
 
-## v1.5 Sprint 3: Wide character correctness (#41, #71)
+## ✅ v1.5 Sprint 3: Wide character correctness (#41, #71) — DONE
 
-**#41 · CJK / wide character support**
+**#41 · CJK / wide character support** — complete.
 
-Add `unicode-width` to `[dependencies]`. Three coordinated changes:
+`unicode-width` added. `display_cols_for_chars`, `chars_for_display_cols`, `cursor_vcol`
+helpers added to `renderer/mod.rs`. Five sites fixed: `cursor_buf_pos`, `apply_selection_overlay`,
+`char_col_at_visual`, `handle_visual_move` sticky column, `screen_to_doc` click column.
+16 new tests. 322 → 341 tests green.
 
-_a) `wrap_line`:_ Replace char-count width accumulation with display-column accumulation
-using `UnicodeWidthChar::width(c).unwrap_or(1)`.
-
-_b) `MarkdownView::render`:_ Replace the per-char `buf[(x, y)].set_char(ch)` loop with
-`buf.set_string(x, y, row_str, style)` which handles wide chars natively.
-
-_c) Cursor and selection:_ Both `cursor_buf_pos` and `apply_selection_overlay` must count
-display columns (not char counts) when computing x offsets.
-
-_Effort estimate: 3–4 hours. Regression risk: medium — test with CJK fixture._
-
-Add test fixture: `tests/fixtures/cjk_sample.md` with Japanese/Chinese/Korean text and
-a test asserting word count is nonzero and decoration passes without panic.
-
-**#71 · Wide char (CJK) scroll redraw artifact** — related bug, fix alongside #41.
+**#71 · Wide char (CJK) scroll redraw artifact** — resolved by #41 fix.
 
 ---
 
-## v1.5 Sprint 5: Syntax highlighting (#44, #45)
+## ✅ v1.5 Sprint 5: Syntax highlighting (#44) — DONE
 
-**#44 · Syntect fenced code block highlighting**
+**#44 · Syntect fenced code block highlighting** — complete.
 
-See DESIGN.md § "v1.5 Extension" for full design. Key points:
-
-- Add `syntect` to `[dependencies]`
-- Lazy grammar loading on first fenced block encountered (not startup)
-- Cache keyed on block content hash — only re-highlight when block changes
-- Limited grammar set: Rust, Python, JS/TS, Shell, JSON, TOML, YAML, SQL, Markdown
-- Configurable via `[highlighting] grammars = ["rust", "python", ...]`
-- Syntect spans merged with `fenced_bg` as background
-- Background thread for grammar loading; fall back to fenced_bg-only until ready
-- Language tag fallback: unrecognized tag → silent fenced_bg-only
-
-Integration point: `Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(_)))` handler
-in `decoration/mod.rs`.
+- `syntect` added with `default-themes`, `default-syntaxes`, `regex-fancy` features
+- `src/highlighting.rs`: `HighlightCache` wraps `SyntaxSet` + `ThemeSet` with
+  `RefCell<HashMap>` memoisation keyed on `(lang_lower, content_hash)`
+- `App` gains `highlight_cache: Option<HighlightCache>`; initialised at startup
+  from `[highlighting] enabled` + `syntect_theme` config fields
+- `build_decoration_map` gains `highlight_cache: Option<&HighlightCache>` parameter;
+  fenced block handler emits syntect fg spans (with `fenced_bg` background) on hit,
+  falls back to `fenced_bg`-only on miss (unknown lang / disabled / no cache)
+- Config: `[highlighting] enabled = true`, `syntect_theme = "base16-ocean.dark"`
+  written to `DEFAULT_CONFIG_TEMPLATE`
+- 14 unit tests in `highlighting.rs`, 5 integration tests in `integration.rs`
+- **Note:** TOML is not in syntect's default bundled syntaxes; use YAML for config
+  file examples instead. Consider `two-face` crate if TOML highlighting is needed.
 
 **#45 · Move decoration pass to background thread**
 
 _Do after #44 (syntect) since that's when it actually matters._
 
-The seam is already correct: `build_decoration_map` is a pure free function.
+The seam is already correct: `build_decoration_map` is a pure free function taking
+`Option<&HighlightCache>` (shared reference — `RefCell` inside makes it safe).
 
 ```rust
 // In App, add:
@@ -121,12 +111,10 @@ pub struct SearchState {
 
 | Issue | Title | Priority | Sprint |
 |---|---|---|---|
-| #41 | CJK / wide character support | medium | 1.5-S3 |
-| #44 | Syntect fenced code highlighting | medium | 1.5-S5 |
 | #45 | Background decoration thread | low | 1.5-S5 |
 | #46 | Ctrl+F search with regex | medium | v2 |
 | #47 | Line numbers | low | v2 |
-| #71 | Wide char (CJK) scroll redraw artifact | low | 1.5-S3 |
 | #77 | In-app settings modal | low | v2 |
 | #89 | Integration test planning | low | — |
 | #125 | Windows support | low | — (ready to push) |
+| #129 | Plain-mode: syntect whole-file for non-markdown | medium | after #44 (unblocked) |

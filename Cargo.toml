@@ -25,6 +25,7 @@ arboard = "3"
 # on non-test functions, which aren't visible to the compiler via dev-dep paths.
 mutants = "0.0.4"
 unicode-width = "0.2"
+syntect = { version = "5.3.0", default-features = false, features = ["default-themes", "default-syntaxes", "regex-fancy"] }
 
 [profile.release]
 strip = true

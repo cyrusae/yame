@@ -81,6 +81,28 @@ pub struct LayoutConfig {
     pub powerline_glyphs: Option<bool>,
 }
 
+/// Configuration for syntax highlighting of fenced code blocks.
+#[derive(Debug, Deserialize)]
+#[serde(default)]
+pub struct HighlightingConfig {
+    /// Enable syntect syntax highlighting for fenced code blocks. Default true.
+    pub enabled: bool,
+    /// Name of the bundled syntect theme to use for token colours.
+    /// Available: "base16-ocean.dark", "base16-ocean.light", "base16-eighties.dark",
+    /// "base16-mocha.dark", "InspiredGitHub", "Solarized (dark)", "Solarized (light)".
+    /// Invalid names fall back to "base16-ocean.dark".
+    pub syntect_theme: String,
+}
+
+impl Default for HighlightingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            syntect_theme: "base16-ocean.dark".into(),
+        }
+    }
+}
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -88,6 +110,7 @@ pub struct Config {
     pub theme: ThemeOverrides,
     pub headings: HeadingColors,
     pub layout: LayoutConfig,
+    pub highlighting: HighlightingConfig,
 }
 
 // ---------------------------------------------------------------------------
@@ -408,6 +431,13 @@ warning = "#f38ba8"   # dirty flag, warnings
 # min_cols         = 60     # minimum editing-column width in characters
 # tab_width        = 4      # spaces per tab character expanded on load
 # powerline_glyphs = true   # set false to use the universal │ separator (no Nerd Font required)
+
+# ── Syntax highlighting ────────────────────────────────────────────────────────
+[highlighting]
+# enabled       = true             # set false to disable fenced-block syntax highlighting
+# syntect_theme = "base16-ocean.dark"
+#   Other bundled themes: base16-ocean.light · base16-eighties.dark · base16-mocha.dark
+#                         InspiredGitHub · Solarized (dark) · Solarized (light)
 "##;
 
 pub fn config_path() -> PathBuf {

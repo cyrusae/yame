@@ -4,6 +4,7 @@ use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, T
 use ratatui::style::{Color, Modifier, Style};
 
 use crate::config::{Theme, blend_colors};
+use crate::highlighting::HighlightCache;
 
 mod spans;
 mod words;
@@ -210,11 +211,15 @@ pub type DecorationMap = HashMap<usize, Vec<StyledSpan>>;
 /// Returns `(DecorationMap, word_count)` so callers avoid a second parser pass.
 /// Pure function — no terminal or UI side effects. This is the v1.5 migration seam:
 /// when moving to a background thread, only the call site changes.
+///
+/// `highlight_cache` is optional: pass `Some(&cache)` to enable syntect syntax
+/// highlighting for fenced code blocks, or `None` to disable it (fenced_bg-only).
 #[mutants::skip]
 pub fn build_decoration_map(
     text: &str,
     theme: &Theme,
     italic_support: bool,
+    highlight_cache: Option<&HighlightCache>,
 ) -> (DecorationMap, usize) {
     let line_starts = line_start_bytes(text);
     let mut map: DecorationMap = HashMap::new();
@@ -538,8 +543,6 @@ pub fn build_decoration_map(
             }
 
             // ---- e. Fenced code blocks ----
-            // DEFERRED(v1.5): pass block content and language tag to syntect for
-            // syntax highlighting.
             Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(lang))) => {
                 let (start_line, _) = byte_to_line_char(&line_starts, text, range.start);
                 let (end_line, _) = byte_to_line_char(
@@ -603,20 +606,77 @@ pub fn build_decoration_map(
                     }
                 }
 
-                // Content lines: fenced_bg background only.
-                for line in (start_line + 1)..end_line {
+                // Content lines: try syntect highlighting, fall back to fenced_bg-only.
+                //
+                // Extract the raw content (with newlines) between the fence delimiters
+                // so syntect sees exactly what the user typed.
+                let lang_str = lang.as_ref();
+                let block_content: String = ((start_line + 1)..end_line)
+                    .map(|l| {
+                        let ls = line_starts[l];
+                        let le = if l + 1 < line_starts.len() {
+                            line_starts[l + 1]
+                        } else {
+                            text.len()
+                        };
+                        &text[ls..le]
+                    })
+                    .collect();
+
+                let hl_result: Option<crate::highlighting::BlockHighlights> = highlight_cache
+                    .and_then(|cache| cache.highlight_block(lang_str, &block_content));
+
+                for (block_row, line) in ((start_line + 1)..end_line).enumerate() {
                     let line_len = line_char_len(&line_starts, text, line).max(1);
-                    push_span(
-                        &mut map,
-                        line,
-                        StyledSpan {
-                            char_start: 0,
-                            char_end: line_len,
-                            style: fence_bg_style,
-                            full_line_bg: Some(theme.fenced_bg),
-                            ..Default::default()
-                        },
-                    );
+
+                    match hl_result.as_ref().and_then(|hl| hl.get(block_row)) {
+                        Some(hl_spans) if !hl_spans.is_empty() => {
+                            // Background span covering the whole line (ensures full_line_bg).
+                            push_span(
+                                &mut map,
+                                line,
+                                StyledSpan {
+                                    char_start: 0,
+                                    char_end: line_len,
+                                    style: Style::default().bg(theme.fenced_bg),
+                                    full_line_bg: Some(theme.fenced_bg),
+                                    ..Default::default()
+                                },
+                            );
+                            // Syntect foreground spans (clipped to line_len for safety).
+                            for hl_span in hl_spans {
+                                let cs = hl_span.char_start.min(line_len);
+                                let ce = hl_span.char_end.min(line_len);
+                                if cs < ce {
+                                    push_span(
+                                        &mut map,
+                                        line,
+                                        make_span(
+                                            cs,
+                                            ce,
+                                            Style::default()
+                                                .fg(hl_span.fg)
+                                                .bg(theme.fenced_bg),
+                                        ),
+                                    );
+                                }
+                            }
+                        }
+                        _ => {
+                            // No highlights (disabled / unknown lang / empty line) — fenced_bg.
+                            push_span(
+                                &mut map,
+                                line,
+                                StyledSpan {
+                                    char_start: 0,
+                                    char_end: line_len,
+                                    style: fence_bg_style,
+                                    full_line_bg: Some(theme.fenced_bg),
+                                    ..Default::default()
+                                },
+                            );
+                        }
+                    }
                 }
 
                 // Closing fence line.
@@ -1006,7 +1066,7 @@ mod tests {
 
     /// Convenience wrapper: run build_decoration_map and discard the word count.
     fn build_map(text: &str, theme: &Theme, italic_support: bool) -> DecorationMap {
-        build_decoration_map(text, theme, italic_support).0
+        build_decoration_map(text, theme, italic_support, None).0
     }
 
     // ---- Byte mapping tests ----

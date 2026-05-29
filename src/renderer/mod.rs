@@ -666,6 +666,7 @@ mod tests {
             content_width: 0,
             clipboard: None,
             initial_file_empty: false,
+            highlight_cache: None,
         }
     }
 
