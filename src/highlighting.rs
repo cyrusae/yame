@@ -408,6 +408,42 @@ mod tests {
         assert_eq!(first, second, "cache hit must return identical spans");
     }
 
+    // Kills: highlighting.rs `replace hash_str -> u64 with 0` and `with 1`.
+    // If hash_str always returns a constant, two different content blocks with
+    // the same language key map to the same cache entry.  The second lookup
+    // returns the first block's spans (wrong).
+    #[test]
+    fn cache_miss_different_content_same_language_gives_different_spans() {
+        let cache = make_cache();
+        let hl_let = cache.highlight_block("rust", "let x = 1;\n").unwrap();
+        let hl_fn = cache.highlight_block("rust", "fn foo() -> bool { true }\n").unwrap();
+        // These two Rust snippets have different token structures and must
+        // produce different span lists.  If hash_str → constant, the second
+        // call hits the entry from the first call and returns hl_let wrongly.
+        assert_ne!(
+            hl_let, hl_fn,
+            "different Rust content must produce different span lists (hash must be content-dependent)"
+        );
+    }
+
+    // Kills: highlighting.rs `replace > with >= in highlight_block` (char_count guard).
+    // The syntect tokenizer emits a trailing `\n` piece at the end of each line.
+    // With `>= 0` (always true for usize) that zero-char piece generates a span
+    // with char_start == char_end, violating the non-zero-width invariant.
+    #[test]
+    fn highlight_block_produces_no_zero_width_spans() {
+        let cache = make_cache();
+        let hl = cache.highlight_block("rust", "let x: i32 = 42;\n").unwrap();
+        for (line_idx, spans) in hl.iter().enumerate() {
+            for span in spans {
+                assert!(
+                    span.char_start < span.char_end,
+                    "span on line {line_idx} must be non-zero-width, got {span:?}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn multiline_block_line_count_matches() {
         let cache = make_cache();
@@ -552,6 +588,24 @@ mod tests {
         let theme = Theme::default_theme();
         let pt = build_palette_theme(&theme);
         assert_eq!(pt.name.as_deref(), Some("yame-palette"));
+    }
+
+    // Kills: highlighting.rs `delete field foreground from ThemeSettings`
+    //        and `delete field background from ThemeSettings` in build_palette_theme.
+    // Without these fields the syntect theme uses None for fg/bg, which means
+    // unmatched text falls back to syntect defaults instead of the yame palette.
+    #[test]
+    fn build_palette_theme_sets_foreground_and_background() {
+        let theme = Theme::default_theme();
+        let pt = build_palette_theme(&theme);
+        assert!(
+            pt.settings.foreground.is_some(),
+            "palette theme must have foreground set in ThemeSettings"
+        );
+        assert!(
+            pt.settings.background.is_some(),
+            "palette theme must have background set in ThemeSettings"
+        );
     }
 
     #[test]

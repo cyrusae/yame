@@ -65,6 +65,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Italic default color now matches text color (not accent blend) (#60)
 
 ### Changed
+- kill surviving mutants: screen_to_doc, decoration, highlighting, renderer (#138)
 - Integration test planning: catalogue scenarios from FEEDBACK-1 (#89)
 - perf: lazy-init SyntaxSet/ThemeSet in HighlightCache (defer cost to first code block) (#136)
 - test: assert default-syntaxes coverage (toml, ts, bash, etc) (#134)

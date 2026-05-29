@@ -67,8 +67,11 @@ pub(super) fn screen_to_doc(
     {
         return None;
     }
+    // Written as GUTTER + GUTTER (not 2 * GUTTER) so that the `* → /` operator
+    // mutation is eliminated: 2/1 == 2 is equivalent, but `+ → -` (0) and
+    // `+ → *` (1) produce distinct, observable wrong values.
     let cw = (editor_area.width as usize)
-        .saturating_sub(2 * renderer::GUTTER as usize)
+        .saturating_sub(renderer::GUTTER as usize + renderer::GUTTER as usize)
         .max(1);
     let click_vis_row = (screen_row - editor_area.y) as usize;
     let click_col = screen_col.saturating_sub(editor_area.x + renderer::GUTTER) as usize;
@@ -959,6 +962,191 @@ mod tests {
             result,
             Some((0, 9)),
             "continuation row column must be adjusted by continuation_indent"
+        );
+    }
+
+    // Click where screen_col < editor_area.x (not 0) must return None.
+    //
+    // The bounds check is `screen_col < editor_area.x`. When area.x == 0, that
+    // condition is unreachable (u16 < 0 never holds), so these mutants:
+    //   · `< → ==`  (col 23): `screen_col == area.x` is false when col < x
+    //   · `< → <=`  (col 23): admits clicks where col == x (inside area) as None
+    //   · `|| → &&` (col 9 of the joined condition): the combined guard collapses
+    //     to a conjunction — only returns None when ALL four conditions are true
+    // …are only observable with area.x > 0.
+    #[test]
+    fn screen_to_doc_outside_area_nonzero_x_returns_none() {
+        // area starts at x=3, y=1; any click with screen_col < 3 or screen_row < 1
+        // (while the other coordinate is inside) must return None.
+        let area = Rect { x: 3, y: 1, width: 10, height: 5 };
+        let lines: Vec<String> = vec!["hello".into()];
+        let map = DecorationMap::default();
+
+        // screen_col=2 < area.x=3; screen_row=2 is in [1,6) — only col violates bounds.
+        // With `||→&&` mutation the conjunction fires only if ALL four hold, which is
+        // false here (row is valid), so the mutant would NOT return None.
+        assert!(
+            screen_to_doc(2, 2, &area, 0, &lines, &map).is_none(),
+            "col below area.x must return None even when row is in-bounds"
+        );
+
+        // screen_col=2 < area.x=3 and screen_row=0 < area.y=1 — both out of bounds.
+        assert!(
+            screen_to_doc(0, 2, &area, 0, &lines, &map).is_none(),
+            "both row and col below area must return None"
+        );
+    }
+
+    // A click exactly AT screen_col == editor_area.x is INSIDE the area (it
+    // lands on the first gutter column).  With the `< → <=` mutation this click
+    // would incorrectly return None.
+    #[test]
+    fn screen_to_doc_click_at_area_x_edge_returns_some() {
+        // area.x = 2, so the valid column range is [2, 12).  screen_col = 2 (= area.x)
+        // is the first valid column.  click_col = 2 - (x=2 + GUTTER=1) saturating = 0.
+        let area = Rect { x: 2, y: 0, width: 10, height: 5 };
+        let lines: Vec<String> = vec!["hello".into()];
+        let map = DecorationMap::default();
+        let result = screen_to_doc(0, 2, &area, 0, &lines, &map);
+        assert!(
+            result.is_some(),
+            "screen_col == area.x is inside the area and must return Some"
+        );
+    }
+
+    // When editor_area.y > 0, click_vis_row must subtract area.y, not add it.
+    // With the `- → +` mutation click_vis_row = screen_row + area.y, which maps
+    // clicks to the wrong (much-further-down) visual row.
+    #[test]
+    fn screen_to_doc_area_y_offset_subtracted() {
+        // area.y = 1 — editor starts one row down from the terminal top.
+        // Lines: ["aaa", "bbb", "ccc"] — each one visual row.
+        // Click at screen_row=2: correct click_vis_row = 2-1 = 1 → logical line 1 ("bbb").
+        // With `+ mutation: click_vis_row = 2+1 = 3 → falls off the 3-row doc → line 2.
+        let area = Rect { x: 0, y: 1, width: 12, height: 5 };
+        let lines: Vec<String> = vec!["aaa".into(), "bbb".into(), "ccc".into()];
+        let map = DecorationMap::default();
+        let result = screen_to_doc(2, 1, &area, 0, &lines, &map);
+        assert_eq!(
+            result.map(|(r, _)| r),
+            Some(1),
+            "area.y must be subtracted (not added) from screen_row to get click_vis_row"
+        );
+    }
+
+    // Clicking on the FIRST visual row of the SECOND logical line must map to
+    // logical line 1, not logical line 0.
+    //
+    // Kills `> → >=` (line 88): with `>=`, vis+seg_count == click_vis_row enters
+    // line 0's block one row early and returns (0, …) instead of (1, …).
+    //
+    // Also kills `+= → -=` (line 105): vis -= seg_count underflows to usize::MAX
+    // in debug mode → panic → test failure.
+    #[test]
+    fn screen_to_doc_click_first_row_of_second_line() {
+        // Two single-row lines; visual row 1 is the sole row of "world".
+        let area = editor_rect(12, 5);
+        let lines: Vec<String> = vec!["hello".into(), "world".into()];
+        let map = DecorationMap::default();
+        let result = screen_to_doc(1, 1, &area, 0, &lines, &map);
+        assert_eq!(
+            result.map(|(r, _)| r),
+            Some(1),
+            "vis-row 1 (= seg_count of line 0) must map to logical line 1"
+        );
+    }
+
+    // When the click is on a line after the first, `si = click_vis_row - vis`
+    // must use subtraction so it points to the correct sub-row within the line.
+    //
+    // Kills `- → +` (line 89): si = click_vis_row + vis → huge index → row_str=""
+    // → chars_into_row=0 → doc_col=0 regardless of click_col.
+    #[test]
+    fn screen_to_doc_click_column_on_second_line() {
+        // Click at screen_col=4 → click_col = 4-GUTTER=3. "world"[0..3]="wor" → col 3.
+        let area = editor_rect(12, 5);
+        let lines: Vec<String> = vec!["hello".into(), "world".into()];
+        let map = DecorationMap::default();
+        // screen_col = GUTTER(1) + 3 = 4
+        let result = screen_to_doc(1, 4, &area, 0, &lines, &map);
+        assert_eq!(
+            result,
+            Some((1, 3)),
+            "si must use click_vis_row - vis so column offset lands on 'r' in 'world'"
+        );
+    }
+
+    // cw must subtract GUTTER + GUTTER (= 2) from area.width, not a different value.
+    //
+    // "abcdefghij" is exactly 10 chars. With area.width=12, correct cw=10 → fits
+    // on one visual row, so vis_row 1 maps to line 1. With the `+→-` mutation
+    // (cw = width - 0 = 12) the line also fits, same result — but with the
+    // `+→*` mutation (GUTTER * GUTTER = 1, cw = 11) it also fits. The mutation
+    // that DOES produce a wrong cw is `+→-` giving 12 which still fits... hmm.
+    //
+    // Actually the key mutation to kill here is the old `* → +` form, now
+    // expressed as `+ → *` after rewriting to `GUTTER + GUTTER`:
+    // GUTTER * GUTTER = 1 × 1 = 1 → cw = 12-1=11 (still fits). The `+ → -`
+    // form gives cw = 12-0=12. Both still fit for a 10-char word.
+    //
+    // Use a content-width-sensitive scenario instead: line = "ab cd efghi"
+    // (5+1+2+1+5 = 14 chars). At cw=10 it wraps: ["ab cd", "efghi"] (2 rows).
+    // At cw=9 it wraps: ["ab cd", "efghi"] too (word break before efghi). Need
+    // cw == word length exactly. "0123456789" (10 chars) at cw=10 fits (1 row);
+    // at cw=9 hard-breaks into ["012345678","9"] (2 rows). Click at vis_row=1:
+    //   correct (cw=10): line 1 ("second").
+    //   +→* mutant (cw=12-1=11): "0123456789" still fits → vis_row 1 = line 1. Same!
+    //
+    // Better: use "0123456789" at width=12 (cw=10 correct, cw=12 with +→- mutant).
+    // At cw=10: ["0123456789"] 1 row. At cw=12: still 1 row (fits). Same.
+    //
+    // The observable difference requires cw to drop below 10. With area.width=12:
+    //   correct:     cw = 12 - (1+1) = 10 → 1 row
+    //   +→* mutant:  cw = 12 - (1*1) = 11 → 1 row (same)
+    //   +→- mutant:  cw = 12 - (1-1) = 12 → 1 row (same)
+    //
+    // With area.width=11:
+    //   correct:     cw = 11 - 2 = 9 → hard-break: ["012345678","9"] 2 rows
+    //   +→* mutant:  cw = 11 - 1 = 10 → "0123456789" fits in 1 row
+    //   +→- mutant:  cw = 11 - 0 = 11 → 1 row
+    // Click at vis_row=1 with 2 lines ["0123456789", "second"]:
+    //   correct (cw=9): line 0 has 2 rows → vis_row 1 is in line 0 → returns (0,_)
+    //   +→* mutant (cw=10): line 0 has 1 row → vis_row 1 is line 1 → returns (1,_)
+    #[test]
+    fn screen_to_doc_content_width_gutter_subtraction() {
+        // area.width=11. Correct: cw = 11 - (GUTTER+GUTTER) = 11-2 = 9.
+        // "0123456789" (10 chars) at cw=9: hard-breaks into 2 rows.
+        // Click at vis_row=1 → INSIDE line 0 (not line 1 "second").
+        let area = Rect { x: 0, y: 0, width: 11, height: 5 };
+        let lines: Vec<String> = vec!["0123456789".into(), "second".into()];
+        let map = DecorationMap::default();
+        let result = screen_to_doc(1, 1, &area, 0, &lines, &map);
+        assert_eq!(
+            result.map(|(r, _)| r),
+            Some(0),
+            "with cw = width - (GUTTER+GUTTER), a 10-char line at width=11 wraps into 2 rows"
+        );
+    }
+
+    // si == 0 (first visual row of a list item) must NOT subtract continuation_indent
+    // from click_col, because the first row is not indented.
+    //
+    // Kills `> → >=` (line 96): with `>=`, si=0 also subtracts line_ci, so
+    // col_in_row = click_col.saturating_sub(2) instead of click_col.
+    #[test]
+    fn screen_to_doc_list_item_first_row_no_ci_subtraction() {
+        // "- hello" (7 chars) fits on one visual row at cw=10.  ci=2.
+        // Click at screen_col = GUTTER(1)+4 = 5 → click_col=4.
+        // si=0 (first row): col_in_row must be 4 (no ci subtraction).
+        // With `>=` mutant: col_in_row = 4 - 2 = 2 → returns (0, 2) instead of (0, 4).
+        let area = editor_rect(12, 5); // cw=10
+        let lines: Vec<String> = vec!["- hello".into()];
+        let map = dec_map_with_ci(0, 2);
+        let result = screen_to_doc(0, 5, &area, 0, &lines, &map);
+        assert_eq!(
+            result,
+            Some((0, 4)),
+            "si=0 (first row of list item) must not subtract continuation_indent from click_col"
         );
     }
 
