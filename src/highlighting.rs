@@ -177,6 +177,16 @@ pub fn build_palette_theme(yame: &crate::config::Theme) -> SyntectTheme {
 // HighlightCache
 // ---------------------------------------------------------------------------
 
+/// Maximum number of `(lang, content_hash)` entries kept in the memo-cache.
+///
+/// Each entry is a `Vec<Vec<HlSpan>>` — roughly proportional to the number of
+/// tokens in the block.  256 entries is a very generous bound: real documents
+/// rarely have more than a handful of distinct code blocks, so this cap is
+/// effectively never hit in normal use.  When it is hit (e.g. a document with
+/// hundreds of distinct snippets, or a very long editing session), one arbitrary
+/// entry is evicted before the new one is inserted, keeping the map bounded.
+const MAX_CACHE_ENTRIES: usize = 256;
+
 pub struct HighlightCache {
     /// Sublime Text 3 default syntaxes — lazily deserialised on first use.
     syntax_set: OnceLock<SyntaxSet>,
@@ -309,8 +319,30 @@ impl HighlightCache {
             block_hl.push(line_spans);
         }
 
-        self.cache.borrow_mut().insert(key, block_hl.clone());
+        let mut cache = self.cache.borrow_mut();
+        // Evict one arbitrary entry before inserting when the cap is reached.
+        // HashMap iteration order is non-deterministic, so "arbitrary" is fine —
+        // we have no usage-frequency data and all entries are equally cheap to
+        // recompute.  This keeps peak memory O(MAX_CACHE_ENTRIES) without
+        // pulling in an LRU crate.
+        //
+        // The key is cloned out of the immutable borrow before `remove` takes the
+        // mutable one; the `bool::then` short-circuits when below the cap.
+        let evict_key = (cache.len() >= MAX_CACHE_ENTRIES)
+            .then(|| cache.keys().next().cloned())
+            .flatten();
+        if let Some(k) = evict_key {
+            cache.remove(&k);
+        }
+        cache.insert(key, block_hl.clone());
         Some(block_hl)
+    }
+
+    /// Number of entries currently stored in the memo-cache.
+    /// Exposed for unit tests; not used on the hot path.
+    #[cfg(test)]
+    fn cache_len(&self) -> usize {
+        self.cache.borrow().len()
     }
 }
 
@@ -724,6 +756,46 @@ mod tests {
             hl[0].iter().any(|s| s.fg == op_color),
             "an operator span must use op_color; got: {:?}",
             hl[0]
+        );
+    }
+
+    // ---- cache eviction / boundedness ----
+
+    /// Regression for FEEDBACK-2 §2.3: the memo-cache must not grow without
+    /// bound.  Inserting MAX_CACHE_ENTRIES + 1 distinct blocks must leave the
+    /// cache at or below the cap — i.e. at least one eviction must have fired.
+    #[test]
+    fn cache_is_bounded_by_max_entries() {
+        let cache = make_cache();
+        // Each iteration uses unique content so every call is a cache miss,
+        // producing a distinct (lang, hash) key.
+        for i in 0..=MAX_CACHE_ENTRIES {
+            let content = format!("let x{i} = {i};\n");
+            let _ = cache.highlight_block("rust", &content);
+        }
+        assert!(
+            cache.cache_len() <= MAX_CACHE_ENTRIES,
+            "cache must not exceed MAX_CACHE_ENTRIES ({MAX_CACHE_ENTRIES}) entries; \
+             got {}",
+            cache.cache_len()
+        );
+    }
+
+    /// Inserting exactly MAX_CACHE_ENTRIES entries must not trigger eviction
+    /// (the cap is inclusive: we store up to MAX_CACHE_ENTRIES entries before
+    /// evicting on the *next* insert).
+    #[test]
+    fn cache_at_capacity_does_not_lose_entries_prematurely() {
+        let cache = make_cache();
+        // Fill to exactly the cap.
+        for i in 0..MAX_CACHE_ENTRIES {
+            let content = format!("let x{i} = {i};\n");
+            let _ = cache.highlight_block("rust", &content);
+        }
+        assert_eq!(
+            cache.cache_len(),
+            MAX_CACHE_ENTRIES,
+            "cache filled to exactly the cap must hold MAX_CACHE_ENTRIES entries"
         );
     }
 

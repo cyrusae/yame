@@ -8,7 +8,7 @@ use crossterm::{
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
 
-use yame::app::App;
+use yame::app::{App, is_likely_binary, resolve_file_mode};
 use yame::config::{Theme, load_config, supports_italic};
 
 mod commands;
@@ -227,6 +227,15 @@ fn run(file_path: PathBuf) -> io::Result<()> {
             palette_theme,
         )
     });
+    let file_mode = resolve_file_mode(&file_path, &config.filetype);
+
+    // Refuse to open binary files — null bytes would corrupt the editor buffer.
+    if is_likely_binary(&file_path) {
+        eprintln!("error: '{}' appears to be a binary file.", file_path.display());
+        eprintln!("yame can only open text files.");
+        std::process::exit(1);
+    }
+
     let mut app = App::new(
         file_path,
         theme,
@@ -235,6 +244,7 @@ fn run(file_path: PathBuf) -> io::Result<()> {
         warnings,
         tab_width,
         highlight_cache,
+        file_mode,
     )?;
 
     if !italic_support {
@@ -336,6 +346,7 @@ mod tests {
             shortened_path: "test.md".to_string(),
             tab_width: 4,
             highlight_cache: None,
+            file_mode: yame::app::FileMode::Markdown,
         }
     }
 

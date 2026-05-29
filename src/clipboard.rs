@@ -99,6 +99,7 @@ mod tests {
             clipboard: ClipboardState::Uninitialized,
             tab_width: 4,
             highlight_cache: None,
+            file_mode: crate::app::FileMode::Markdown,
         }
     }
 

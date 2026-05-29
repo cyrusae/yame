@@ -4,11 +4,101 @@ use std::time::Instant;
 
 use tui_textarea::TextArea;
 
-use crate::config::Theme;
+use crate::config::{FiletypeConfig, Theme};
 use crate::decoration::DecorationMap;
 use crate::highlighting::HighlightCache;
 use crate::renderer::shorten_path;
 use crate::status::StatusLine;
+
+// ---------------------------------------------------------------------------
+// FileMode
+// ---------------------------------------------------------------------------
+
+/// Determines how the file content is presented.
+///
+/// Resolved from the file's extension and the `[filetype]` config section at
+/// startup and on config reload.  Stored in `App` and consulted by the event
+/// loop when deciding whether to run the markdown decoration pass or apply
+/// whole-file syntect highlighting.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FileMode {
+    /// Full markdown decoration pass + fenced-block highlighting.
+    Markdown,
+    /// Skip markdown decoration; apply syntect syntax highlighting for `lang`
+    /// to the entire file.  `lang` is the syntect language tag (typically the
+    /// lower-cased file extension).
+    PlainHighlight(String),
+    /// Skip all decoration and highlighting; render the file as unstyled text.
+    PlainText,
+}
+
+/// Built-in file extensions treated as Markdown.
+const MARKDOWN_EXTS: &[&str] = &["md", "markdown", "mdx", "mkd", "mkdn", "mdown"];
+
+/// Determine the editing mode for a file from its path and `[filetype]` config.
+///
+/// Resolution order:
+/// 1. Extension in the built-in or configured markdown list → `Markdown`.
+/// 2. Extension present and non-empty → `PlainHighlight(ext)`.
+/// 3. No extension → use `unknown_as` from config (`"markdown"` / `"plain"`).
+pub fn resolve_file_mode(path: &Path, config: &FiletypeConfig) -> FileMode {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase());
+
+    match ext.as_deref() {
+        Some(e)
+            if MARKDOWN_EXTS.contains(&e)
+                || config
+                    .extra_markdown_extensions
+                    .iter()
+                    .any(|ex| ex.eq_ignore_ascii_case(e)) =>
+        {
+            FileMode::Markdown
+        }
+        Some(e) => FileMode::PlainHighlight(e.to_string()),
+        None => {
+            if config.unknown_as.eq_ignore_ascii_case("plain") {
+                FileMode::PlainText
+            } else {
+                FileMode::Markdown
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Binary detection
+// ---------------------------------------------------------------------------
+
+/// Returns `true` if `buf` contains at least one null byte — the most reliable
+/// heuristic for detecting binary data without a magic-number database.
+///
+/// Pure function; separated from the I/O layer so it can be fully unit-tested.
+pub fn contains_binary_bytes(buf: &[u8]) -> bool {
+    buf.contains(&0u8)
+}
+
+/// Detect whether `path` is likely a binary file by scanning its first 4 096
+/// bytes for null bytes.
+///
+/// Returns `false` for paths that do not yet exist (new files are always text)
+/// and for any path that cannot be opened (the downstream `load_file` call will
+/// produce the proper error).
+#[mutants::skip] // Filesystem I/O — mutations are masked by OS state.
+pub fn is_likely_binary(path: &Path) -> bool {
+    use std::io::Read;
+    if !path.exists() {
+        return false;
+    }
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut buf = [0u8; 4096];
+    let n = f.read(&mut buf).unwrap_or(0);
+    contains_binary_bytes(&buf[..n])
+}
 
 /// Three-state clipboard handle.
 ///
@@ -77,11 +167,16 @@ pub struct App {
     /// Syntect highlight cache. `None` when highlighting is disabled in config.
     /// Populated at startup from `[highlighting] enabled` + `syntect_theme`.
     pub highlight_cache: Option<HighlightCache>,
+    /// Editing mode: Markdown decoration, plain syntect highlighting, or plain text.
+    /// Resolved from the file extension and `[filetype]` config at startup and
+    /// updated on config reload (Ctrl+R).
+    pub file_mode: FileMode,
 }
 
 impl App {
     /// Create a new App, loading file content if it exists.
     #[mutants::skip] // Calls load_file (fs I/O) and returns a struct — mutations masked by I/O.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         file_path: PathBuf,
         theme: Theme,
@@ -90,6 +185,7 @@ impl App {
         config_warnings: Vec<String>,
         tab_width: usize,
         highlight_cache: Option<HighlightCache>,
+        file_mode: FileMode,
     ) -> io::Result<Self> {
         let textarea = load_file(&file_path, tab_width)?;
         // Snapshot the initial content so recompute_dirty() has a baseline for both
@@ -118,6 +214,7 @@ impl App {
             clipboard: ClipboardState::Uninitialized,
             tab_width: tab_width.max(1),
             highlight_cache,
+            file_mode,
         })
     }
 
@@ -300,6 +397,7 @@ mod tests {
             clipboard: ClipboardState::Uninitialized,
             tab_width: 4,
             highlight_cache: None,
+            file_mode: FileMode::Markdown,
         }
     }
 
@@ -372,5 +470,123 @@ mod tests {
         // TextArea::new(vec![]) may return [""] — test only that recompute_dirty runs
         // without panic and produces a consistent result.
         app.recompute_dirty(); // must not panic
+    }
+
+    // ── contains_binary_bytes ────────────────────────────────────────────────
+
+    #[test]
+    fn binary_bytes_null_detected() {
+        assert!(contains_binary_bytes(&[b'h', b'i', 0u8, b'!']));
+    }
+
+    #[test]
+    fn binary_bytes_no_null_is_clean() {
+        assert!(!contains_binary_bytes(b"hello world\n"));
+    }
+
+    #[test]
+    fn binary_bytes_empty_slice_is_clean() {
+        assert!(!contains_binary_bytes(&[]));
+    }
+
+    #[test]
+    fn binary_bytes_null_only_slice_detected() {
+        assert!(contains_binary_bytes(&[0u8]));
+    }
+
+    #[test]
+    fn binary_bytes_null_at_start_detected() {
+        assert!(contains_binary_bytes(&[0u8, b'a', b'b']));
+    }
+
+    // ── resolve_file_mode ────────────────────────────────────────────────────
+
+    use crate::config::FiletypeConfig;
+
+    fn default_ft() -> FiletypeConfig {
+        FiletypeConfig::default()
+    }
+
+    #[test]
+    fn resolve_md_extension_is_markdown() {
+        let p = PathBuf::from("notes.md");
+        assert_eq!(resolve_file_mode(&p, &default_ft()), FileMode::Markdown);
+    }
+
+    #[test]
+    fn resolve_markdown_extension_is_markdown() {
+        let p = PathBuf::from("README.markdown");
+        assert_eq!(resolve_file_mode(&p, &default_ft()), FileMode::Markdown);
+    }
+
+    #[test]
+    fn resolve_mdx_extension_is_markdown() {
+        let p = PathBuf::from("page.mdx");
+        assert_eq!(resolve_file_mode(&p, &default_ft()), FileMode::Markdown);
+    }
+
+    #[test]
+    fn resolve_rs_extension_is_plain_highlight() {
+        let p = PathBuf::from("main.rs");
+        assert_eq!(
+            resolve_file_mode(&p, &default_ft()),
+            FileMode::PlainHighlight("rs".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_toml_extension_is_plain_highlight() {
+        let p = PathBuf::from("Cargo.toml");
+        assert_eq!(
+            resolve_file_mode(&p, &default_ft()),
+            FileMode::PlainHighlight("toml".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_extension_normalised_to_lowercase() {
+        // Extensions are lowercased so "RS" and "rs" map to the same lang tag.
+        let p = PathBuf::from("main.RS");
+        assert_eq!(
+            resolve_file_mode(&p, &default_ft()),
+            FileMode::PlainHighlight("rs".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_no_extension_defaults_to_markdown() {
+        // Files like CONTRIBUTING, LICENSE, Makefile → Markdown by default.
+        let p = PathBuf::from("CONTRIBUTING");
+        assert_eq!(resolve_file_mode(&p, &default_ft()), FileMode::Markdown);
+    }
+
+    #[test]
+    fn resolve_no_extension_plain_when_configured() {
+        let ft = FiletypeConfig {
+            unknown_as: "plain".into(),
+            ..Default::default()
+        };
+        let p = PathBuf::from("Makefile");
+        assert_eq!(resolve_file_mode(&p, &ft), FileMode::PlainText);
+    }
+
+    #[test]
+    fn resolve_extra_markdown_extension_honoured() {
+        let ft = FiletypeConfig {
+            extra_markdown_extensions: vec!["txt".into()],
+            ..Default::default()
+        };
+        let p = PathBuf::from("notes.txt");
+        assert_eq!(resolve_file_mode(&p, &ft), FileMode::Markdown);
+    }
+
+    #[test]
+    fn resolve_extra_markdown_extension_case_insensitive() {
+        let ft = FiletypeConfig {
+            extra_markdown_extensions: vec!["TXT".into()],
+            ..Default::default()
+        };
+        let p = PathBuf::from("notes.txt");
+        assert_eq!(resolve_file_mode(&p, &ft), FileMode::Markdown);
     }
 }

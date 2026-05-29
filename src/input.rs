@@ -9,9 +9,9 @@ use crossterm::{
 use ratatui::{Terminal, layout::Rect, style::Style, widgets::Paragraph};
 use tui_textarea::CursorMove;
 
-use yame::app::{App, get_selection_text};
+use yame::app::{App, FileMode, get_selection_text, resolve_file_mode};
 use yame::config::{LayoutConfig, Theme, load_config};
-use yame::decoration::build_decoration_map;
+use yame::decoration::{block_highlights_to_decoration_map, build_decoration_map, count_words};
 use yame::layout::{DEFAULT_MIN_COLS, compute_layout};
 use yame::renderer;
 use yame::status::StatusMode;
@@ -38,6 +38,36 @@ pub(super) enum KeyOutcome {
     Exit,
     /// Ctrl+R: reload config from disk and redisplay a confirmation banner.
     ReloadConfig,
+}
+
+// ---------------------------------------------------------------------------
+// Decoration dispatch
+// ---------------------------------------------------------------------------
+
+/// Run the appropriate decoration / highlighting pass for the current file mode
+/// and return `(DecorationMap, word_count)`.
+///
+/// - `Markdown` → full pulldown-cmark decoration pass (existing path).
+/// - `PlainHighlight(lang)` → syntect whole-file highlight; word count computed
+///   separately via [`count_words`].
+/// - `PlainText` → no decoration; word count only.
+fn decorate(text: &str, app: &App) -> (yame::decoration::DecorationMap, usize) {
+    match &app.file_mode {
+        FileMode::Markdown => {
+            build_decoration_map(text, &app.theme, app.italic_support, app.highlight_cache.as_ref())
+        }
+        FileMode::PlainHighlight(lang) => {
+            let map = app
+                .highlight_cache
+                .as_ref()
+                .and_then(|cache| cache.highlight_block(lang, text))
+                .map(|hl| block_highlights_to_decoration_map(&hl, 0))
+                .unwrap_or_default();
+            let wc = count_words(text);
+            (map, wc)
+        }
+        FileMode::PlainText => (yame::decoration::DecorationMap::default(), count_words(text)),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -454,8 +484,7 @@ where
     // Initial decoration pass.
     {
         let text = app.textarea.lines().join("\n");
-        let (map, wc) =
-            build_decoration_map(&text, &app.theme, app.italic_support, app.highlight_cache.as_ref());
+        let (map, wc) = decorate(&text, app);
         app.decoration_map = map;
         app.word_count = wc;
     }
@@ -466,12 +495,7 @@ where
     loop {
         if app.force_redecorate || app.last_keystroke.is_some_and(|t| t.elapsed() >= DEBOUNCE) {
             let text = app.textarea.lines().join("\n");
-            let (map, wc) = build_decoration_map(
-                &text,
-                &app.theme,
-                app.italic_support,
-                app.highlight_cache.as_ref(),
-            );
+            let (map, wc) = decorate(&text, app);
             app.decoration_map = map;
             app.word_count = wc;
             app.last_keystroke = None;
@@ -600,6 +624,8 @@ where
                                 palette_theme,
                             )
                         });
+                        // Re-resolve file mode in case [filetype] config changed.
+                        app.file_mode = resolve_file_mode(&app.file_path, &new_config.filetype);
                         app.config_warnings = warnings;
                         app.status
                             .set_timed("Config reloaded.", Duration::from_millis(1500));
@@ -679,7 +705,7 @@ mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use std::path::PathBuf;
     use tui_textarea::TextArea;
-    use yame::app::{App, ClipboardState};
+    use yame::app::{App, ClipboardState, FileMode};
     use yame::config::Theme;
     use yame::decoration::DecorationMap;
     use yame::status::StatusLine;
@@ -707,6 +733,7 @@ mod tests {
             clipboard: ClipboardState::Uninitialized,
             tab_width: 4,
             highlight_cache: None,
+            file_mode: FileMode::Markdown,
         }
     }
 

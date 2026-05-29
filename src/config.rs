@@ -109,6 +109,30 @@ impl Default for HighlightingConfig {
     }
 }
 
+/// Configuration for file-type detection and editing mode selection.
+#[derive(Debug, Deserialize)]
+#[serde(default)]
+pub struct FiletypeConfig {
+    /// Additional file extensions (without the leading dot, case-insensitive)
+    /// to treat as Markdown on top of the built-in list
+    /// (`md`, `markdown`, `mdx`, `mkd`, `mkdn`, `mdown`).
+    pub extra_markdown_extensions: Vec<String>,
+    /// What to do with files whose extension is not in the Markdown list and
+    /// not recognised by syntect.
+    /// `"markdown"` (default) — open as Markdown.
+    /// `"plain"` — open as unstyled plain text.
+    pub unknown_as: String,
+}
+
+impl Default for FiletypeConfig {
+    fn default() -> Self {
+        Self {
+            extra_markdown_extensions: vec![],
+            unknown_as: "markdown".into(),
+        }
+    }
+}
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -117,6 +141,7 @@ pub struct Config {
     pub headings: HeadingColors,
     pub layout: LayoutConfig,
     pub highlighting: HighlightingConfig,
+    pub filetype: FiletypeConfig,
 }
 
 // ---------------------------------------------------------------------------
@@ -446,6 +471,18 @@ warning = "#f38ba8"   # dirty flag, warnings
 # syntect_theme = "base16-ocean.dark"   # only used when use_palette_colors = false
 #   Other bundled themes: base16-ocean.light · base16-eighties.dark · base16-mocha.dark
 #                         InspiredGitHub · Solarized (dark) · Solarized (light)
+
+# ── File-type detection ───────────────────────────────────────────────────────
+[filetype]
+# Built-in Markdown extensions: md · markdown · mdx · mkd · mkdn · mdown
+# All other extensions are opened in plain-highlight mode (syntect whole-file).
+#
+# extra_markdown_extensions = []   # additional extensions to treat as Markdown
+#                                  # e.g. ["txt", "rst"]
+#
+# unknown_as = "markdown"          # what to do with extensionless files
+#                                  # (CONTRIBUTING, Makefile, …)
+#                                  # "markdown" (default) | "plain"
 "##;
 
 pub fn config_path() -> PathBuf {

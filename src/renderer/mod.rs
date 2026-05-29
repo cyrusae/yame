@@ -674,6 +674,7 @@ mod tests {
             shortened_path: "notes/foo.md".to_string(),
             tab_width: 4,
             highlight_cache: None,
+            file_mode: crate::app::FileMode::Markdown,
         }
     }
 
