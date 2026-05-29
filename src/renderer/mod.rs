@@ -182,6 +182,65 @@ pub fn wrap_char_ranges(line: &str, wrapped: &[&str]) -> Vec<(usize, usize)> {
     result
 }
 
+/// Count the display columns occupied by the first `n_chars` characters of `s`.
+///
+/// Wide characters (e.g. CJK, emoji) count as 2 columns; narrow characters
+/// count as 1.  If `n_chars` exceeds the string's character count the full
+/// display width is returned.
+pub fn display_cols_for_chars(s: &str, n_chars: usize) -> usize {
+    use unicode_width::UnicodeWidthChar;
+    s.chars()
+        .take(n_chars)
+        .map(|c| UnicodeWidthChar::width(c).unwrap_or(1))
+        .sum()
+}
+
+/// Return the number of characters from the start of `s` that fit within
+/// `target_dcols` display columns.
+///
+/// Stops before including a wide character that would push the total past
+/// `target_dcols` (i.e. rounds down).  Returns `s.chars().count()` if the
+/// string is exhausted before the budget is reached.
+pub fn chars_for_display_cols(s: &str, target_dcols: usize) -> usize {
+    use unicode_width::UnicodeWidthChar;
+    let mut cols = 0usize;
+    let mut n = 0usize;
+    for c in s.chars() {
+        let cw = UnicodeWidthChar::width(c).unwrap_or(1);
+        if cols + cw > target_dcols {
+            break;
+        }
+        cols += cw;
+        n += 1;
+    }
+    n
+}
+
+/// Compute the display-column offset of `cursor_col` within its visual subrow,
+/// using the same wrap parameters as the renderer.
+///
+/// Equivalent to `cursor_col - subrow_char_start` for ASCII text but correctly
+/// accounts for wide characters (CJK, emoji) whose display width is 2 columns.
+pub fn cursor_vcol(
+    line: &str,
+    cursor_col: usize,
+    first_width: usize,
+    cont_width: usize,
+) -> usize {
+    let wrapped = wrap_line_indented(line, first_width.max(1), cont_width.max(1));
+    let char_ranges = wrap_char_ranges(line, &wrapped);
+    let last = char_ranges.len().saturating_sub(1);
+    for (i, (row_str, &(char_start, char_len))) in
+        wrapped.iter().zip(char_ranges.iter()).enumerate()
+    {
+        if cursor_col < char_start + char_len || i == last {
+            let chars_into_row = cursor_col.saturating_sub(char_start);
+            return display_cols_for_chars(row_str, chars_into_row);
+        }
+    }
+    0
+}
+
 /// Find which visual subrow the cursor sits on within a soft-wrapped logical
 /// line.
 ///
@@ -210,8 +269,9 @@ pub fn cursor_subrow_info(
 /// Find the logical char column for a given `(target_subrow, target_vcol)`
 /// within a soft-wrapped logical line.
 ///
-/// `target_vcol` is the visual-column offset within the subrow (i.e. the
-/// sticky column from a vertical-navigation gesture).  Clamps to the last
+/// `target_vcol` is the **display-column** offset within the subrow (i.e. the
+/// sticky column from a vertical-navigation gesture, stored in display columns
+/// so that wide characters are accounted for correctly).  Clamps to the last
 /// character of the subrow so the cursor never overshoots a short row.
 pub fn char_col_at_visual(
     line: &str,
@@ -223,11 +283,11 @@ pub fn char_col_at_visual(
     let wrapped = wrap_line_indented(line, first_width.max(1), cont_width.max(1));
     let char_ranges = wrap_char_ranges(line, &wrapped);
     let last_idx = char_ranges.len().saturating_sub(1);
-    let (char_start, char_len) = char_ranges
-        .get(target_subrow)
-        .copied()
-        .unwrap_or_else(|| char_ranges.get(last_idx).copied().unwrap_or((0, 0)));
-    (char_start + target_vcol).min(char_start + char_len)
+    let idx = target_subrow.min(last_idx);
+    let row_str = wrapped.get(idx).copied().unwrap_or("");
+    let (char_start, char_len) = char_ranges.get(idx).copied().unwrap_or((0, 0));
+    let chars_at_vcol = chars_for_display_cols(row_str, target_vcol);
+    (char_start + chars_at_vcol).min(char_start + char_len)
 }
 
 /// Blank columns on each side of the text content within the editor column.
@@ -346,7 +406,8 @@ impl Widget for MarkdownView<'_> {
                     let in_range =
                         cursor_log_col >= char_start && (cursor_log_col < char_end || is_last_wrap);
                     if in_range {
-                        let col_in_row = (cursor_log_col.saturating_sub(char_start))
+                        let chars_into_row = cursor_log_col.saturating_sub(char_start);
+                        let col_in_row = display_cols_for_chars(row_str, chars_into_row)
                             .min(content_width.saturating_sub(1));
                         cursor_buf_pos = Some((
                             area.x + GUTTER + continuation_indent + col_in_row as u16,
@@ -500,7 +561,7 @@ fn apply_selection_overlay(
         );
 
         let char_ranges = wrap_char_ranges(line, &wrapped);
-        for (wrap_idx, (_row_str, &(char_start, char_len))) in
+        for (wrap_idx, (row_str, &(char_start, char_len))) in
             wrapped.iter().zip(char_ranges.iter()).enumerate()
         {
             if visual_row >= visible {
@@ -545,9 +606,12 @@ fn apply_selection_overlay(
                 // so the for loop produces an empty range regardless.
                 if row_sel_start < row_sel_end {
                     let y = area.y + visual_row as u16;
-                    let x_start =
-                        area.x + GUTTER + continuation_indent + (row_sel_start - char_start) as u16;
-                    let x_end = (area.x + GUTTER + continuation_indent + (row_sel_end - char_start) as u16)
+                    let start_dcols =
+                        display_cols_for_chars(row_str, row_sel_start - char_start);
+                    let end_dcols =
+                        display_cols_for_chars(row_str, row_sel_end - char_start);
+                    let x_start = area.x + GUTTER + continuation_indent + start_dcols as u16;
+                    let x_end = (area.x + GUTTER + continuation_indent + end_dcols as u16)
                         .min(area.x + GUTTER + content_width as u16);
                     for x in x_start..x_end {
                         buf[(x, y)].set_fg(sel_fg).set_bg(sel_bg);
@@ -603,6 +667,106 @@ mod tests {
             clipboard: None,
             initial_file_empty: false,
         }
+    }
+
+    // --- display_cols_for_chars ---
+
+    #[test]
+    fn display_cols_ascii_equals_char_count() {
+        assert_eq!(display_cols_for_chars("hello", 3), 3);
+    }
+
+    #[test]
+    fn display_cols_cjk_each_two_columns() {
+        // "日本語" = 3 chars × 2 cols each = 6 display cols total.
+        assert_eq!(display_cols_for_chars("日本語", 3), 6);
+    }
+
+    #[test]
+    fn display_cols_cjk_partial() {
+        // First 2 chars of "日本語" = 4 display cols.
+        assert_eq!(display_cols_for_chars("日本語", 2), 4);
+    }
+
+    #[test]
+    fn display_cols_mixed_ascii_and_cjk() {
+        // "a日b" = 1 + 2 + 1 = 4 display cols.
+        assert_eq!(display_cols_for_chars("a日b", 3), 4);
+    }
+
+    #[test]
+    fn display_cols_zero_chars_is_zero() {
+        assert_eq!(display_cols_for_chars("hello", 0), 0);
+    }
+
+    #[test]
+    fn display_cols_n_exceeds_string_returns_full_width() {
+        // Asking for 99 chars of a 3-char string returns the full display width.
+        assert_eq!(display_cols_for_chars("abc", 99), 3);
+    }
+
+    // --- chars_for_display_cols ---
+
+    #[test]
+    fn chars_for_display_ascii_equals_display_cols() {
+        assert_eq!(chars_for_display_cols("hello", 3), 3);
+    }
+
+    #[test]
+    fn chars_for_display_cjk_two_cols_per_char() {
+        // 4 display cols into "日本語" = 2 chars (日本).
+        assert_eq!(chars_for_display_cols("日本語", 4), 2);
+    }
+
+    #[test]
+    fn chars_for_display_cjk_odd_budget_rounds_down() {
+        // 3 display cols into "日本語": 日 takes 2, next char (本) would push to 4 > 3 → 1 char.
+        assert_eq!(chars_for_display_cols("日本語", 3), 1);
+    }
+
+    #[test]
+    fn chars_for_display_zero_budget_returns_zero() {
+        assert_eq!(chars_for_display_cols("hello", 0), 0);
+    }
+
+    #[test]
+    fn chars_for_display_budget_exceeds_string() {
+        // Budget larger than string width → returns full char count.
+        assert_eq!(chars_for_display_cols("ab", 99), 2);
+    }
+
+    // --- cursor_vcol ---
+
+    #[test]
+    fn cursor_vcol_ascii_equals_char_offset() {
+        // ASCII: display cols == char count.
+        // "abcde fghij" at width 8 → ["abcde", "fghij"]. Cursor at char 7 (index 1 into "fghij").
+        assert_eq!(cursor_vcol("abcde fghij", 7, 8, 8), 1);
+    }
+
+    #[test]
+    fn cursor_vcol_cjk_counts_display_cols() {
+        // "日本語" fits on one row at width=10. Cursor at char 1 (本) → 2 display cols (日 = 2).
+        assert_eq!(cursor_vcol("日本語", 1, 10, 10), 2);
+    }
+
+    #[test]
+    fn cursor_vcol_cjk_start_of_line_is_zero() {
+        assert_eq!(cursor_vcol("日本語", 0, 10, 10), 0);
+    }
+
+    // --- char_col_at_visual (CJK) ---
+
+    #[test]
+    fn char_col_at_visual_cjk_display_col_to_char() {
+        // "日本語" on one subrow. vcol=2 display cols → char 1 (after 日 which takes 2 cols).
+        assert_eq!(char_col_at_visual("日本語", 0, 2, 10, 10), 1);
+    }
+
+    #[test]
+    fn char_col_at_visual_cjk_odd_vcol_rounds_down() {
+        // vcol=1 into "日本語": 日 would take 2 cols, can't fit → 0 chars → char 0.
+        assert_eq!(char_col_at_visual("日本語", 0, 1, 10, 10), 0);
     }
 
     // --- cursor_subrow_info ---

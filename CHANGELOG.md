@@ -27,6 +27,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - v1 polish: italic startup warning, `delimiter_blend` config token, parent-dir creation on save (#35)
 
 ### Fixed
+- Fix selection highlight clipping on wrapped indented list items (#128)
 - fix cargo upgrade breakage: crossterm/ratatui API changes (#127)
 - bug: bold/italic inside blockquote bleeds to full line (#120)
 - fix flaky italic env-var tests (#119)

@@ -1,7 +1,7 @@
 # `yame` Roadmap & Next Steps
 
-_Last updated 2026-05-25._
-_Baseline: 135 tests green, clippy clean, Phases 0–11 complete. Module split done (#74)._
+_Last updated 2026-05-28._
+_Baseline: 306 tests green, clippy clean. All v1 + v1.5 Sprint 2–4 work complete._
 
 ---
 
@@ -19,69 +19,15 @@ _Baseline: 135 tests green, clippy clean, Phases 0–11 complete. Module split d
 
 ---
 
-## Current State (v0.1 — Phase 12 pending)
+## Current State
 
-All planned v1 phases implemented except README (Phase 12, #13). Module split
-complete: `decoration.rs` → `decoration/{mod,spans,words}.rs`; `renderer.rs` →
-`renderer/{mod,status,utils}.rs`; `main.rs` → `main.rs + commands.rs + input.rs`.
-135 tests passing.
-
----
-
-## Remaining v1 Work
-
-### #13 · README & Distribution (Phase 12)
-
-Full spec in PLAN.md § Phase 12:
-- Install: `cargo install --path .`
-- Shell wrapper function (fd/fzf/find fallback)
-- Config reference: path, full palette defaults, override table, heading overrides
-- Keybinding reference table
-- Nerd Fonts note
-- `Cargo.toml` publishing metadata (mostly already present)
+All v1 and v1.5 Sprint 2–4 phases complete. Open medium-priority work: CJK support
+(#41), syntect highlighting (#44), Ctrl+F search (#46). Windows support (#125) is
+implemented and ready to push.
 
 ---
 
-## v1.5 — Sprint Plan
-
-### Sprint 2: Spec debt (#39, #40, #59)
-
-**#39 · Blockquote continuation indent**
-
-DESIGN.md: _"On soft-wrapped lines, indent continuation text to align with text start
-after `>` — do not wrap to column zero."_ The `is_blockquote: bool` flag already exists
-and propagates from decoration → renderer. The render loop has a `wrap_idx` variable.
-
-```rust
-// In MarkdownView::render, inside the wrap loop:
-let is_continuation = wrap_idx > 0 && row_spans.iter().any(|s| s.is_blockquote);
-let indent: u16 = if is_continuation { 2 } else { 0 };
-let mut x = area.x + GUTTER + indent;
-let effective_width = content_width.saturating_sub(indent as usize);
-```
-
-Also update `apply_selection_overlay` to apply the same indent for blockquote
-continuation rows.
-
-Test: multi-line blockquote where wrapped line should indent 2 columns.
-
-**#40 · Tab character expansion on load**
-
-In `load_file` (or as a post-process step), expand `\t` → 4 spaces before passing
-to `TextArea::new(lines)`. Save writes back the expanded form (intentionally lossy —
-tabs in Markdown are almost always indentation).
-
-Add a configurable tab width via `[layout] tab_width = 4` (default 4). Store in
-`LayoutConfig`.
-
-Test: file containing `\t` loads with spaces; word count unaffected; wrapping correct.
-
-**#59 · Soft-wrap list items with continuation indent**
-
-Similar to #39 but for list items. Continuation lines should align to text start
-(after bullet + space), not column zero.
-
-### Sprint 3: Wide character correctness (#41, #71)
+## v1.5 Sprint 3: Wide character correctness (#41, #71)
 
 **#41 · CJK / wide character support**
 
@@ -103,12 +49,9 @@ a test asserting word count is nonzero and decoration passes without panic.
 
 **#71 · Wide char (CJK) scroll redraw artifact** — related bug, fix alongside #41.
 
-### Sprint 4 (formerly): User-facing features — DONE
+---
 
-- ~~#42 · Ctrl+R config reload~~ — done
-- ~~#43 · Smart pair wrapping~~ — done
-
-### Sprint 5: Syntax highlighting (#44, #45)
+## v1.5 Sprint 5: Syntax highlighting (#44, #45)
 
 **#44 · Syntect fenced code block highlighting**
 
@@ -174,39 +117,16 @@ pub struct SearchState {
 
 ---
 
-## Open Issues (non-sprint)
+## Open Issues
 
-| Issue | Title | Notes |
-|---|---|---|
-| #50 | Fix nested bold+italic rendering (***) | v1-bug |
-| #54 | Replace Powerline glyph with universal fallback | v1-polish |
-| #56 | Decouple scroll from cursor | v1.5 |
-| #76 | Rework status message display | polish |
-| #77 | In-app settings modal | v2 |
-| #89 | Integration test planning | testing |
-| #91 | Heading `#` delimiters not bold to match heading style | v1-polish |
-
----
-
-## Issue Index
-
-| Issue | Title | Sprint | Status |
+| Issue | Title | Priority | Sprint |
 |---|---|---|---|
-| #13 | Phase 12: README & Distribution | v1 | open |
-| #39 | v1.5: blockquote continuation indent | 1.5-S2 | open |
-| #40 | v1.5: tab character expansion on load | 1.5-S2 | open |
-| #41 | v1.5: CJK / wide character support | 1.5-S3 | open |
-| #44 | v1.5: syntect fenced code highlighting | 1.5-S5 | open |
-| #45 | v1.5: background decoration thread | 1.5-S5 | open |
-| #46 | v2: Ctrl+F search with regex | v2 | open |
-| #47 | v2: line numbers | v2 | open |
-| #50 | Fix nested bold+italic rendering (***) | v1-bug | open |
-| #54 | Replace Powerline glyph with universal fallback | v1-polish | open |
-| #56 | Decouple scroll from cursor | v1.5 | open |
-| #59 | Soft-wrap list items with continuation indent | 1.5-S2 | open |
-| #71 | Wide char (CJK) scroll redraw artifact | bug | open |
-| #74 | Split decoration.rs/renderer.rs/main.rs into submodules | refactor | **done** |
-| #76 | Rework status message display | polish | open |
-| #77 | In-app settings modal | v2 | open |
-| #89 | Integration test planning | testing | open |
-| #91 | Heading `#` delimiters not bold to match heading style | v1-polish | open |
+| #41 | CJK / wide character support | medium | 1.5-S3 |
+| #44 | Syntect fenced code highlighting | medium | 1.5-S5 |
+| #45 | Background decoration thread | low | 1.5-S5 |
+| #46 | Ctrl+F search with regex | medium | v2 |
+| #47 | Line numbers | low | v2 |
+| #71 | Wide char (CJK) scroll redraw artifact | low | 1.5-S3 |
+| #77 | In-app settings modal | low | v2 |
+| #89 | Integration test planning | low | — |
+| #125 | Windows support | low | — (ready to push) |

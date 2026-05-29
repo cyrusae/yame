@@ -76,7 +76,9 @@ pub(super) fn screen_to_doc(
             let si = click_vis_row - vis;
             let char_ranges = renderer::wrap_char_ranges(line, &wrapped);
             let seg_char_start = char_ranges.get(si).map_or(0, |&(start, _)| start);
-            let doc_col = (seg_char_start + click_col).min(line.chars().count());
+            let row_str = wrapped.get(si).copied().unwrap_or("");
+            let chars_into_row = renderer::chars_for_display_cols(row_str, click_col);
+            let doc_col = (seg_char_start + chars_into_row).min(line.chars().count());
             return Some((li as u16, doc_col as u16));
         }
         vis += seg_count;
@@ -337,11 +339,14 @@ fn handle_visual_move(app: &mut App, go_down: bool, selecting: bool) -> KeyOutco
     let cur_cont = cw.saturating_sub(cur_ci).max(1);
     let cur_line = lines.get(cur_row).map_or("", |s| s.as_str());
 
-    let (cur_subrow, cur_char_start, cur_total) =
+    let (cur_subrow, _cur_char_start, cur_total) =
         renderer::cursor_subrow_info(cur_line, cur_col, cw, cur_cont);
 
     // Establish (or recover) the sticky column for this gesture.
-    let vcol = *app.sticky_col.get_or_insert(cur_col - cur_char_start);
+    // Stored in display columns (not char count) so wide chars are handled correctly.
+    let vcol = *app
+        .sticky_col
+        .get_or_insert_with(|| renderer::cursor_vcol(cur_line, cur_col, cw, cur_cont));
 
     // Determine target (logical row, subrow-within-that-row).
     let (tgt_row, tgt_subrow) = if go_down {
