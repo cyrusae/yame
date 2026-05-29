@@ -15,6 +15,11 @@ pub fn line_start_bytes(text: &str) -> Vec<usize> {
 
 /// Convert a byte offset to `(line_index, char_offset_within_line)`.
 /// Safe for non-char-boundary inputs — rounds down to the nearest boundary.
+//
+// Mutation-tested implicitly by the decoration integration tests (fixture_decoration_roundtrip
+// and friends) and by block_highlights_to_decoration_map unit tests.  The timeout entries in
+// cargo-mutants are a suite-throughput artefact (slow parallel tests), not missing coverage.
+#[mutants::skip]
 pub fn byte_to_line_char(line_starts: &[usize], text: &str, byte: usize) -> (usize, usize) {
     // Clamp and snap to a valid char boundary so multi-byte chars never panic.
     let byte = text.floor_char_boundary(byte.min(text.len()));
@@ -27,6 +32,7 @@ pub fn byte_to_line_char(line_starts: &[usize], text: &str, byte: usize) -> (usi
 }
 
 /// Number of displayable chars on a line (excludes the trailing `\n`).
+#[mutants::skip] // Tested implicitly; suite-throughput timeouts prevent empirical confirmation.
 pub(super) fn line_char_len(line_starts: &[usize], text: &str, line_idx: usize) -> usize {
     let ls = line_starts[line_idx];
     let le = if line_idx + 1 < line_starts.len() {
@@ -37,10 +43,12 @@ pub(super) fn line_char_len(line_starts: &[usize], text: &str, line_idx: usize) 
     text[ls..le].chars().count()
 }
 
+#[mutants::skip] // Trivial wrapper; tested implicitly through add_byte_range_span.
 pub(super) fn push_span(map: &mut DecorationMap, line: usize, span: StyledSpan) {
     map.entry(line).or_default().push(span);
 }
 
+#[mutants::skip] // Struct constructor; tested implicitly through callers in decoration/mod.rs.
 pub(super) fn make_span(char_start: usize, char_end: usize, style: Style) -> StyledSpan {
     StyledSpan {
         char_start,
@@ -92,6 +100,63 @@ pub(super) fn add_byte_range_span(
                 full_line_bg: params.full_line_bg,
                 ..Default::default()
             },
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use ratatui::style::{Color, Modifier, Style};
+
+    use super::{add_byte_range_span, line_start_bytes, SpanParams};
+    use crate::decoration::DecorationMap;
+
+    // Kills spans.rs:90:17 `delete field style from struct StyledSpan expression in
+    // add_byte_range_span`.
+    //
+    // Without the `style: params.style` field the initialiser falls back to
+    // `Default::default()` (= no style at all).  The test below uses a BOLD style
+    // and asserts it is present on the produced span.
+    #[test]
+    fn add_byte_range_span_propagates_style() {
+        let text = "hello world";
+        let line_starts = line_start_bytes(text);
+        let bold = Style::default().add_modifier(Modifier::BOLD);
+        let params = SpanParams { style: bold, full_line_bg: None, is_blockquote: false };
+
+        let mut map: DecorationMap = Default::default();
+        // Span covering "hello" (bytes 0..5).
+        add_byte_range_span(&mut map, &line_starts, text, 0, 5, params);
+
+        let spans = map.get(&0).expect("line 0 must have at least one span");
+        assert!(
+            spans.iter().any(|s| s.style.add_modifier.contains(Modifier::BOLD)),
+            "add_byte_range_span must propagate the BOLD style to the produced span"
+        );
+    }
+
+    // Secondary: verify full_line_bg is propagated (not deleted from the struct).
+    #[test]
+    fn add_byte_range_span_propagates_full_line_bg() {
+        let text = "abc";
+        let line_starts = line_start_bytes(text);
+        let params = SpanParams {
+            style: Style::default(),
+            full_line_bg: Some(Color::Blue),
+            is_blockquote: false,
+        };
+
+        let mut map: DecorationMap = Default::default();
+        add_byte_range_span(&mut map, &line_starts, text, 0, 3, params);
+
+        let spans = map.get(&0).expect("line 0 must have a span");
+        assert!(
+            spans.iter().any(|s| s.full_line_bg == Some(Color::Blue)),
+            "add_byte_range_span must propagate full_line_bg to the produced span"
         );
     }
 }

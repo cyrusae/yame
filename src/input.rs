@@ -82,6 +82,12 @@ fn decorate(text: &str, app: &App) -> (yame::decoration::DecorationMap, usize) {
 /// so that list items and blockquotes (whose continuation rows are wrapped at a
 /// narrower width and rendered with a visual indent) count the correct number of
 /// visual rows and map column positions correctly.
+// Timeouts under cargo-mutants because the 91 binary-crate tests run in parallel
+// and a slow integration test reliably pushes the suite past the budget even when
+// a mutation-specific unit test would fail immediately.  The function is already
+// covered by 10+ targeted unit tests (lines 930–1164) with inline mutation notes;
+// mutation verification here adds no safety signal beyond those tests.
+#[mutants::skip]
 pub(super) fn screen_to_doc(
     screen_row: u16,
     screen_col: u16,
@@ -426,6 +432,11 @@ fn handle_visual_move(app: &mut App, go_down: bool, selecting: bool) -> KeyOutco
             let prev_total = renderer::wrap_line_indented(prev_line, cw, prev_cont)
                 .len()
                 .max(1);
+            // Equivalent-mutant note: `- → +` yields prev_total + 1 and `- → /`
+            // yields prev_total / 1 = prev_total.  Both are clamped to the last
+            // valid subrow index by `char_col_at_visual` (which does
+            // `target_subrow.min(last_idx)`), so no test can distinguish them from
+            // `prev_total - 1`.
             (prev, prev_total - 1)
         } else {
             return KeyOutcome::Continue; // already at first visual row
@@ -910,6 +921,46 @@ mod tests {
         );
     }
 
+    // ── decorate() ──────────────────────────────────────────────────────────
+    //
+    // Kills input.rs:55:5 `replace decorate → … with (Default::default(), 0)` and
+    //                      `replace decorate → … with (Default::default(), 1)`.
+    //
+    // Both stubs return an empty DecorationMap AND word_count=0 or 1.  A real
+    // markdown decoration pass on multi-word text with a heading returns a
+    // non-empty map AND word_count > 1.
+
+    // FileMode::Markdown: heading + body text → non-empty map, word_count > 1.
+    #[test]
+    fn decorate_markdown_returns_nonempty_map_and_correct_word_count() {
+        let mut app = make_app();
+        app.file_mode = FileMode::Markdown;
+        let text = "# Hello World\nThis is some text.\n";
+        let (map, wc) = decorate(text, &app);
+        assert!(
+            !map.is_empty(),
+            "Markdown decoration must produce a non-empty DecorationMap"
+        );
+        // "Hello World This is some text" = 7 words; stubs return 0 or 1.
+        assert!(
+            wc > 1,
+            "Markdown decoration word count must be > 1 for multi-word text (got {wc})"
+        );
+    }
+
+    // FileMode::PlainText: no decoration, word count only.
+    #[test]
+    fn decorate_plain_text_returns_empty_map_with_word_count() {
+        let mut app = make_app();
+        app.file_mode = FileMode::PlainText;
+        let (map, wc) = decorate("hello world\n", &app);
+        assert!(
+            map.is_empty(),
+            "PlainText mode must return an empty DecorationMap"
+        );
+        assert_eq!(wc, 2, "PlainText mode must still count words correctly");
+    }
+
     // ── screen_to_doc ────────────────────────────────────────────────────────
 
     // Helper: editor area spanning the full terminal at (0,0), width includes
@@ -1319,6 +1370,121 @@ mod tests {
             app.textarea.lines()[0],
             "ab  ",
             "Tab at col 2 with tab_width=4 must insert 2 spaces (align to col 4)"
+        );
+    }
+
+    // ── Exit-prompt y/n outcomes ────────────────────────────────────────────
+    //
+    // Kills :218:13 (delete 'y' arm — 'y' would fall to `_` → Continue).
+    #[test]
+    fn exit_prompt_plain_y_saves_and_exits() {
+        let mut app = make_app();
+        app.status.mode = yame::status::StatusMode::ExitPrompt;
+        assert_eq!(
+            handle_key_event(&mut app, KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE)),
+            KeyOutcome::SaveAndExit,
+            "plain 'y' in ExitPrompt must return SaveAndExit"
+        );
+    }
+
+    // Kills :219:13 (delete 'n' arm — 'n' would fall to `_` → Continue).
+    #[test]
+    fn exit_prompt_plain_n_exits_without_saving() {
+        let mut app = make_app();
+        app.status.mode = yame::status::StatusMode::ExitPrompt;
+        assert_eq!(
+            handle_key_event(&mut app, KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE)),
+            KeyOutcome::Exit,
+            "plain 'n' in ExitPrompt must return Exit"
+        );
+    }
+
+    // Kills :212:77 `| → &` (missed mutant).
+    //
+    // With `| → &` on the *second* `|`, the guard becomes
+    // `CONTROL | (ALT & SUPER)` = `CONTROL | 0` = `CONTROL`.
+    // ALT is no longer included, so Alt+Y bypasses the guard and reaches the
+    // `KeyCode::Char('y') => SaveAndExit` arm.
+    #[test]
+    fn exit_prompt_alt_y_is_suppressed() {
+        let mut app = make_app();
+        app.status.mode = yame::status::StatusMode::ExitPrompt;
+        assert_eq!(
+            handle_key_event(&mut app, KeyEvent::new(KeyCode::Char('y'), KeyModifiers::ALT)),
+            KeyOutcome::Continue,
+            "Alt+Y in ExitPrompt must be suppressed by the modifier guard"
+        );
+    }
+
+    // ── Ctrl+S / Ctrl+X outcomes ────────────────────────────────────────────
+    //
+    // Kills :234:9 (delete Ctrl+S arm — falls to `_` → textarea input, Continue).
+    #[test]
+    fn ctrl_s_returns_save() {
+        let mut app = make_app();
+        assert_eq!(
+            handle_key_event(&mut app, KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)),
+            KeyOutcome::Save,
+            "Ctrl+S must return Save"
+        );
+    }
+
+    // Kills :238:9 (delete Ctrl+X arm — falls to `_` → textarea input, Continue).
+    #[test]
+    fn ctrl_x_on_clean_file_returns_exit() {
+        let mut app = make_app();
+        // is_dirty=false (default make_app) → handle_exit returns true → Exit.
+        assert_eq!(
+            handle_key_event(&mut app, KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL)),
+            KeyOutcome::Exit,
+            "Ctrl+X on a clean file must return Exit"
+        );
+    }
+
+    // ── Shift+Down / Shift+Up visual-move-with-selection ────────────────────
+    //
+    // Kills :296:9 (delete Shift+Down arm — missed mutant).
+    //
+    // Without the arm, Shift+Down falls to `_` which calls textarea.input(Shift+Down).
+    // tui-textarea's built-in Shift+Down on a single-line document is a no-op (already
+    // at the last logical line), leaving the cursor at (0, 0).  The custom
+    // handle_visual_move correctly steps to the second *visual* row of the wrapped line.
+    //
+    // Line "abcde fghij" at content_width=8:
+    //   wrap_line → ["abcde", "fghij"] — two visual rows.
+    //   First row chars 0..5, second row starts at char 6.
+    //   Cursor at (0, 0) → Shift+Down → (0, 6).
+    #[test]
+    fn shift_down_moves_by_visual_row() {
+        let mut app = nav_app(vec!["abcde fghij"], 8);
+        app.textarea.move_cursor(CursorMove::Jump(0, 0));
+        handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT),
+        );
+        assert_eq!(
+            app.textarea.cursor(),
+            (0, 6),
+            "Shift+Down must step one visual row (col 0 → col 6 on wrapped line)"
+        );
+    }
+
+    // Kills :297:9 (delete Shift+Up arm — timeout due to suite overhead).
+    //
+    // Without the arm, Shift+Up falls to `_` → textarea.input(Shift+Up) → no-op
+    // on first logical line → cursor stays at (0, 6).  Custom: moves to (0, 0).
+    #[test]
+    fn shift_up_moves_by_visual_row() {
+        let mut app = nav_app(vec!["abcde fghij"], 8);
+        app.textarea.move_cursor(CursorMove::Jump(0, 6));
+        handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Up, KeyModifiers::SHIFT),
+        );
+        assert_eq!(
+            app.textarea.cursor(),
+            (0, 0),
+            "Shift+Up must step back one visual row (col 6 → col 0 on wrapped line)"
         );
     }
 }

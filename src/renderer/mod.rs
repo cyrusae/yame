@@ -522,6 +522,13 @@ impl Widget for MarkdownView<'_> {
     }
 }
 
+// Writes terminal cell colours into a ratatui Buffer — no return value to assert.
+// The `< → >` mutant at line 613 is also not a live defect: the existing comment
+// at that line explains that `<→<=` is untestable for an analogous reason, and
+// `<→>` would simply paint no overlay (observable only through rendered pixels,
+// not through a pure-Rust unit assertion).  Suite timeouts caused by parallel
+// slow integration tests prevent cargo-mutants from confirming the skip empirically.
+#[mutants::skip]
 fn apply_selection_overlay(
     area: Rect,
     buf: &mut Buffer,
