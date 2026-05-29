@@ -416,7 +416,13 @@ impl Widget for MarkdownView<'_> {
                     }
                 }
 
-                let line_bg = row_spans.iter().find_map(|s| s.full_line_bg).unwrap_or(bg);
+                // full_line_bg is a whole-line property: look it up from the
+                // full logical-line decorations, not from row_spans (which are
+                // filtered to this visual subrow's char range and drop spans on
+                // blank lines where char_len == 0).
+                let line_bg = line_decs
+                    .and_then(|decs| decs.iter().find_map(|s| s.full_line_bg))
+                    .unwrap_or(bg);
                 let border_color = row_spans.iter().find_map(|s| s.border_bottom);
                 let is_rule = row_spans.iter().any(|s| s.is_rule);
                 let is_last_wrap = wrap_idx + 1 == wrapped.len();
@@ -1375,6 +1381,78 @@ mod tests {
             cell.modifier.contains(Modifier::BOLD),
             "H1 # character must carry Modifier::BOLD in the rendered ratatui buffer"
         );
+    }
+
+    /// Regression test for #133: blank lines inside a fenced code block must
+    /// render with `fenced_bg`, not the plain editor background.
+    ///
+    /// Root cause: the `row_spans` filter (`s.char_start < char_end`) dropped
+    /// every span on blank lines because `char_end == 0` for an empty line,
+    /// making `full_line_bg` invisible to the renderer.  The fix sources
+    /// `full_line_bg` from `line_decs` (all logical spans) instead.
+    ///
+    /// Note: the cursor is on row 0 ("code"), so its accent-bg cell is at
+    /// visual row 0.  We assert on visual row 1 (the blank line) to avoid the
+    /// cursor cell.
+    #[test]
+    fn fenced_blank_line_renders_with_fenced_bg() {
+        use ratatui::buffer::Buffer;
+        use ratatui::layout::Rect;
+        use ratatui::widgets::Widget;
+
+        // Two visible rows: row 0 = "code" (cursor here), row 1 = "" (blank).
+        let area = Rect { x: 0, y: 0, width: 20, height: 2 };
+        let mut buf = Buffer::empty(area);
+
+        let theme = crate::config::Theme::default_theme();
+        let fenced_bg = theme.fenced_bg;
+
+        // Both lines carry fenced_bg; the blank one (log_row 1) is the
+        // regression target.  The decoration pass emits char_end=1 even for
+        // blank lines so the span exists in the map — the bug was the renderer
+        // dropping it because `char_start (0) < char_end (0)` is false.
+        let mut deco = DecorationMap::default();
+        deco.insert(
+            0,
+            vec![StyledSpan {
+                char_start: 0,
+                char_end: 4,
+                style: Style::default().fg(theme.text).bg(fenced_bg),
+                full_line_bg: Some(fenced_bg),
+                ..Default::default()
+            }],
+        );
+        deco.insert(
+            1,
+            vec![StyledSpan {
+                char_start: 0,
+                char_end: 1, // blank line — max(line_len, 1) = 1
+                style: Style::default().fg(theme.text).bg(fenced_bg),
+                full_line_bg: Some(fenced_bg),
+                ..Default::default()
+            }],
+        );
+
+        let view = MarkdownView {
+            lines: &["code".to_string(), "".to_string()],
+            decoration_map: &deco,
+            scroll_top: 0,
+            cursor: (0, 0), // cursor on row 0 → accent cell at (GUTTER, 0)
+            selection: None,
+            theme: &theme,
+            column_width: 20,
+        };
+        view.render(area, &mut buf);
+
+        // Every cell on visual row 1 (the blank line) must have fenced_bg.
+        // Row 0 contains the cursor cell which legitimately has accent bg.
+        for x in 0..area.width {
+            let cell = buf.cell((x, 1)).expect("cell must exist");
+            assert_eq!(
+                cell.bg, fenced_bg,
+                "blank fenced line cell x={x} y=1 must have fenced_bg (regression #133)"
+            );
+        }
     }
 
     #[test]

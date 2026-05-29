@@ -1542,6 +1542,26 @@ mod tests {
         );
     }
 
+    /// Regression test for #133: blank lines inside a fenced code block must
+    /// have `full_line_bg = Some(fenced_bg)` in the decoration map.  Before
+    /// the renderer fix they had the span but the renderer's row_spans filter
+    /// dropped it (char_end == 0 fails `char_start < char_end`).
+    #[test]
+    fn fenced_code_blank_content_line_has_fenced_bg() {
+        // Line 0: before, 1: ```, 2: code, 3: <blank>, 4: more code, 5: ```, 6: after
+        let text = "before\n```\ncode\n\nmore code\n```\nafter";
+        let theme = make_theme();
+        let map = build_map(text, &theme, true);
+        let blank_line = map
+            .get(&3)
+            .expect("blank content line (line 3) must have spans");
+        assert!(
+            blank_line.iter().any(|s| s.full_line_bg == Some(theme.fenced_bg)),
+            "blank line inside fenced block must carry full_line_bg = fenced_bg; \
+             got: {blank_line:?}"
+        );
+    }
+
     #[test]
     fn fenced_code_language_tag_is_dimmed_accent() {
         let text = "before\n```rust\nlet x = 1;\n```\nafter";

@@ -94,6 +94,11 @@ pub fn build_palette_theme(yame: &crate::config::Theme) -> SyntectTheme {
     let type_color = to_sc(blend_colors(yame.accent, yame.text, 0.75));
     // Functions: even softer accent blend.
     let fn_color = to_sc(blend_colors(yame.accent, yame.text, 0.85));
+    // Operators: code_color blended toward accent (30%) → soft cyan/teal.
+    // Distinct from strings (pure code_color), keywords (pure accent), and the
+    // blue-white `text` used for plain identifiers — so `x + y` reads as three
+    // different visual tokens.
+    let op_color = to_sc(blend_colors(yame.code_color, yame.accent, 0.3));
 
     // Scope selectors follow the TextMate convention used by syntect grammars.
     // More-specific selectors override less-specific ones (syntect scoring).
@@ -104,6 +109,8 @@ pub fn build_palette_theme(yame: &crate::config::Theme) -> SyntectTheme {
         ("keyword.control", accent),
         ("storage.type", accent),
         ("storage.modifier", accent),
+        // Operators → op_color (cyan/teal: distinct from keywords and strings)
+        ("keyword.operator", op_color),
         // Strings → code_color
         ("string", code_color),
         ("string.quoted", code_color),
@@ -518,5 +525,40 @@ mod tests {
             builtin_colors, palette_colors,
             "palette theme and built-in theme must produce different colours"
         );
+    }
+
+    #[test]
+    fn palette_cache_operator_uses_op_color() {
+        // `+` in Rust has scope keyword.operator → should render with op_color,
+        // which is blend(code_color, accent, 0.3) — distinct from both strings
+        // and plain identifiers.
+        use crate::config::blend_colors;
+        let yame = Theme::default_theme();
+        let cache = make_palette_cache();
+        // A line with a clear arithmetic operator.
+        let hl = cache.highlight_block("rust", "let z = x + y;\n").unwrap();
+
+        let op_color = match blend_colors(yame.code_color, yame.accent, 0.3) {
+            Color::Rgb(r, g, b) => Color::Rgb(r, g, b),
+            _ => panic!("op_color must be Rgb"),
+        };
+
+        assert!(
+            hl[0].iter().any(|s| s.fg == op_color),
+            "an operator span must use op_color; got: {:?}",
+            hl[0]
+        );
+    }
+
+    #[test]
+    fn op_color_is_distinct_from_string_and_keyword_colors() {
+        // Validates that the computed op_color doesn't collapse to code_color or
+        // accent — i.e. blend(code_color, accent, 0.3) ≠ either endpoint.
+        use crate::config::blend_colors;
+        let yame = Theme::default_theme();
+        let op_color = blend_colors(yame.code_color, yame.accent, 0.3);
+        assert_ne!(op_color, yame.code_color, "op_color must differ from code_color (strings)");
+        assert_ne!(op_color, yame.accent, "op_color must differ from accent (keywords)");
+        assert_ne!(op_color, yame.text, "op_color must differ from text (identifiers)");
     }
 }
