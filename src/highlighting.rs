@@ -1,9 +1,18 @@
 //! Syntax highlighting for fenced code blocks via syntect.
 //!
-//! `HighlightCache` wraps a `SyntaxSet` + resolved `Theme` and memoises results
-//! keyed on `(language_tag, hash_of_block_content)`.  The cache is stored in
-//! a `RefCell` so that `build_decoration_map` can take `Option<&HighlightCache>`
-//! (immutable) while still mutating the cache on first use.
+//! `HighlightCache` wraps a lazily-initialised `SyntaxSet` + resolved `Theme`
+//! and memoises results keyed on `(language_tag, hash_of_block_content)`.
+//!
+//! ## Lazy initialisation
+//! `SyntaxSet` and `ThemeSet` are expensive to deserialise from their bundled
+//! binary assets.  Both are held in `OnceLock` fields and initialised on the
+//! first call to `highlight_block` — so files with no fenced code blocks pay
+//! zero startup cost.  On the default production path (`use_palette_colors =
+//! true`) the `ThemeSet` is never initialised at all.
+//!
+//! The highlight memo-cache is stored in a `RefCell` so that
+//! `build_decoration_map` can take `Option<&HighlightCache>` (immutable) while
+//! still mutating the cache on first use.
 //!
 //! # Theme resolution (highest priority first)
 //! 1. Palette-derived theme — built from the yame colour palette when
@@ -21,6 +30,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::str::FromStr;
+use std::sync::OnceLock;
 
 use ratatui::style::Color;
 use syntect::easy::HighlightLines;
@@ -30,6 +40,7 @@ use syntect::highlighting::{
 };
 use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
+use two_face::syntax as tf_syntax;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -167,12 +178,20 @@ pub fn build_palette_theme(yame: &crate::config::Theme) -> SyntectTheme {
 // ---------------------------------------------------------------------------
 
 pub struct HighlightCache {
-    /// Bundled syntect syntaxes (Rust, Python, JS, etc.)
-    syntax_set: SyntaxSet,
-    /// Bundled syntect themes — only used when `palette_theme` is `None`.
-    theme_set: ThemeSet,
+    /// Sublime Text 3 default syntaxes — lazily deserialised on first use.
+    syntax_set: OnceLock<SyntaxSet>,
+    /// Extra syntaxes from the bat/two-face collection (TOML, TypeScript,
+    /// Kotlin, Dockerfile, …) — lazily deserialised on first use.
+    /// Kept separate from `syntax_set` because syntect binds each
+    /// `SyntaxReference` to the `SyntaxSet` it was parsed from; the same set
+    /// must be passed to `HighlightLines::highlight_line`.
+    extra_syntax_set: OnceLock<SyntaxSet>,
+    /// Bundled syntect themes — lazily deserialised, and only when
+    /// `palette_theme` is `None` (i.e. never on the default production path).
+    theme_set: OnceLock<ThemeSet>,
     /// Palette-derived theme, pre-built at startup when `use_palette_colors = true`.
-    /// When `Some`, this takes priority over `theme_name`.
+    /// When `Some`, this takes priority over `theme_name` and `theme_set` is
+    /// never initialised.
     palette_theme: Option<SyntectTheme>,
     /// Named built-in theme fallback (used when `palette_theme` is `None`).
     theme_name: String,
@@ -187,6 +206,9 @@ impl HighlightCache {
 
     /// Create a new cache.
     ///
+    /// Construction is now O(1): `SyntaxSet` and `ThemeSet` are not deserialised
+    /// here — they are initialised lazily on the first call to `highlight_block`.
+    ///
     /// `palette_theme` — pass `Some(build_palette_theme(&yame_theme))` to use
     /// palette-derived colours (recommended), or `None` to fall through to the
     /// named `theme_name` built-in.
@@ -196,8 +218,9 @@ impl HighlightCache {
         palette_theme: Option<SyntectTheme>,
     ) -> Self {
         Self {
-            syntax_set: SyntaxSet::load_defaults_newlines(),
-            theme_set: ThemeSet::load_defaults(),
+            syntax_set: OnceLock::new(),
+            extra_syntax_set: OnceLock::new(),
+            theme_set: OnceLock::new(),
             palette_theme,
             theme_name,
             cache: RefCell::new(HashMap::new()),
@@ -209,6 +232,8 @@ impl HighlightCache {
     ///
     /// Returns `None` when highlighting is disabled, the language is empty or
     /// unknown, or no theme can be resolved.
+    ///
+    /// Initialises `SyntaxSet` (and `ThemeSet` when needed) on first call.
     pub fn highlight_block(&self, lang: &str, content: &str) -> Option<BlockHighlights> {
         if !self.enabled || lang.is_empty() {
             return None;
@@ -218,25 +243,40 @@ impl HighlightCache {
         let hash = hash_str(content);
         let key = (lang_lower.clone(), hash);
 
-        // Cache hit.
+        // Cache hit — no syntax/theme work needed.
         if let Some(cached) = self.cache.borrow().get(&key) {
             return Some(cached.clone());
         }
 
-        // Resolve syntax.
-        let syntax = self
-            .syntax_set
+        // Lazily initialise syntax sets on first cache miss.
+        // Try the syntect defaults first; fall back to the two-face extras.
+        // The active set must be threaded into highlight_line because syntect
+        // binds SyntaxReferences to the SyntaxSet they were parsed from.
+        let default_set = self.syntax_set.get_or_init(SyntaxSet::load_defaults_newlines);
+        let (syntax, active_set) = if let Some(s) = default_set
             .find_syntax_by_token(&lang_lower)
-            .or_else(|| self.syntax_set.find_syntax_by_extension(&lang_lower))?;
+            .or_else(|| default_set.find_syntax_by_extension(&lang_lower))
+        {
+            (s, default_set)
+        } else {
+            let extra_set =
+                self.extra_syntax_set.get_or_init(tf_syntax::extra_newlines);
+            let s = extra_set
+                .find_syntax_by_token(&lang_lower)
+                .or_else(|| extra_set.find_syntax_by_extension(&lang_lower))?;
+            (s, extra_set)
+        };
 
-        // Resolve theme: palette first, then named built-in, then hard fallback.
+        // Resolve theme: palette first (ThemeSet never touched), then named
+        // built-in (ThemeSet lazily loaded on first non-palette use).
         let theme: &SyntectTheme = if let Some(pt) = &self.palette_theme {
             pt
         } else {
-            self.theme_set
+            let theme_set = self.theme_set.get_or_init(ThemeSet::load_defaults);
+            theme_set
                 .themes
                 .get(&self.theme_name)
-                .or_else(|| self.theme_set.themes.get(Self::FALLBACK_THEME))?
+                .or_else(|| theme_set.themes.get(Self::FALLBACK_THEME))?
         };
 
         let mut highlighter = HighlightLines::new(syntax, theme);
@@ -244,7 +284,7 @@ impl HighlightCache {
 
         for line in LinesWithEndings::from(content) {
             let ranges = highlighter
-                .highlight_line(line, &self.syntax_set)
+                .highlight_line(line, active_set)
                 .ok()?;
 
             let mut line_spans: Vec<HlSpan> = Vec::new();
@@ -292,6 +332,23 @@ fn hash_str(s: &str) -> u64 {
 mod tests {
     use super::*;
     use crate::config::Theme;
+
+    /// Print every bundled syntax name and its file extensions — run with
+    /// `cargo test enumerate_bundled_syntaxes -- --nocapture --ignored`.
+    #[test]
+    #[ignore]
+    fn enumerate_bundled_syntaxes() {
+        let ss = SyntaxSet::load_defaults_newlines();
+        let mut names: Vec<String> = ss
+            .syntaxes()
+            .iter()
+            .map(|s| format!("{:30} exts: {:?}", s.name, s.file_extensions))
+            .collect();
+        names.sort();
+        for n in &names {
+            println!("{n}");
+        }
+    }
 
     /// Cache using the default built-in theme (no palette).
     fn make_cache() -> HighlightCache {
@@ -389,6 +446,72 @@ mod tests {
         let cache = make_cache();
         let hl = cache.highlight_block("python", "def foo():\n    pass\n").unwrap();
         assert_eq!(hl.len(), 2);
+    }
+
+    // ---- default-syntaxes coverage guard ----
+    // syntect 5.x bundles the Sublime Text 3 *default* package set — the classic
+    // Sublime packages circa ~2015.  Well-supported: Rust, Python, JS, Go, Bash,
+    // Ruby, Java, C/C++, SQL, YAML, JSON, HTML, CSS, etc.
+    //
+    // NOT included (post-2015 / never in ST3 defaults):
+    //   TOML, TypeScript, Kotlin, Swift, Dart, SCSS, JSX/TSX, …
+    //
+    // The `two-face` crate (bat's asset collection) can supply those gaps; see
+    // issue #135 if we decide to pull it in.
+
+    #[test]
+    fn toml_block_produces_spans() {
+        // TOML is not in the syntect default bundle but is supplied by two-face.
+        let cache = make_cache();
+        let hl = cache
+            .highlight_block("toml", "[package]\nname = \"yame\"\nversion = \"0.1.0\"\n")
+            .expect("toml must be recognised via the two-face extra syntax set");
+        assert_eq!(hl.len(), 3, "three TOML lines → three span-lists");
+        assert!(!hl[0].is_empty(), "section header line must produce spans");
+    }
+
+    #[test]
+    fn typescript_block_produces_spans() {
+        // TypeScript is not in the syntect default bundle but is supplied by two-face.
+        let cache = make_cache();
+        assert!(
+            cache
+                .highlight_block("typescript", "const x: number = 1;\n")
+                .is_some(),
+            "typescript must be recognised via the two-face extra syntax set"
+        );
+    }
+
+    #[test]
+    fn bash_block_produces_spans() {
+        let cache = make_cache();
+        assert!(
+            cache
+                .highlight_block("bash", "#!/bin/bash\necho hello\n")
+                .is_some(),
+            "bash must be recognised by the default-syntaxes bundle"
+        );
+    }
+
+    #[test]
+    fn sh_tag_produces_spans() {
+        // Both "bash" and "sh" are common fence tags; both should resolve.
+        let cache = make_cache();
+        assert!(
+            cache.highlight_block("sh", "echo hello\n").is_some(),
+            "sh tag must resolve to a shell syntax"
+        );
+    }
+
+    #[test]
+    fn go_block_produces_spans() {
+        let cache = make_cache();
+        assert!(
+            cache
+                .highlight_block("go", "package main\nfunc main() {}\n")
+                .is_some(),
+            "go must be recognised by the default-syntaxes bundle"
+        );
     }
 
     #[test]

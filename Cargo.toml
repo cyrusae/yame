@@ -26,6 +26,9 @@ arboard = "3"
 mutants = "0.0.4"
 unicode-width = "0.2"
 syntect = { version = "5.3.0", default-features = false, features = ["default-themes", "default-syntaxes", "regex-fancy"] }
+# Extra syntax definitions (TOML, TypeScript, Kotlin, Dockerfile, …) curated by
+# the bat project.  `syntect-fancy` matches our `regex-fancy` pure-Rust setup.
+two-face = { version = "0.5.1", default-features = false, features = ["syntect-fancy"] }
 
 [profile.release]
 strip = true

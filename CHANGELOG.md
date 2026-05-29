@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [0.1.0-alpha.1] - 2026-05-25
 
 ### Added
+- feat: pull in two-face for extended syntax coverage (TOML, TypeScript, etc) (#135)
 - richer fixture code + operator/punctuation palette colours (#132)
 - Palette-derived highlight theme with per-token config overrides (#130)
 - v1.5: CJK / wide character support (unicode-width) (#41)
@@ -62,6 +63,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Italic default color now matches text color (not accent blend) (#60)
 
 ### Changed
+- perf: lazy-init SyntaxSet/ThemeSet in HighlightCache (defer cost to first code block) (#136)
+- test: assert default-syntaxes coverage (toml, ts, bash, etc) (#134)
 - feat: visual-line Up/Down navigation (wrap-aware cursor movement) (#126)
 - docs: update README for recent feature changes (#123)
 - test: kill surviving mutants in supports_italic, wrap_line_indented, apply_selection_overlay (#124)
