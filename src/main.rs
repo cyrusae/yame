@@ -310,7 +310,8 @@ mod tests {
     use yame::status::{StatusLine, StatusMode};
 
     use super::commands::{clamp_scroll, handle_exit};
-    use super::input::{get_selection_text, handle_pair_wrap};
+    use super::input::handle_pair_wrap;
+    use yame::app::get_selection_text;
 
     fn make_app() -> App {
         App {
@@ -331,8 +332,9 @@ mod tests {
             free_scroll: false,
             sticky_col: None,
             content_width: 0,
-            clipboard: None,
-            initial_file_empty: false,
+            clipboard: yame::app::ClipboardState::Uninitialized,
+            shortened_path: "test.md".to_string(),
+            tab_width: 4,
             highlight_cache: None,
         }
     }

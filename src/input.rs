@@ -9,7 +9,7 @@ use crossterm::{
 use ratatui::{Terminal, layout::Rect, style::Style, widgets::Paragraph};
 use tui_textarea::CursorMove;
 
-use yame::app::App;
+use yame::app::{App, get_selection_text};
 use yame::config::{LayoutConfig, Theme, load_config};
 use yame::decoration::build_decoration_map;
 use yame::layout::{DEFAULT_MIN_COLS, compute_layout};
@@ -131,36 +131,6 @@ pub(super) fn is_navigation_key(k: &crossterm::event::KeyEvent) -> bool {
     )
 }
 
-/// Extract the currently-selected text from the textarea, or `None` if there
-/// is no active selection. Does not fall back to the current line.
-pub(super) fn get_selection_text(app: &App) -> Option<String> {
-    let ((row_start, col_start), (row_end, col_end)) = app.textarea.selection_range()?;
-    let lines = app.textarea.lines();
-    if row_start == row_end {
-        let chars: Vec<char> = lines[row_start].chars().collect();
-        Some(chars[col_start..col_end.min(chars.len())].iter().collect())
-    } else {
-        let mut result = String::new();
-        for row in row_start..=row_end {
-            if row >= lines.len() {
-                break;
-            }
-            let chars: Vec<char> = lines[row].chars().collect();
-            let start = if row == row_start { col_start } else { 0 };
-            let end = if row == row_end {
-                col_end.min(chars.len())
-            } else {
-                chars.len()
-            };
-            result.extend(&chars[start..end]);
-            if row < row_end {
-                result.push('\n');
-            }
-        }
-        Some(result)
-    }
-}
-
 /// If there is an active selection and `k` is a pair-opener, wrap the
 /// selection with the corresponding pair and return `true`.
 pub(super) fn handle_pair_wrap(app: &mut App, k: crossterm::event::KeyEvent) -> bool {
@@ -206,6 +176,14 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
 
     // ── Exit-prompt mode ────────────────────────────────────────────────────
     if matches!(app.status.mode, StatusMode::ExitPrompt) {
+        // Guard the destructive y/n responses: Ctrl+Y must not trigger SaveAndExit
+        // and Ctrl+N must not trigger Exit.  Other modifier+char combos (Ctrl+C,
+        // Ctrl+X …) still pass through so they continue to act as cancel shortcuts.
+        if k.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+            && matches!(k.code, KeyCode::Char('y') | KeyCode::Char('n'))
+        {
+            return KeyOutcome::Continue;
+        }
         return match k.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => KeyOutcome::SaveAndExit,
             KeyCode::Char('n') | KeyCode::Char('N') => KeyOutcome::Exit,
@@ -288,6 +266,23 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
         (KeyModifiers::SHIFT, KeyCode::Down) => handle_visual_move(app, true, true),
         (KeyModifiers::SHIFT, KeyCode::Up) => handle_visual_move(app, false, true),
 
+        // Tab: expand to spaces aligned to the next tab stop rather than inserting
+        // a raw '\t'.  Raw tabs break cursor positioning, selection, and soft-wrap
+        // because the layout engine assumes every character is 1 display column wide.
+        (KeyModifiers::NONE, KeyCode::Tab) => {
+            let (_, col) = app.textarea.cursor();
+            let tw = app.tab_width;
+            let spaces = tw - (col % tw);
+            for _ in 0..spaces {
+                app.textarea.input(crossterm::event::KeyEvent::new(
+                    KeyCode::Char(' '),
+                    KeyModifiers::NONE,
+                ));
+            }
+            app.mark_keystroke();
+            KeyOutcome::Continue
+        }
+
         _ => {
             // Any non-vertical-nav key ends the sticky-column gesture.
             app.sticky_col = None;
@@ -304,11 +299,12 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
                 if app.textarea.lines().len() != prev_line_count {
                     app.force_redecorate = true;
                 }
-                if is_nav {
-                    app.recompute_dirty();
-                } else {
+                if !is_nav {
                     app.mark_keystroke();
                 }
+                // Navigation keys cannot mutate content, so is_dirty cannot change;
+                // skipping recompute_dirty() here avoids an O(N) line comparison on
+                // every arrow-key press for large documents.
             }
             KeyOutcome::Continue
         }
@@ -342,7 +338,6 @@ fn handle_visual_move(app: &mut App, go_down: bool, selecting: bool) -> KeyOutco
         };
         app.textarea
             .input(crossterm::event::KeyEvent::new(code, mods));
-        app.recompute_dirty();
         return KeyOutcome::Continue;
     }
 
@@ -433,7 +428,6 @@ fn handle_visual_move(app: &mut App, go_down: bool, selecting: bool) -> KeyOutco
 
     app.textarea
         .move_cursor(CursorMove::Jump(tgt_row as u16, tgt_col as u16));
-    app.recompute_dirty();
     KeyOutcome::Continue
 }
 
@@ -593,6 +587,19 @@ where
                             &new_config.headings,
                             &mut warnings,
                         );
+                        // Rebuild the highlight cache so fenced code blocks pick up
+                        // any theme or palette changes immediately.
+                        app.highlight_cache = new_config.highlighting.enabled.then(|| {
+                            let palette_theme = new_config
+                                .highlighting
+                                .use_palette_colors
+                                .then(|| yame::highlighting::build_palette_theme(&app.theme));
+                            yame::highlighting::HighlightCache::new(
+                                true,
+                                new_config.highlighting.syntect_theme.clone(),
+                                palette_theme,
+                            )
+                        });
                         app.config_warnings = warnings;
                         app.status
                             .set_timed("Config reloaded.", Duration::from_millis(1500));
@@ -672,7 +679,7 @@ mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use std::path::PathBuf;
     use tui_textarea::TextArea;
-    use yame::app::App;
+    use yame::app::{App, ClipboardState};
     use yame::config::Theme;
     use yame::decoration::DecorationMap;
     use yame::status::StatusLine;
@@ -681,6 +688,7 @@ mod tests {
         App {
             textarea: TextArea::default(),
             file_path: PathBuf::from("test.md"),
+            shortened_path: "test.md".to_string(),
             is_dirty: false,
             saved_content: None,
             theme: Theme::default_theme(),
@@ -696,8 +704,8 @@ mod tests {
             free_scroll: false,
             sticky_col: None,
             content_width: 0,
-            clipboard: None,
-            initial_file_empty: false,
+            clipboard: ClipboardState::Uninitialized,
+            tab_width: 4,
             highlight_cache: None,
         }
     }
@@ -1223,5 +1231,67 @@ mod tests {
                 "'c' (mods={modifiers:?}) in ExitPrompt must restore Normal mode"
             );
         }
+    }
+
+    // Ctrl+Y / Ctrl+N while the exit prompt is open must NOT trigger
+    // SaveAndExit / Exit — they are Redo / navigation shortcuts that the user
+    // is likely to press accidentally.
+    #[test]
+    fn exit_prompt_ctrl_y_does_not_save_and_exit() {
+        let mut app = make_app();
+        app.status.mode = yame::status::StatusMode::ExitPrompt;
+        let outcome = handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('y'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(outcome, KeyOutcome::Continue, "Ctrl+Y must not trigger SaveAndExit");
+        assert!(
+            matches!(app.status.mode, yame::status::StatusMode::ExitPrompt),
+            "ExitPrompt must remain open after Ctrl+Y"
+        );
+    }
+
+    #[test]
+    fn exit_prompt_ctrl_n_does_not_discard_and_exit() {
+        let mut app = make_app();
+        app.status.mode = yame::status::StatusMode::ExitPrompt;
+        let outcome = handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(outcome, KeyOutcome::Continue, "Ctrl+N must not trigger Exit");
+        assert!(
+            matches!(app.status.mode, yame::status::StatusMode::ExitPrompt),
+            "ExitPrompt must remain open after Ctrl+N"
+        );
+    }
+
+    // Tab key must insert spaces to the next tab stop, not a raw '\t'.
+    // With app.tab_width=4 and cursor at col 0, pressing Tab should add 4 spaces.
+    #[test]
+    fn tab_key_inserts_spaces_to_next_stop() {
+        let mut app = make_app();
+        handle_key_event(&mut app, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(
+            app.textarea.lines()[0],
+            "    ",
+            "Tab at col 0 with tab_width=4 must insert 4 spaces"
+        );
+    }
+
+    // With the cursor already at col 2, pressing Tab should only insert 2 spaces
+    // (to reach the next multiple-of-4 stop at col 4).
+    #[test]
+    fn tab_key_aligns_to_next_stop_mid_line() {
+        let mut app = make_app();
+        // Type two chars to reach col 2.
+        handle_key_event(&mut app, KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
+        handle_key_event(&mut app, KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE));
+        handle_key_event(&mut app, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(
+            app.textarea.lines()[0],
+            "ab  ",
+            "Tab at col 2 with tab_width=4 must insert 2 spaces (align to col 4)"
+        );
     }
 }

@@ -7,12 +7,31 @@ use tui_textarea::TextArea;
 use crate::config::Theme;
 use crate::decoration::DecorationMap;
 use crate::highlighting::HighlightCache;
+use crate::renderer::shorten_path;
 use crate::status::StatusLine;
+
+/// Three-state clipboard handle.
+///
+/// Avoids repeated blocking connection attempts on headless systems:
+/// once an `arboard::Clipboard` connection fails we record it as
+/// `Unavailable` and stop retrying for the rest of the session.
+pub enum ClipboardState {
+    /// Not yet tried — initialised lazily on the first copy/paste.
+    Uninitialized,
+    /// Connected and ready to use.
+    Ready(arboard::Clipboard),
+    /// A previous connection attempt failed; skip all further attempts.
+    Unavailable,
+}
 
 /// All mutable application state.
 pub struct App {
     pub textarea: TextArea<'static>,
     pub file_path: PathBuf,
+    /// Pre-computed display string for the file path (shortened to 3 trailing
+    /// components).  Cached here so the render hot-path does not re-allocate on
+    /// every frame.  Updated whenever `file_path` changes.
+    pub shortened_path: String,
     pub is_dirty: bool,
     /// Snapshot of lines at last save, for dirty-flag recomputation after undo/redo.
     pub saved_content: Option<Vec<String>>,
@@ -48,14 +67,13 @@ pub struct App {
     /// last render frame.  Written by the event loop before dispatching each key
     /// event so `handle_visual_move` can use the same wrapping the renderer used.
     pub content_width: usize,
-    /// Lazily-initialised system clipboard handle. `None` until the first copy/paste,
-    /// then reused for the session to avoid reconnecting on every operation (expensive
-    /// on Wayland where arboard opens a new display-server connection each time).
-    pub clipboard: Option<arboard::Clipboard>,
-    /// True when the file was 0 bytes (or did not exist) at load time.
-    /// Prevents handle_save from growing a 0-byte file to a 1-byte bare newline
-    /// when the buffer is still empty.  Reset to false after any non-empty save.
-    pub initial_file_empty: bool,
+    /// Clipboard state: uninitialized, ready, or permanently unavailable.
+    /// See [`ClipboardState`] for the three-state semantics.
+    pub clipboard: ClipboardState,
+    /// Number of spaces per Tab key press (and per tab-stop on load).
+    /// Mirrors `[layout] tab_width` from config; stored here so `handle_key_event`
+    /// can expand Tab keypresses without needing access to the full config.
+    pub tab_width: usize,
     /// Syntect highlight cache. `None` when highlighting is disabled in config.
     /// Populated at startup from `[highlighting] enabled` + `syntect_theme`.
     pub highlight_cache: Option<HighlightCache>,
@@ -73,16 +91,14 @@ impl App {
         tab_width: usize,
         highlight_cache: Option<HighlightCache>,
     ) -> io::Result<Self> {
-        // Detect whether the file is empty/new before loading, so handle_save can
-        // preserve the 0-byte state instead of growing the file to a bare newline.
-        let initial_file_empty =
-            !file_path.exists() || std::fs::metadata(&file_path).is_ok_and(|m| m.len() == 0);
         let textarea = load_file(&file_path, tab_width)?;
         // Snapshot the initial content so recompute_dirty() has a baseline for both
         // existing files (undo back to load state → clean) and new files (empty baseline).
         let saved_content = Some(textarea.lines().to_vec());
+        let shortened_path = shorten_path(&file_path, 3);
         Ok(Self {
             textarea,
+            shortened_path,
             file_path,
             is_dirty: false,
             saved_content,
@@ -99,8 +115,8 @@ impl App {
             free_scroll: false,
             sticky_col: None,
             content_width: 0,
-            clipboard: None,
-            initial_file_empty,
+            clipboard: ClipboardState::Uninitialized,
+            tab_width: tab_width.max(1),
             highlight_cache,
         })
     }
@@ -120,6 +136,39 @@ impl App {
             Some(saved) => self.textarea.lines() != saved.as_slice(),
             None => !self.textarea.lines().is_empty(),
         };
+    }
+}
+
+/// Extract the currently-selected text from the textarea, or `None` if there
+/// is no active selection.  Does not fall back to the current line.
+///
+/// Shared between the pair-wrap handler (`input.rs`) and the copy handler
+/// (`clipboard.rs`), both of which need identical selection extraction logic.
+pub fn get_selection_text(app: &App) -> Option<String> {
+    let ((row_start, col_start), (row_end, col_end)) = app.textarea.selection_range()?;
+    let lines = app.textarea.lines();
+    if row_start == row_end {
+        let chars: Vec<char> = lines[row_start].chars().collect();
+        Some(chars[col_start..col_end.min(chars.len())].iter().collect())
+    } else {
+        let mut result = String::new();
+        for row in row_start..=row_end {
+            if row >= lines.len() {
+                break;
+            }
+            let chars: Vec<char> = lines[row].chars().collect();
+            let start = if row == row_start { col_start } else { 0 };
+            let end = if row == row_end {
+                col_end.min(chars.len())
+            } else {
+                chars.len()
+            };
+            result.extend(&chars[start..end]);
+            if row < row_end {
+                result.push('\n');
+            }
+        }
+        Some(result)
     }
 }
 
@@ -232,6 +281,7 @@ mod tests {
         App {
             textarea: TextArea::default(),
             file_path: PathBuf::from("test.md"),
+            shortened_path: "test.md".to_string(),
             is_dirty: false,
             saved_content: None,
             theme: Theme::default_theme(),
@@ -247,8 +297,8 @@ mod tests {
             free_scroll: false,
             sticky_col: None,
             content_width: 0,
-            clipboard: None,
-            initial_file_empty: false,
+            clipboard: ClipboardState::Uninitialized,
+            tab_width: 4,
             highlight_cache: None,
         }
     }

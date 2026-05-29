@@ -670,8 +670,9 @@ mod tests {
             free_scroll: false,
             sticky_col: None,
             content_width: 0,
-            clipboard: None,
-            initial_file_empty: false,
+            clipboard: crate::app::ClipboardState::Uninitialized,
+            shortened_path: "notes/foo.md".to_string(),
+            tab_width: 4,
             highlight_cache: None,
         }
     }

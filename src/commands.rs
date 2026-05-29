@@ -10,7 +10,9 @@ use yame::status::StatusMode;
 #[mutants::skip] // Calls std::fs::write — I/O side effect.
 pub(super) fn handle_save(app: &mut App) -> io::Result<()> {
     let lines = app.textarea.lines();
-    let content = if app.initial_file_empty && lines == [""] {
+    // Always write 0 bytes for an empty buffer — consistent regardless of whether
+    // the file was empty at open time.  A non-empty save always gets a POSIX newline.
+    let content = if lines == [""] {
         String::new()
     } else {
         lines.join("\n") + "\n"
