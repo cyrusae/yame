@@ -87,7 +87,12 @@ pub struct LayoutConfig {
 pub struct HighlightingConfig {
     /// Enable syntect syntax highlighting for fenced code blocks. Default true.
     pub enabled: bool,
-    /// Name of the bundled syntect theme to use for token colours.
+    /// Derive token colours from the yame palette instead of a built-in syntect
+    /// theme.  When true (the default) keywords use `accent`, strings use
+    /// `code`, comments use `muted`, etc.  Set false to use `syntect_theme`
+    /// colours instead (e.g. for a light-mode code block on a dark editor).
+    pub use_palette_colors: bool,
+    /// Name of the bundled syntect theme to use when `use_palette_colors = false`.
     /// Available: "base16-ocean.dark", "base16-ocean.light", "base16-eighties.dark",
     /// "base16-mocha.dark", "InspiredGitHub", "Solarized (dark)", "Solarized (light)".
     /// Invalid names fall back to "base16-ocean.dark".
@@ -98,6 +103,7 @@ impl Default for HighlightingConfig {
     fn default() -> Self {
         Self {
             enabled: true,
+            use_palette_colors: true,
             syntect_theme: "base16-ocean.dark".into(),
         }
     }
@@ -434,8 +440,10 @@ warning = "#f38ba8"   # dirty flag, warnings
 
 # ── Syntax highlighting ────────────────────────────────────────────────────────
 [highlighting]
-# enabled       = true             # set false to disable fenced-block syntax highlighting
-# syntect_theme = "base16-ocean.dark"
+# enabled            = true   # set false to disable fenced-block syntax highlighting
+# use_palette_colors = true   # derive token colours from your palette (recommended)
+#                             # set false to use a standalone syntect theme instead
+# syntect_theme = "base16-ocean.dark"   # only used when use_palette_colors = false
 #   Other bundled themes: base16-ocean.light · base16-eighties.dark · base16-mocha.dark
 #                         InspiredGitHub · Solarized (dark) · Solarized (light)
 "##;

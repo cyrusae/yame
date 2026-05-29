@@ -256,7 +256,7 @@ fn fixture_custom_toml_theme_propagates() {
 fn highlighted_rust_block_has_rgb_fg_spans() {
     let text = "# Doc\n\n```rust\nfn main() {}\n```\n";
     let theme = Theme::default_theme();
-    let cache = HighlightCache::new(true, "base16-ocean.dark".into());
+    let cache = HighlightCache::new(true, "base16-ocean.dark".into(), None);
     let (map, _) = build_decoration_map(text, &theme, true, Some(&cache));
 
     // Content line of the fenced block is line index 3 ("fn main() {}").
@@ -277,7 +277,7 @@ fn highlighted_rust_block_has_rgb_fg_spans() {
 fn disabled_highlighting_fenced_block_has_bg_no_syntect_fg() {
     let text = "```rust\nlet x = 1;\n```\n";
     let theme = Theme::default_theme();
-    let cache = HighlightCache::new(false, "base16-ocean.dark".into());
+    let cache = HighlightCache::new(false, "base16-ocean.dark".into(), None);
     let (map, _) = build_decoration_map(text, &theme, true, Some(&cache));
 
     // Content line is line 1.
@@ -320,7 +320,7 @@ fn no_cache_fenced_block_falls_back_to_fenced_bg() {
 fn highlighted_block_fence_delimiters_still_dimmed() {
     let text = "```rust\nlet x = 1;\n```\n";
     let theme = Theme::default_theme();
-    let cache = HighlightCache::new(true, "base16-ocean.dark".into());
+    let cache = HighlightCache::new(true, "base16-ocean.dark".into(), None);
     let (map, _) = build_decoration_map(text, &theme, true, Some(&cache));
 
     // Opening fence is line 0, closing is line 2.
@@ -341,12 +341,59 @@ fn highlighted_block_fence_delimiters_still_dimmed() {
 fn unknown_lang_tag_falls_back_silently() {
     let text = "```notareallanguage\nsome code here\n```\n";
     let theme = Theme::default_theme();
-    let cache = HighlightCache::new(true, "base16-ocean.dark".into());
+    let cache = HighlightCache::new(true, "base16-ocean.dark".into(), None);
     let (map, _) = build_decoration_map(text, &theme, true, Some(&cache));
 
     let content_line = map.get(&1).expect("line 1 must have spans");
     assert!(
         content_line.iter().any(|s| s.full_line_bg == Some(theme.fenced_bg)),
         "unknown lang fenced block must fall back to fenced_bg on content lines"
+    );
+}
+
+/// Regression: syntect fg spans must not be silently dropped.
+///
+/// The original bug: a full-line background span (0..N) was emitted first.
+/// `split_into_spans` sorted by char_start and advanced char_pos to N in one
+/// step, then clipped every subsequent fg span to zero length and skipped it —
+/// producing a plain fenced_bg block with no syntax colours at all.
+///
+/// The fix: emit fg spans directly (no separate background span); put
+/// `full_line_bg` on the first fg span so the background still fills the column.
+#[test]
+fn highlighted_block_spans_are_not_swallowed_by_background() {
+    let text = "```rust\nlet keyword = 1;\n```\n";
+    let theme = crate::Theme::default_theme();
+    let cache = HighlightCache::new(true, "base16-ocean.dark".into(), None);
+    let (map, _) = build_decoration_map(text, &theme, true, Some(&cache));
+
+    let content_line = map.get(&1).expect("line 1 (code content) must have spans");
+
+    // Must have MORE than one span — the bug produced exactly one wide span
+    // (the background) and nothing else.
+    assert!(
+        content_line.len() > 1,
+        "highlighted line must have multiple spans (keyword + other tokens), got: {:?}",
+        content_line.len()
+    );
+
+    // At least one span must have a syntect-sourced Rgb foreground.
+    assert!(
+        content_line
+            .iter()
+            .any(|s| matches!(s.style.fg, Some(Color::Rgb(_, _, _)))),
+        "highlighted line must have at least one Color::Rgb fg span — \
+         background span must not swallow the syntect fg spans"
+    );
+
+    // The first span (char 0) must carry full_line_bg for background fill.
+    let first = content_line
+        .iter()
+        .min_by_key(|s| s.char_start)
+        .expect("must have at least one span");
+    assert_eq!(
+        first.full_line_bg,
+        Some(theme.fenced_bg),
+        "first highlighted span must carry full_line_bg for background fill"
     );
 }

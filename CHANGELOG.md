@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [0.1.0-alpha.1] - 2026-05-25
 
 ### Added
+- Palette-derived highlight theme with per-token config overrides (#130)
 - v1.5: CJK / wide character support (unicode-width) (#41)
 - v1.5: syntect fenced code block syntax highlighting (#44)
 - config: default to Nerd Font Powerline glyphs, add opt-out (#122)
@@ -29,6 +30,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - v1 polish: italic startup warning, `delimiter_blend` config token, parent-dir creation on save (#35)
 
 ### Fixed
+- Bug: syntect fg spans invisible — overlapping background span consumes char_pos (#131)
 - Fix selection highlight clipping on wrapped indented list items (#128)
 - fix cargo upgrade breakage: crossterm/ratatui API changes (#127)
 - bug: bold/italic inside blockquote bleeds to full line (#120)

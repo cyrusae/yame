@@ -631,33 +631,35 @@ pub fn build_decoration_map(
 
                     match hl_result.as_ref().and_then(|hl| hl.get(block_row)) {
                         Some(hl_spans) if !hl_spans.is_empty() => {
-                            // Background span covering the whole line (ensures full_line_bg).
-                            push_span(
-                                &mut map,
-                                line,
-                                StyledSpan {
-                                    char_start: 0,
-                                    char_end: line_len,
-                                    style: Style::default().bg(theme.fenced_bg),
-                                    full_line_bg: Some(theme.fenced_bg),
-                                    ..Default::default()
-                                },
-                            );
-                            // Syntect foreground spans (clipped to line_len for safety).
-                            for hl_span in hl_spans {
+                            // Emit syntect fg spans directly — NO separate full-line background
+                            // span.  split_into_spans clips any span whose char_start falls
+                            // before the current char_pos, so a wide 0..N background span
+                            // would consume the entire line and cause all subsequent fg spans
+                            // to be skipped.  Instead we put full_line_bg on the first syntect
+                            // span; since syntect always produces contiguous spans starting at
+                            // col 0, this is always the span covering char 0.
+                            for (i, hl_span) in hl_spans.iter().enumerate() {
                                 let cs = hl_span.char_start.min(line_len);
                                 let ce = hl_span.char_end.min(line_len);
                                 if cs < ce {
                                     push_span(
                                         &mut map,
                                         line,
-                                        make_span(
-                                            cs,
-                                            ce,
-                                            Style::default()
+                                        StyledSpan {
+                                            char_start: cs,
+                                            char_end: ce,
+                                            style: Style::default()
                                                 .fg(hl_span.fg)
                                                 .bg(theme.fenced_bg),
-                                        ),
+                                            // Only the first span signals full_line_bg so the
+                                            // background fills the column beyond the last char.
+                                            full_line_bg: if i == 0 {
+                                                Some(theme.fenced_bg)
+                                            } else {
+                                                None
+                                            },
+                                            ..Default::default()
+                                        },
                                     );
                                 }
                             }
