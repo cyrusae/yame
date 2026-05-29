@@ -32,6 +32,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - v1 polish: italic startup warning, `delimiter_blend` config token, parent-dir creation on save (#35)
 
 ### Fixed
+- fix: click-to-cursor off-by-one in wrapped list items (#137)
 - fix: blank lines inside fenced code blocks lose fenced_bg (#133)
 - Bug: syntect fg spans invisible — overlapping background span consumes char_pos (#131)
 - Fix selection highlight clipping on wrapped indented list items (#128)

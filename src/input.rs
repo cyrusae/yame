@@ -47,13 +47,18 @@ pub(super) enum KeyOutcome {
 /// Map a screen-absolute (row, col) mouse position to a logical document
 /// (row, col) position, accounting for the editor gutter, scroll offset, and
 /// soft-wrapped lines. Returns `None` if the click is outside the editor area.
-#[mutants::skip] // Terminal event loop — requires a real terminal backend.
+///
+/// `decoration_map` is required to look up each line's `continuation_indent`
+/// so that list items and blockquotes (whose continuation rows are wrapped at a
+/// narrower width and rendered with a visual indent) count the correct number of
+/// visual rows and map column positions correctly.
 pub(super) fn screen_to_doc(
     screen_row: u16,
     screen_col: u16,
     editor_area: &Rect,
     scroll_top: usize,
     lines: &[String],
+    decoration_map: &yame::decoration::DecorationMap,
 ) -> Option<(u16, u16)> {
     if screen_row < editor_area.y
         || screen_col < editor_area.x
@@ -70,14 +75,30 @@ pub(super) fn screen_to_doc(
 
     let mut vis = 0usize;
     for (li, line) in lines.iter().enumerate().skip(scroll_top) {
-        let wrapped = renderer::wrap_line(line, cw);
+        // Continuation indent for this line (0 for plain paragraphs, ≥2 for
+        // list items and blockquotes).  Must match the renderer exactly so that
+        // visual row counts are identical.
+        let line_ci = decoration_map
+            .get(&li)
+            .map(|decs| decs.iter().map(|s| s.continuation_indent).max().unwrap_or(0))
+            .unwrap_or(0) as usize;
+        let cont_width = cw.saturating_sub(line_ci).max(1);
+        let wrapped = renderer::wrap_line_indented(line, cw, cont_width);
         let seg_count = wrapped.len().max(1);
         if vis + seg_count > click_vis_row {
             let si = click_vis_row - vis;
             let char_ranges = renderer::wrap_char_ranges(line, &wrapped);
             let seg_char_start = char_ranges.get(si).map_or(0, |&(start, _)| start);
             let row_str = wrapped.get(si).copied().unwrap_or("");
-            let chars_into_row = renderer::chars_for_display_cols(row_str, click_col);
+            // Continuation rows (si > 0) are rendered with `line_ci` visual
+            // columns of indent before the text.  Subtract that offset so the
+            // click column maps to the correct position within `row_str`.
+            let col_in_row = if si > 0 {
+                click_col.saturating_sub(line_ci)
+            } else {
+                click_col
+            };
+            let chars_into_row = renderer::chars_for_display_cols(row_str, col_in_row);
             let doc_col = (seg_char_start + chars_into_row).min(line.chars().count());
             return Some((li as u16, doc_col as u16));
         }
@@ -595,6 +616,7 @@ where
                             &last_editor_area,
                             app.scroll_top,
                             app.textarea.lines(),
+                            &app.decoration_map,
                         ) {
                             app.textarea.cancel_selection();
                             app.textarea.move_cursor(CursorMove::Jump(doc_row, doc_col));
@@ -609,6 +631,7 @@ where
                             &last_editor_area,
                             app.scroll_top,
                             app.textarea.lines(),
+                            &app.decoration_map,
                         ) {
                             if !drag_selecting {
                                 app.textarea.start_selection();
@@ -846,6 +869,96 @@ mod tests {
             app.textarea.cursor(),
             (0, 1),
             "Up at first row must not move cursor"
+        );
+    }
+
+    // ── screen_to_doc ────────────────────────────────────────────────────────
+
+    // Helper: editor area spanning the full terminal at (0,0), width includes
+    // two GUTTER columns (1 each side), so content_width = area.width - 2.
+    fn editor_rect(width: u16, height: u16) -> Rect {
+        Rect { x: 0, y: 0, width, height }
+    }
+
+    // Helper: build a DecorationMap with a single span on logical line `li`
+    // whose only non-default field is `continuation_indent`.
+    fn dec_map_with_ci(li: usize, ci: u8) -> DecorationMap {
+        use yame::decoration::StyledSpan;
+        let mut map = DecorationMap::default();
+        map.insert(li, vec![StyledSpan { continuation_indent: ci, ..StyledSpan::default() }]);
+        map
+    }
+
+    // Click outside the editor area returns None.
+    #[test]
+    fn screen_to_doc_outside_area_returns_none() {
+        let area = editor_rect(12, 5);
+        let lines: Vec<String> = vec!["hello".into()];
+        let map = DecorationMap::default();
+        // Row above area
+        assert!(screen_to_doc(0, 0, &Rect { x: 0, y: 2, width: 12, height: 5 }, 0, &lines, &map).is_none());
+        // Col outside area
+        assert!(screen_to_doc(0, 20, &area, 0, &lines, &map).is_none());
+    }
+
+    // Plain (no continuation indent) line: click at gutter+2 → doc col 2.
+    #[test]
+    fn screen_to_doc_plain_line_click() {
+        // area width=12 → GUTTER=1 each side → cw=10
+        let area = editor_rect(12, 5);
+        let lines: Vec<String> = vec!["hello world".into()];
+        let map = DecorationMap::default();
+        // screen_col = GUTTER + 2 = 3 → click_col = 2 → char 2 = 'l'
+        let result = screen_to_doc(0, 3, &area, 0, &lines, &map);
+        assert_eq!(result, Some((0, 2)), "plain click must map col correctly");
+    }
+
+    // Regression: click on the *third* visual row of a wrapped list item must
+    // map to the same logical line (0), not the next logical line (1).
+    //
+    // Setup: cw=10, ci=2 → cont_width=8
+    //   line 0: "- abc defgh ijk"
+    //     wrap_line_indented → ["- abc", "defgh", "ijk"]   (3 visual rows)
+    //   line 1: "next line"
+    //
+    // Old bug: wrap_line (ignoring ci) gave ["- abc", "defgh ijk"] (2 rows),
+    // so vis row 2 was counted as the start of line 1.
+    #[test]
+    fn screen_to_doc_list_item_third_wrap_row_lands_on_correct_logical_line() {
+        let area = editor_rect(12, 10); // cw = 10
+        let lines: Vec<String> = vec!["- abc defgh ijk".into(), "next line".into()];
+        let map = dec_map_with_ci(0, 2);
+        // Visual row 2 is the "ijk" continuation row of line 0.
+        // screen_col = GUTTER(1) + ci(2) = 3 → clicking at the first char of "ijk".
+        let result = screen_to_doc(2, 3, &area, 0, &lines, &map);
+        assert_eq!(
+            result.map(|(r, _)| r),
+            Some(0),
+            "third visual row of wrapped list item must map to logical line 0"
+        );
+    }
+
+    // Column mapping on a continuation row must subtract the continuation
+    // indent before computing the char position.
+    //
+    // Continuation row "defgh" of "- abc defgh ijk" at ci=2:
+    //   screen_col = GUTTER(1) + ci(2) + 3 = 6 → click_col=5, col_in_row=5-2=3
+    //   "defgh"[0..3] = "def" → char index 3 within "defgh" → char 8 in original
+    //   ("- abc " = 6 chars, "defgh" starts at 6, char 3 within it → global 9)
+    #[test]
+    fn screen_to_doc_list_item_continuation_column_adjusted() {
+        let area = editor_rect(12, 10); // cw = 10
+        // "- abc defgh ijk": '- abc ' = 6 chars, 'defgh' starts at char 6
+        let lines: Vec<String> = vec!["- abc defgh ijk".into(), "next line".into()];
+        let map = dec_map_with_ci(0, 2);
+        // Visual row 1 = "defgh" continuation row.
+        // screen_col = 1 (GUTTER) + 2 (ci) + 3 = 6 → click_col=5, col_in_row=3
+        // → chars_for_display_cols("defgh", 3) = 3 → doc_col = 6 + 3 = 9
+        let result = screen_to_doc(1, 6, &area, 0, &lines, &map);
+        assert_eq!(
+            result,
+            Some((0, 9)),
+            "continuation row column must be adjusted by continuation_indent"
         );
     }
 }
