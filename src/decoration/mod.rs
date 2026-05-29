@@ -235,6 +235,8 @@ pub fn build_decoration_map(
     // Bold+italic nesting detection: set on Start, cleared on End.
     let mut in_strong: Option<std::ops::Range<usize>> = None;
     let mut in_emphasis: Option<std::ops::Range<usize>> = None;
+    // TableHead: capture the byte range on Start so End can emit gaps-only spans.
+    let mut in_table_head: Option<std::ops::Range<usize>> = None;
 
     for (event, range) in parser {
         match event {
@@ -962,21 +964,31 @@ pub fn build_decoration_map(
                 }
             }
             Event::Start(Tag::TableHead) => {
-                let style = Style::default()
-                    .fg(theme.accent)
-                    .add_modifier(Modifier::BOLD);
-                add_byte_range_span(
-                    &mut map,
-                    &line_starts,
-                    text,
-                    range.start,
-                    range.end,
-                    SpanParams {
-                        style,
-                        full_line_bg: None,
-                        is_blockquote: false,
-                    },
-                );
+                // Capture the byte range; defer span emission to End(TableHead) so
+                // that inline formatting spans (bold, italic, code) are already in
+                // the map and `emit_content_around_existing` can skip over them.
+                in_table_head = Some(range.clone());
+            }
+
+            Event::End(TagEnd::TableHead) => {
+                if let Some(head_range) = in_table_head.take() {
+                    let style = Style::default()
+                        .fg(theme.accent)
+                        .add_modifier(Modifier::BOLD);
+
+                    let (start_line, _) =
+                        byte_to_line_char(&line_starts, text, head_range.start);
+                    let (end_line, _) = byte_to_line_char(
+                        &line_starts,
+                        text,
+                        head_range.end.saturating_sub(1).max(head_range.start),
+                    );
+
+                    for line in start_line..=end_line {
+                        let line_len = line_char_len(&line_starts, text, line);
+                        emit_content_around_existing(&mut map, line, 0, line_len, style);
+                    }
+                }
             }
 
             // ---- k. Strikethrough ----
@@ -1760,6 +1772,49 @@ mod tests {
             .flatten()
             .any(|s| s.style.add_modifier.contains(Modifier::BOLD));
         assert!(has_bold, "table header must have bold");
+    }
+
+    /// Regression test for FEEDBACK-2 §1.1:
+    /// Inline bold inside a table header must not be swallowed by the wide
+    /// header span.  Before the fix, `Start(TableHead)` emitted a single
+    /// `add_byte_range_span` which — being sorted first by char_start=0 in
+    /// `split_into_spans` — consumed the entire row and clipped all inner spans.
+    ///
+    /// After the fix, the wide span is emitted on `End(TableHead)` via
+    /// `emit_content_around_existing`, so bold/italic spans placed by earlier
+    /// inner events survive unchanged.
+    #[test]
+    fn table_header_inline_bold_not_swallowed() {
+        let theme = make_theme();
+        // Header has an explicit **Bold** cell — the bold content span must
+        // appear in the decoration map with the bold_color (not just accent).
+        let text = "| **Bold** | Plain |\n| --- | --- |\n| a | b |";
+        let map = build_map(text, &theme, true);
+        let line0 = map.get(&0).expect("line 0 should have spans");
+        // The bold content span uses theme.bold_color with BOLD modifier.
+        let has_bold_span = line0.iter().any(|s| {
+            s.style.fg == Some(theme.bold_color) && s.style.add_modifier.contains(Modifier::BOLD)
+        });
+        assert!(
+            has_bold_span,
+            "bold inside table header must produce a bold_color span, not be swallowed"
+        );
+    }
+
+    /// Italic inside a table header must also survive.
+    #[test]
+    fn table_header_inline_italic_not_swallowed() {
+        let theme = make_theme();
+        let text = "| *Italic* | Plain |\n| --- | --- |\n| a | b |";
+        let map = build_map(text, &theme, true);
+        let line0 = map.get(&0).expect("line 0 should have spans");
+        let has_italic_span = line0
+            .iter()
+            .any(|s| s.style.fg == Some(theme.italic_color));
+        assert!(
+            has_italic_span,
+            "italic inside table header must produce an italic_color span, not be swallowed"
+        );
     }
 
     // ---- Word count ----

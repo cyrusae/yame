@@ -33,6 +33,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - v1 polish: italic startup warning, `delimiter_blend` config token, parent-dir creation on save (#35)
 
 ### Fixed
+- FEEDBACK-2 1.1: table header decoration swallows inline formatting (#141)
 - FEEDBACK-2 batch 2: deduplicate selection, clipboard enum, path cache, mutants skip (#140)
 - FEEDBACK-2 batch: exit-prompt modifier guard, tab-key spaces, empty-file save, centering fix, nav dirty-skip, highlight cache on reload (#139)
 - fix: click-to-cursor off-by-one in wrapped list items (#137)
