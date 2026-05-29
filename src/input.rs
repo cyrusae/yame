@@ -961,4 +961,79 @@ mod tests {
             "continuation row column must be adjusted by continuation_indent"
         );
     }
+
+    // ── Navigation inertness ─────────────────────────────────────────────────
+
+    // Navigation keys (Up/Down/Left/Right) must NOT set last_keystroke.
+    //
+    // Setting last_keystroke arms the 50ms debounce timer that triggers a full
+    // decoration pass.  Pure cursor movement cannot change content, so the
+    // decoration map is already valid — re-running it wastes CPU and causes
+    // perceptible lag on large files.
+    //
+    // Kills: any mutation that routes nav keys through mark_keystroke() instead
+    // of recompute_dirty().
+    #[test]
+    fn nav_keys_do_not_set_last_keystroke() {
+        for code in [
+            KeyCode::Up,
+            KeyCode::Down,
+            KeyCode::Left,
+            KeyCode::Right,
+            KeyCode::Home,
+            KeyCode::End,
+            KeyCode::PageUp,
+            KeyCode::PageDown,
+        ] {
+            let mut app = make_app();
+            app.textarea.insert_str("line one\nline two");
+            app.last_keystroke = None;
+            handle_key_event(&mut app, KeyEvent::new(code, KeyModifiers::NONE));
+            assert!(
+                app.last_keystroke.is_none(),
+                "{code:?} must not set last_keystroke (would trigger redundant decoration pass)"
+            );
+        }
+    }
+
+    // ── Exit-prompt cancellation ─────────────────────────────────────────────
+
+    // Pressing Esc while in ExitPrompt must return to Normal mode without
+    // exiting (KeyOutcome::Continue).
+    //
+    // Regression guard for FEEDBACK-1 §1.1: the original code matched
+    // (NONE, Esc) at the outer level, shadowing the ExitPrompt handler.
+    #[test]
+    fn exit_prompt_esc_cancels_and_returns_to_normal() {
+        let mut app = make_app();
+        app.status.mode = yame::status::StatusMode::ExitPrompt;
+        let outcome = handle_key_event(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(outcome, KeyOutcome::Continue, "Esc in ExitPrompt must return Continue");
+        assert!(
+            matches!(app.status.mode, yame::status::StatusMode::Normal),
+            "Esc in ExitPrompt must restore Normal mode"
+        );
+    }
+
+    // Pressing 'c' (bare, or Ctrl+C) while in ExitPrompt must also cancel,
+    // not copy to clipboard.  The ExitPrompt handler matches on k.code only,
+    // so modifiers do not affect it.
+    #[test]
+    fn exit_prompt_c_cancels_regardless_of_modifier() {
+        for modifiers in [KeyModifiers::NONE, KeyModifiers::CONTROL] {
+            let mut app = make_app();
+            app.status.mode = yame::status::StatusMode::ExitPrompt;
+            let outcome =
+                handle_key_event(&mut app, KeyEvent::new(KeyCode::Char('c'), modifiers));
+            assert_eq!(
+                outcome,
+                KeyOutcome::Continue,
+                "'c' (mods={modifiers:?}) in ExitPrompt must return Continue"
+            );
+            assert!(
+                matches!(app.status.mode, yame::status::StatusMode::Normal),
+                "'c' (mods={modifiers:?}) in ExitPrompt must restore Normal mode"
+            );
+        }
+    }
 }

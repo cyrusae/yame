@@ -351,6 +351,117 @@ fn unknown_lang_tag_falls_back_silently() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// Inline code
+// ---------------------------------------------------------------------------
+
+/// Inline code spans (`` `code` ``) must receive fg == theme.code_color.
+///
+/// The fixture line "Normal paragraph text with **bold content**, *italic
+/// content*, and `inline code`." contains inline code; decoration must assign
+/// theme.code_color as the foreground on those spans.
+#[test]
+fn fixture_inline_code_has_code_color() {
+    let text = include_str!("fixtures/sample.md");
+    let theme = Theme::default_theme();
+    let (map, _) = build_decoration_map(text, &theme, true, None);
+    assert!(
+        map.values()
+            .flatten()
+            .any(|s| s.style.fg == Some(theme.code_color)),
+        "expected at least one span with fg == theme.code_color (inline code)"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Italic
+// ---------------------------------------------------------------------------
+
+/// At least one span in the fixture must carry the ITALIC modifier.
+///
+/// The fixture has `*italic content*` on the paragraph line; this guards that
+/// italic is actually emitted as a distinct modifier rather than collapsed into
+/// the bold path.
+#[test]
+fn fixture_italic_has_italic_modifier() {
+    let text = include_str!("fixtures/sample.md");
+    let theme = Theme::default_theme();
+    let (map, _) = build_decoration_map(text, &theme, true, None);
+    assert!(
+        map.values()
+            .flatten()
+            .any(|s| s.style.add_modifier.contains(Modifier::ITALIC)),
+        "expected at least one ITALIC span in the fixture"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Ordered list continuation indent
+// ---------------------------------------------------------------------------
+
+/// Ordered-list bullet spans must carry continuation_indent >= 3.
+///
+/// The "1. " prefix is 3 columns wide; continuation rows must indent to align
+/// with the item text, not the digit.
+#[test]
+fn fixture_ordered_list_has_continuation_indent() {
+    let text = include_str!("fixtures/sample.md");
+    let theme = Theme::default_theme();
+    let (map, _) = build_decoration_map(text, &theme, true, None);
+    // Ordered bullet spans start at char 0; continuation_indent encodes the
+    // bullet width ("1. " = 3 cols, "10. " = 4 cols, etc.).
+    assert!(
+        map.values()
+            .flatten()
+            .any(|s| s.char_start == 0 && s.continuation_indent >= 3),
+        "expected at least one ordered-list span with continuation_indent >= 3"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// H1–H3 bottom border
+// ---------------------------------------------------------------------------
+
+/// H1 lines must have border_bottom set on at least one span.
+///
+/// The fixture's first line is "# Heading One" (H1). The heading renderer
+/// draws a full-width underline after H1–H3 rows using the border_bottom field.
+#[test]
+fn fixture_h1_has_border_bottom() {
+    let text = include_str!("fixtures/sample.md");
+    let theme = Theme::default_theme();
+    let (map, _) = build_decoration_map(text, &theme, true, None);
+    // Line 0 is "# Heading One".
+    let h1_spans = map.get(&0).expect("line 0 (H1) must have decoration spans");
+    assert!(
+        h1_spans.iter().any(|s| s.border_bottom.is_some()),
+        "H1 (line 0) must have border_bottom set on at least one span"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Blank line inside fenced code block (regression #133)
+// ---------------------------------------------------------------------------
+
+/// A blank line that falls inside a fenced code block must still receive the
+/// fenced_bg full-line background, not lose it because the line is empty.
+///
+/// Regression guard for #133: the original bug stripped fenced_bg from empty
+/// lines within a block because the span-emission path only ran when the line
+/// was non-empty.
+#[test]
+fn blank_line_inside_fenced_block_keeps_fenced_bg() {
+    // The blank line (index 2) is inside the fenced block.
+    let text = "```rust\nlet x = 1;\n\nlet y = 2;\n```\n";
+    let theme = Theme::default_theme();
+    let (map, _) = build_decoration_map(text, &theme, true, None);
+    let blank_line = map.get(&2).expect("blank line inside fenced block must have spans");
+    assert!(
+        blank_line.iter().any(|s| s.full_line_bg == Some(theme.fenced_bg)),
+        "blank line inside fenced block must retain fenced_bg full_line_bg"
+    );
+}
+
 /// Regression: syntect fg spans must not be silently dropped.
 ///
 /// The original bug: a full-line background span (0..N) was emitted first.
