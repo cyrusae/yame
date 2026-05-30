@@ -38,6 +38,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - v1 polish: italic startup warning, `delimiter_blend` config token, parent-dir creation on save (#35)
 
 ### Fixed
+- startup: eliminate blank-frame flash on file open (#132)
 - renderer: clip fenced/heading bg to content area, dim line-number colors (#131)
 - FEEDBACK-2 2.3: cap highlight cache to prevent unbounded memory growth (#142)
 - FEEDBACK-2 1.1: table header decoration swallows inline formatting (#141)

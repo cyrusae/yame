@@ -503,13 +503,8 @@ where
 
     let min_cols = layout_config.min_cols.unwrap_or(DEFAULT_MIN_COLS);
 
-    // Initial decoration pass.
-    {
-        let text = app.textarea.lines().join("\n");
-        let (map, wc) = decorate(&text, app);
-        app.decoration_map = map;
-        app.word_count = wc;
-    }
+    // decoration_map and word_count are pre-computed in App::new() before the
+    // terminal enters the alternate screen, so the first draw is immediate.
 
     let mut last_editor_area = Rect::default();
     let mut drag_selecting = false;
