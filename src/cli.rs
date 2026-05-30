@@ -63,7 +63,7 @@ pub(super) fn shell_init_str(_shell: &str) -> String {
     .to_string()
 }
 
-#[mutants::skip] // Reads $SHELL env var and calls process::exit — not unit-testable.
+#[cfg_attr(feature = "mutants-skip", mutants::skip)] // Reads $SHELL env var and calls process::exit — not unit-testable.
 pub(super) fn detect_shell() -> String {
     match std::env::var("SHELL") {
         Ok(path) if path.contains("zsh") => "zsh".to_string(),
@@ -97,7 +97,7 @@ pub(super) fn detect_shell() -> String {
 // Help text
 // ---------------------------------------------------------------------------
 
-#[mutants::skip] // Prints to stdout and calls process::exit — not unit-testable.
+#[cfg_attr(feature = "mutants-skip", mutants::skip)] // Prints to stdout and calls process::exit — not unit-testable.
 pub(super) fn print_help() {
     println!("yame — yet another markdown editor");
     println!();
@@ -125,7 +125,7 @@ pub(super) fn print_help() {
 // Argument parsing
 // ---------------------------------------------------------------------------
 
-#[mutants::skip] // Reads std::env::args() — side-effectful, not unit-testable.
+#[cfg_attr(feature = "mutants-skip", mutants::skip)] // Reads std::env::args() — side-effectful, not unit-testable.
 pub(super) fn parse_args() -> Result<Command, ()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
@@ -157,7 +157,7 @@ pub(super) fn parse_args() -> Result<Command, ()> {
 // write-config subcommand
 // ---------------------------------------------------------------------------
 
-#[mutants::skip] // Filesystem + stdin I/O — not unit-testable.
+#[cfg_attr(feature = "mutants-skip", mutants::skip)] // Filesystem + stdin I/O — not unit-testable.
 pub(super) fn run_write_config() {
     use std::io::Write;
     use yame::config::{DEFAULT_CONFIG_TEMPLATE, config_path};

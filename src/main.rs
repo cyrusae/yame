@@ -15,7 +15,7 @@ mod cli;
 mod commands;
 mod input;
 
-#[mutants::skip] // Installs a global panic hook — untestable side effect.
+#[cfg_attr(feature = "mutants-skip", mutants::skip)] // Installs a global panic hook — untestable side effect.
 fn setup_panic_hook() {
     let original = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -25,7 +25,7 @@ fn setup_panic_hook() {
     }));
 }
 
-#[mutants::skip] // Full terminal I/O orchestration — not unit-testable.
+#[cfg_attr(feature = "mutants-skip", mutants::skip)] // Full terminal I/O orchestration — not unit-testable.
 fn run(file_path: PathBuf) -> io::Result<()> {
     setup_panic_hook();
 
@@ -102,7 +102,7 @@ fn run(file_path: PathBuf) -> io::Result<()> {
     result
 }
 
-#[mutants::skip] // Entry point — calls process::exit, not unit-testable.
+#[cfg_attr(feature = "mutants-skip", mutants::skip)] // Entry point — calls process::exit, not unit-testable.
 fn main() {
     let command = cli::parse_args().unwrap_or_else(|_| std::process::exit(1));
     match command {

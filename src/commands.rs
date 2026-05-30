@@ -7,7 +7,7 @@ use yame::app::App;
 use yame::renderer;
 use yame::status::StatusMode;
 
-#[mutants::skip] // Calls std::fs::write — I/O side effect.
+#[cfg_attr(feature = "mutants-skip", mutants::skip)] // Calls std::fs::write — I/O side effect.
 pub(super) fn handle_save(app: &mut App) -> io::Result<()> {
     let lines = app.textarea.lines();
     // Always write 0 bytes for an empty buffer — consistent regardless of whether

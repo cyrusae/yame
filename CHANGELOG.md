@@ -80,6 +80,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Italic default color now matches text color (not accent blend) (#60)
 
 ### Changed
+- refactor: move mutants crate to dev-dependencies via cfg_attr feature flag (#147)
 - refactor: split main.rs — extract event loop, parse_args, shell helpers into own modules (#149)
 - ui: add Alt+T and ^F to command bar, remove ^R (#138)
 - feat: Alt+T format-table command — reflow pipe table to uniform column widths (#137)

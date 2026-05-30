@@ -333,7 +333,7 @@ pub struct MarkdownView<'a> {
 }
 
 impl Widget for MarkdownView<'_> {
-    #[mutants::skip] // Writes into ratatui Buffer — void, not testable via return value.
+    #[cfg_attr(feature = "mutants-skip", mutants::skip)] // Writes into ratatui Buffer — void, not testable via return value.
     fn render(self, area: Rect, buf: &mut Buffer) {
         let left_gutter = left_gutter_width(self.lines.len(), self.show_line_numbers);
         let content_width =
@@ -596,7 +596,7 @@ impl Widget for MarkdownView<'_> {
 // `<→>` would simply paint no overlay (observable only through rendered pixels,
 // not through a pure-Rust unit assertion).  Suite timeouts caused by parallel
 // slow integration tests prevent cargo-mutants from confirming the skip empirically.
-#[mutants::skip]
+#[cfg_attr(feature = "mutants-skip", mutants::skip)]
 fn apply_selection_overlay(
     area: Rect,
     buf: &mut Buffer,
@@ -710,7 +710,7 @@ fn apply_selection_overlay(
 /// Dim background for all non-current matches; brighter background for the
 /// current one.  Applied before the selection and cursor overlays so those
 /// always win when they overlap a match cell.
-#[mutants::skip] // Writes into ratatui Buffer — no return value to assert.
+#[cfg_attr(feature = "mutants-skip", mutants::skip)] // Writes into ratatui Buffer — no return value to assert.
 fn apply_search_overlay(area: Rect, buf: &mut Buffer, view: &MarkdownView<'_>) {
     let left_gutter = left_gutter_width(view.lines.len(), view.show_line_numbers);
     let content_width =

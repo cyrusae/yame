@@ -253,7 +253,7 @@ pub fn block_highlights_to_decoration_map(
 ///
 /// `highlight_cache` is optional: pass `Some(&cache)` to enable syntect syntax
 /// highlighting for fenced code blocks, or `None` to disable it (fenced_bg-only).
-#[mutants::skip]
+#[cfg_attr(feature = "mutants-skip", mutants::skip)]
 pub fn build_decoration_map(
     text: &str,
     theme: &Theme,

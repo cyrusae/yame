@@ -90,7 +90,7 @@ pub fn contains_binary_bytes(buf: &[u8]) -> bool {
 /// Returns `false` for paths that do not yet exist (new files are always text)
 /// and for any path that cannot be opened (the downstream `load_file` call will
 /// produce the proper error).
-#[mutants::skip] // Filesystem I/O — mutations are masked by OS state.
+#[cfg_attr(feature = "mutants-skip", mutants::skip)] // Filesystem I/O — mutations are masked by OS state.
 pub fn is_likely_binary(path: &Path) -> bool {
     use std::io::Read;
     if !path.exists() {
@@ -185,7 +185,7 @@ pub struct App {
 
 impl App {
     /// Create a new App, loading file content if it exists.
-    #[mutants::skip] // Calls load_file (fs I/O) and returns a struct — mutations masked by I/O.
+    #[cfg_attr(feature = "mutants-skip", mutants::skip)] // Calls load_file (fs I/O) and returns a struct — mutations masked by I/O.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         file_path: PathBuf,
@@ -336,7 +336,7 @@ pub fn expand_tabs(line: &str, tab_width: usize) -> String {
 
 /// Load a file into a TextArea, or return an empty TextArea for new files.
 /// Tabs are expanded to spaces using `tab_width` (default 4 if 0 is passed).
-#[mutants::skip] // fs::read_to_string I/O — mutations (e.g. skipping the read) not testable without a real FS.
+#[cfg_attr(feature = "mutants-skip", mutants::skip)] // fs::read_to_string I/O — mutations (e.g. skipping the read) not testable without a real FS.
 pub fn load_file(path: &Path, tab_width: usize) -> io::Result<TextArea<'static>> {
     let tw = if tab_width == 0 { 4 } else { tab_width };
     if path.exists() {

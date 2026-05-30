@@ -2,7 +2,7 @@ use crate::app::{App, ClipboardState, get_selection_text};
 
 /// Copy selection or current line to the system clipboard.
 /// On error, posts a dismissible status message.
-#[mutants::skip] // Clipboard I/O — arboard calls not testable in a headless CI environment.
+#[cfg_attr(feature = "mutants-skip", mutants::skip)] // Clipboard I/O — arboard calls not testable in a headless CI environment.
 pub fn handle_copy(app: &mut App) {
     let text = get_copy_text(app);
     ensure_clipboard(app);
@@ -17,7 +17,7 @@ pub fn handle_copy(app: &mut App) {
 }
 
 /// Paste from the system clipboard into the buffer.
-#[mutants::skip] // Clipboard I/O.
+#[cfg_attr(feature = "mutants-skip", mutants::skip)] // Clipboard I/O.
 pub fn handle_paste(app: &mut App) {
     ensure_clipboard(app);
     let result = match &mut app.clipboard {
@@ -42,7 +42,7 @@ pub fn handle_paste(app: &mut App) {
 /// On failure, transitions `Uninitialized` → `Unavailable` so subsequent
 /// copy/paste operations fail immediately without blocking the event loop.
 /// An already-`Ready` or `Unavailable` clipboard is left unchanged.
-#[mutants::skip] // arboard::Clipboard I/O — not available in CI.
+#[cfg_attr(feature = "mutants-skip", mutants::skip)] // arboard::Clipboard I/O — not available in CI.
 fn ensure_clipboard(app: &mut App) {
     if matches!(app.clipboard, ClipboardState::Uninitialized) {
         app.clipboard = match arboard::Clipboard::new() {

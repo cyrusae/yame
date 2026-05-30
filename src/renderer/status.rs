@@ -44,7 +44,7 @@ fn pill1_parts(app: &App) -> (Span<'static>, Color) {
 // ---------------------------------------------------------------------------
 
 /// Render the bottom status bar into `area`.
-#[mutants::skip] // Writes into ratatui Buffer — void, not testable via return value.
+#[cfg_attr(feature = "mutants-skip", mutants::skip)] // Writes into ratatui Buffer — void, not testable via return value.
 pub fn render_status_bar(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let canvas_bg = theme.bg;
@@ -141,7 +141,7 @@ pub(super) fn build_normal_status_bar(app: &App) -> Line<'static> {
 }
 
 /// Render the second-to-last row: cursor position and word count.
-#[mutants::skip] // Writes into ratatui Buffer — void, not testable via return value.
+#[cfg_attr(feature = "mutants-skip", mutants::skip)] // Writes into ratatui Buffer — void, not testable via return value.
 pub fn render_info_line(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
 
