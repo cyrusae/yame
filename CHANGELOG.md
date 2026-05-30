@@ -76,6 +76,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Italic default color now matches text color (not accent blend) (#60)
 
 ### Changed
+- perf: background decoration thread — move decoration pass off event loop (#134)
 - line-numbers: revert gutter color, fix heading rule clip, blockquote accent blend (#130)
 - force-push to mirror after rebase (#129)
 - resolve stash-pop CHANGELOG conflict (#152)

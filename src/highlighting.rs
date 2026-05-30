@@ -10,9 +10,10 @@
 //! zero startup cost.  On the default production path (`use_palette_colors =
 //! true`) the `ThemeSet` is never initialised at all.
 //!
-//! The highlight memo-cache is stored in a `RefCell` so that
+//! The highlight memo-cache is stored in a `Mutex` so that
 //! `build_decoration_map` can take `Option<&HighlightCache>` (immutable) while
-//! still mutating the cache on first use.
+//! still mutating the cache on first use, and so that `HighlightCache` is
+//! `Send + Sync` and can be wrapped in `Arc` for the background decoration thread.
 //!
 //! # Theme resolution (highest priority first)
 //! 1. Palette-derived theme — built from the yame colour palette when
@@ -26,11 +27,10 @@
 //! - Highlighting disabled (`enabled = false`) → `None` for every block.
 //! - Unknown language tag → `None` (caller falls back to fenced_bg-only).
 
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::str::FromStr;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use ratatui::style::Color;
 use syntect::easy::HighlightLines;
@@ -213,7 +213,9 @@ pub struct HighlightCache {
     /// Named built-in theme fallback (used when `palette_theme` is `None`).
     theme_name: String,
     /// Memoisation: `(lang_lower, content_hash)` → per-line coloured spans.
-    cache: RefCell<HashMap<(String, u64), BlockHighlights>>,
+    /// `Mutex` (rather than `RefCell`) makes `HighlightCache: Send + Sync` so
+    /// it can be wrapped in `Arc` and shared with the background decoration thread.
+    cache: Mutex<HashMap<(String, u64), BlockHighlights>>,
     /// Whether syntax highlighting is enabled.
     pub enabled: bool,
 }
@@ -236,7 +238,7 @@ impl HighlightCache {
             theme_set: OnceLock::new(),
             palette_theme,
             theme_name,
-            cache: RefCell::new(HashMap::new()),
+            cache: Mutex::new(HashMap::new()),
             enabled,
         }
     }
@@ -257,8 +259,14 @@ impl HighlightCache {
         let key = (lang_lower.clone(), hash);
 
         // Cache hit — no syntax/theme work needed.
-        if let Some(cached) = self.cache.borrow().get(&key) {
-            return Some(cached.clone());
+        if let Some(cached) = self
+            .cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&key)
+            .cloned()
+        {
+            return Some(cached);
         }
 
         // Lazily initialise syntax sets on first cache miss.
@@ -317,7 +325,7 @@ impl HighlightCache {
             block_hl.push(line_spans);
         }
 
-        let mut cache = self.cache.borrow_mut();
+        let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
         // Evict one arbitrary entry before inserting when the cap is reached.
         // HashMap iteration order is non-deterministic, so "arbitrary" is fine —
         // we have no usage-frequency data and all entries are equally cheap to
@@ -340,7 +348,7 @@ impl HighlightCache {
     /// Exposed for unit tests; not used on the hot path.
     #[cfg(test)]
     fn cache_len(&self) -> usize {
-        self.cache.borrow().len()
+        self.cache.lock().unwrap_or_else(|e| e.into_inner()).len()
     }
 }
 

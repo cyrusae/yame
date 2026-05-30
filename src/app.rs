@@ -1,5 +1,6 @@
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 
 use tui_textarea::TextArea;
@@ -170,8 +171,9 @@ pub struct App {
     /// Mirrors `[layout] line_numbers` from config.  Default false.
     pub show_line_numbers: bool,
     /// Syntect highlight cache. `None` when highlighting is disabled in config.
-    /// Populated at startup from `[highlighting] enabled` + `syntect_theme`.
-    pub highlight_cache: Option<HighlightCache>,
+    /// Wrapped in `Arc` so the background decoration worker can hold a cheap
+    /// reference without cloning the heavy `SyntaxSet` / `ThemeSet` payloads.
+    pub highlight_cache: Option<Arc<HighlightCache>>,
     /// Editing mode: Markdown decoration, plain syntect highlighting, or plain text.
     /// Resolved from the file extension and `[filetype]` config at startup and
     /// updated on config reload (Ctrl+R).
@@ -199,17 +201,21 @@ impl App {
         let saved_content = Some(textarea.lines().to_vec());
         let shortened_path = shorten_path(&file_path, 3);
 
+        // Wrap the cache in Arc now so the background decoration worker can hold
+        // a reference without cloning the expensive SyntaxSet/ThemeSet payloads.
+        let highlight_cache: Option<Arc<HighlightCache>> = highlight_cache.map(Arc::new);
+
         // Pre-compute the initial decoration map before entering the alternate screen
         // so the event loop's first draw is immediate with fully-styled content,
         // eliminating the blank-frame flash on startup.
         let text = textarea.lines().join("\n");
         let (decoration_map, word_count) = match &file_mode {
             FileMode::Markdown => {
-                build_decoration_map(&text, &theme, italic_support, highlight_cache.as_ref())
+                build_decoration_map(&text, &theme, italic_support, highlight_cache.as_deref())
             }
             FileMode::PlainHighlight(lang) => {
                 let map = highlight_cache
-                    .as_ref()
+                    .as_deref()
                     .and_then(|cache| cache.highlight_block(lang, &text))
                     .map(|hl| block_highlights_to_decoration_map(&hl, 0))
                     .unwrap_or_default();

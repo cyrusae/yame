@@ -1,4 +1,5 @@
 use std::io;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crossterm::{
@@ -11,7 +12,10 @@ use tui_textarea::CursorMove;
 
 use yame::app::{App, FileMode, get_selection_text, resolve_file_mode};
 use yame::config::{LayoutConfig, Theme, load_config};
-use yame::decoration::{block_highlights_to_decoration_map, build_decoration_map, count_words};
+use yame::decoration::{
+    DecorationMap, block_highlights_to_decoration_map, build_decoration_map, count_words,
+};
+use yame::highlighting::HighlightCache;
 use yame::layout::{DEFAULT_MIN_COLS, compute_layout};
 use yame::renderer;
 use yame::status::StatusMode;
@@ -41,38 +45,41 @@ pub(super) enum KeyOutcome {
 }
 
 // ---------------------------------------------------------------------------
-// Decoration dispatch
+// Background decoration worker
 // ---------------------------------------------------------------------------
 
-/// Run the appropriate decoration / highlighting pass for the current file mode
-/// and return `(DecorationMap, word_count)`.
+/// Parameters shipped to the decoration worker for one decoration pass.
 ///
-/// - `Markdown` → full pulldown-cmark decoration pass (existing path).
-/// - `PlainHighlight(lang)` → syntect whole-file highlight; word count computed
-///   separately via [`count_words`].
-/// - `PlainText` → no decoration; word count only.
-fn decorate(text: &str, app: &App) -> (yame::decoration::DecorationMap, usize) {
-    match &app.file_mode {
+/// All fields are cheaply cloneable or `Arc`-wrapped so the main thread can
+/// keep its own copies while the worker operates on its snapshot.
+struct DecorateRequest {
+    text: String,
+    mode: FileMode,
+    theme: Theme,
+    italic_support: bool,
+    cache: Option<Arc<HighlightCache>>,
+}
+
+/// Run the appropriate decoration pass for the given request.
+fn run_decorate(req: &DecorateRequest) -> (DecorationMap, usize) {
+    match &req.mode {
         FileMode::Markdown => build_decoration_map(
-            text,
-            &app.theme,
-            app.italic_support,
-            app.highlight_cache.as_ref(),
+            &req.text,
+            &req.theme,
+            req.italic_support,
+            req.cache.as_deref(),
         ),
         FileMode::PlainHighlight(lang) => {
-            let map = app
-                .highlight_cache
-                .as_ref()
-                .and_then(|cache| cache.highlight_block(lang, text))
+            let map = req
+                .cache
+                .as_deref()
+                .and_then(|cache| cache.highlight_block(lang, &req.text))
                 .map(|hl| block_highlights_to_decoration_map(&hl, 0))
                 .unwrap_or_default();
-            let wc = count_words(text);
+            let wc = count_words(&req.text);
             (map, wc)
         }
-        FileMode::PlainText => (
-            yame::decoration::DecorationMap::default(),
-            count_words(text),
-        ),
+        FileMode::PlainText => (DecorationMap::default(), count_words(&req.text)),
     }
 }
 
@@ -503,6 +510,32 @@ where
 
     let min_cols = layout_config.min_cols.unwrap_or(DEFAULT_MIN_COLS);
 
+    // Spawn a persistent background decoration worker.
+    //
+    // The worker receives `DecorateRequest` messages and sends back
+    // `(DecorationMap, usize)` results.  Before starting each job it drains
+    // any superseded requests ("latest wins") so rapid typing never queues up
+    // stale work.  The thread exits automatically when `deco_tx` is dropped
+    // (i.e. when the event loop returns).
+    let (deco_tx, deco_work_rx) = std::sync::mpsc::channel::<DecorateRequest>();
+    let (deco_result_tx, deco_rx) = std::sync::mpsc::channel::<(DecorationMap, usize)>();
+    std::thread::Builder::new()
+        .name("deco-worker".into())
+        .spawn(move || {
+            while let Ok(req) = deco_work_rx.recv() {
+                // Drain any superseded requests — only the latest matters.
+                let req = std::iter::once(req)
+                    .chain(deco_work_rx.try_iter())
+                    .last()
+                    .unwrap(); // always at least one element
+                let result = run_decorate(&req);
+                if deco_result_tx.send(result).is_err() {
+                    break; // main thread gone, exit cleanly
+                }
+            }
+        })
+        .expect("failed to spawn decoration worker");
+
     // decoration_map and word_count are pre-computed in App::new() before the
     // terminal enters the alternate screen, so the first draw is immediate.
 
@@ -510,11 +543,22 @@ where
     let mut drag_selecting = false;
 
     loop {
-        if app.force_redecorate || app.last_keystroke.is_some_and(|t| t.elapsed() >= DEBOUNCE) {
-            let text = app.textarea.lines().join("\n");
-            let (map, wc) = decorate(&text, app);
+        // Apply the latest completed decoration result from the background worker.
+        // Drain all pending results and keep only the freshest one.
+        let latest = std::iter::from_fn(|| deco_rx.try_recv().ok()).last();
+        if let Some((map, wc)) = latest {
             app.decoration_map = map;
             app.word_count = wc;
+        }
+
+        if app.force_redecorate || app.last_keystroke.is_some_and(|t| t.elapsed() >= DEBOUNCE) {
+            let _ = deco_tx.send(DecorateRequest {
+                text: app.textarea.lines().join("\n"),
+                mode: app.file_mode.clone(),
+                theme: app.theme.clone(),
+                italic_support: app.italic_support,
+                cache: app.highlight_cache.clone(),
+            });
             app.last_keystroke = None;
             app.force_redecorate = false;
         }
@@ -635,11 +679,11 @@ where
                                 .highlighting
                                 .use_palette_colors
                                 .then(|| yame::highlighting::build_palette_theme(&app.theme));
-                            yame::highlighting::HighlightCache::new(
+                            Arc::new(yame::highlighting::HighlightCache::new(
                                 true,
                                 new_config.highlighting.syntect_theme.clone(),
                                 palette_theme,
-                            )
+                            ))
                         });
                         // Re-resolve file mode in case [filetype] config changed.
                         app.file_mode = resolve_file_mode(&app.file_path, &new_config.filetype);
@@ -941,13 +985,24 @@ mod tests {
     // markdown decoration pass on multi-word text with a heading returns a
     // non-empty map AND word_count > 1.
 
+    // Helper: build a DecorateRequest from an App snapshot (for tests).
+    fn make_req(text: &str, app: &App) -> DecorateRequest {
+        DecorateRequest {
+            text: text.to_string(),
+            mode: app.file_mode.clone(),
+            theme: app.theme.clone(),
+            italic_support: app.italic_support,
+            cache: app.highlight_cache.clone(),
+        }
+    }
+
     // FileMode::Markdown: heading + body text → non-empty map, word_count > 1.
     #[test]
     fn decorate_markdown_returns_nonempty_map_and_correct_word_count() {
         let mut app = make_app();
         app.file_mode = FileMode::Markdown;
         let text = "# Hello World\nThis is some text.\n";
-        let (map, wc) = decorate(text, &app);
+        let (map, wc) = run_decorate(&make_req(text, &app));
         assert!(
             !map.is_empty(),
             "Markdown decoration must produce a non-empty DecorationMap"
@@ -964,7 +1019,7 @@ mod tests {
     fn decorate_plain_text_returns_empty_map_with_word_count() {
         let mut app = make_app();
         app.file_mode = FileMode::PlainText;
-        let (map, wc) = decorate("hello world\n", &app);
+        let (map, wc) = run_decorate(&make_req("hello world\n", &app));
         assert!(
             map.is_empty(),
             "PlainText mode must return an empty DecorationMap"
