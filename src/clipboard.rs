@@ -100,6 +100,7 @@ mod tests {
             tab_width: 4,
             highlight_cache: None,
             file_mode: crate::app::FileMode::Markdown,
+            show_line_numbers: false,
         }
     }
 

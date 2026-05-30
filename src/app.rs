@@ -164,6 +164,9 @@ pub struct App {
     /// Mirrors `[layout] tab_width` from config; stored here so `handle_key_event`
     /// can expand Tab keypresses without needing access to the full config.
     pub tab_width: usize,
+    /// Show line numbers in the left gutter.
+    /// Mirrors `[layout] line_numbers` from config.  Default false.
+    pub show_line_numbers: bool,
     /// Syntect highlight cache. `None` when highlighting is disabled in config.
     /// Populated at startup from `[highlighting] enabled` + `syntect_theme`.
     pub highlight_cache: Option<HighlightCache>,
@@ -186,6 +189,7 @@ impl App {
         tab_width: usize,
         highlight_cache: Option<HighlightCache>,
         file_mode: FileMode,
+        show_line_numbers: bool,
     ) -> io::Result<Self> {
         let textarea = load_file(&file_path, tab_width)?;
         // Snapshot the initial content so recompute_dirty() has a baseline for both
@@ -215,6 +219,7 @@ impl App {
             tab_width: tab_width.max(1),
             highlight_cache,
             file_mode,
+            show_line_numbers,
         })
     }
 
@@ -398,6 +403,7 @@ mod tests {
             tab_width: 4,
             highlight_cache: None,
             file_mode: FileMode::Markdown,
+            show_line_numbers: false,
         }
     }
 

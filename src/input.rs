@@ -101,6 +101,7 @@ pub(super) fn screen_to_doc(
     scroll_top: usize,
     lines: &[String],
     decoration_map: &yame::decoration::DecorationMap,
+    show_line_numbers: bool,
 ) -> Option<(u16, u16)> {
     if screen_row < editor_area.y
         || screen_col < editor_area.x
@@ -109,14 +110,12 @@ pub(super) fn screen_to_doc(
     {
         return None;
     }
-    // Written as GUTTER + GUTTER (not 2 * GUTTER) so that the `* → /` operator
-    // mutation is eliminated: 2/1 == 2 is equivalent, but `+ → -` (0) and
-    // `+ → *` (1) produce distinct, observable wrong values.
+    let left_gutter = renderer::left_gutter_width(lines.len(), show_line_numbers);
     let cw = (editor_area.width as usize)
-        .saturating_sub(renderer::GUTTER as usize + renderer::GUTTER as usize)
+        .saturating_sub(left_gutter as usize + renderer::GUTTER as usize)
         .max(1);
     let click_vis_row = (screen_row - editor_area.y) as usize;
-    let click_col = screen_col.saturating_sub(editor_area.x + renderer::GUTTER) as usize;
+    let click_col = screen_col.saturating_sub(editor_area.x + left_gutter) as usize;
 
     let mut vis = 0usize;
     for (li, line) in lines.iter().enumerate().skip(scroll_top) {
@@ -544,20 +543,19 @@ where
             // Keep content_width current so handle_visual_move wraps identically
             // to the renderer.  Computed here (pre-draw) so it is valid before
             // the first key event arrives.
+            let left_gutter = renderer::left_gutter_width(
+                app.textarea.lines().len(),
+                app.show_line_numbers,
+            );
             app.content_width = (pre_editor_area.width as usize)
-                .saturating_sub(renderer::GUTTER as usize + renderer::GUTTER as usize)
+                .saturating_sub(left_gutter as usize + renderer::GUTTER as usize)
                 .max(1);
 
             // Clamp is skipped while the user is free-scrolling (mouse wheel or
             // Ctrl+Up/Down).  free_scroll persists until a key press, mouse click,
             // drag, or terminal resize clears it (scroll and hover events do not).
             if !app.free_scroll {
-                clamp_scroll(
-                    app,
-                    pre_editor_area,
-                    pre_layout.column.width,
-                    BOTTOM_PADDING,
-                );
+                clamp_scroll(app, pre_editor_area, BOTTOM_PADDING);
             }
         }
 
@@ -604,6 +602,7 @@ where
                 selection: app.textarea.selection_range(),
                 theme: &app.theme,
                 column_width: layout.column.width,
+                show_line_numbers: app.show_line_numbers,
             };
             f.render_widget(view, editor_area);
             renderer::render_status_bar(f, layout.status_bar, app);
@@ -649,6 +648,8 @@ where
                         });
                         // Re-resolve file mode in case [filetype] config changed.
                         app.file_mode = resolve_file_mode(&app.file_path, &new_config.filetype);
+                        app.show_line_numbers =
+                            new_config.layout.line_numbers.unwrap_or(false);
                         app.config_warnings = warnings;
                         app.status
                             .set_timed("Config reloaded.", Duration::from_millis(1500));
@@ -676,6 +677,7 @@ where
                             app.scroll_top,
                             app.textarea.lines(),
                             &app.decoration_map,
+                            app.show_line_numbers,
                         ) {
                             app.textarea.cancel_selection();
                             app.textarea.move_cursor(CursorMove::Jump(doc_row, doc_col));
@@ -691,6 +693,7 @@ where
                             app.scroll_top,
                             app.textarea.lines(),
                             &app.decoration_map,
+                            app.show_line_numbers,
                         ) {
                             if !drag_selecting {
                                 app.textarea.start_selection();
@@ -757,6 +760,7 @@ mod tests {
             tab_width: 4,
             highlight_cache: None,
             file_mode: FileMode::Markdown,
+            show_line_numbers: false,
         }
     }
 
@@ -1020,12 +1024,13 @@ mod tests {
                 },
                 0,
                 &lines,
-                &map
+                &map,
+                false,
             )
             .is_none()
         );
         // Col outside area
-        assert!(screen_to_doc(0, 20, &area, 0, &lines, &map).is_none());
+        assert!(screen_to_doc(0, 20, &area, 0, &lines, &map, false).is_none());
     }
 
     // Plain (no continuation indent) line: click at gutter+2 → doc col 2.
@@ -1036,7 +1041,7 @@ mod tests {
         let lines: Vec<String> = vec!["hello world".into()];
         let map = DecorationMap::default();
         // screen_col = GUTTER + 2 = 3 → click_col = 2 → char 2 = 'l'
-        let result = screen_to_doc(0, 3, &area, 0, &lines, &map);
+        let result = screen_to_doc(0, 3, &area, 0, &lines, &map, false);
         assert_eq!(result, Some((0, 2)), "plain click must map col correctly");
     }
 
@@ -1057,7 +1062,7 @@ mod tests {
         let map = dec_map_with_ci(0, 2);
         // Visual row 2 is the "ijk" continuation row of line 0.
         // screen_col = GUTTER(1) + ci(2) = 3 → clicking at the first char of "ijk".
-        let result = screen_to_doc(2, 3, &area, 0, &lines, &map);
+        let result = screen_to_doc(2, 3, &area, 0, &lines, &map, false);
         assert_eq!(
             result.map(|(r, _)| r),
             Some(0),
@@ -1081,7 +1086,7 @@ mod tests {
         // Visual row 1 = "defgh" continuation row.
         // screen_col = 1 (GUTTER) + 2 (ci) + 3 = 6 → click_col=5, col_in_row=3
         // → chars_for_display_cols("defgh", 3) = 3 → doc_col = 6 + 3 = 9
-        let result = screen_to_doc(1, 6, &area, 0, &lines, &map);
+        let result = screen_to_doc(1, 6, &area, 0, &lines, &map, false);
         assert_eq!(
             result,
             Some((0, 9)),
@@ -1115,13 +1120,13 @@ mod tests {
         // With `||→&&` mutation the conjunction fires only if ALL four hold, which is
         // false here (row is valid), so the mutant would NOT return None.
         assert!(
-            screen_to_doc(2, 2, &area, 0, &lines, &map).is_none(),
+            screen_to_doc(2, 2, &area, 0, &lines, &map, false).is_none(),
             "col below area.x must return None even when row is in-bounds"
         );
 
         // screen_col=2 < area.x=3 and screen_row=0 < area.y=1 — both out of bounds.
         assert!(
-            screen_to_doc(0, 2, &area, 0, &lines, &map).is_none(),
+            screen_to_doc(0, 2, &area, 0, &lines, &map, false).is_none(),
             "both row and col below area must return None"
         );
     }
@@ -1141,7 +1146,7 @@ mod tests {
         };
         let lines: Vec<String> = vec!["hello".into()];
         let map = DecorationMap::default();
-        let result = screen_to_doc(0, 2, &area, 0, &lines, &map);
+        let result = screen_to_doc(0, 2, &area, 0, &lines, &map, false);
         assert!(
             result.is_some(),
             "screen_col == area.x is inside the area and must return Some"
@@ -1165,7 +1170,7 @@ mod tests {
         };
         let lines: Vec<String> = vec!["aaa".into(), "bbb".into(), "ccc".into()];
         let map = DecorationMap::default();
-        let result = screen_to_doc(2, 1, &area, 0, &lines, &map);
+        let result = screen_to_doc(2, 1, &area, 0, &lines, &map, false);
         assert_eq!(
             result.map(|(r, _)| r),
             Some(1),
@@ -1187,7 +1192,7 @@ mod tests {
         let area = editor_rect(12, 5);
         let lines: Vec<String> = vec!["hello".into(), "world".into()];
         let map = DecorationMap::default();
-        let result = screen_to_doc(1, 1, &area, 0, &lines, &map);
+        let result = screen_to_doc(1, 1, &area, 0, &lines, &map, false);
         assert_eq!(
             result.map(|(r, _)| r),
             Some(1),
@@ -1207,7 +1212,7 @@ mod tests {
         let lines: Vec<String> = vec!["hello".into(), "world".into()];
         let map = DecorationMap::default();
         // screen_col = GUTTER(1) + 3 = 4
-        let result = screen_to_doc(1, 4, &area, 0, &lines, &map);
+        let result = screen_to_doc(1, 4, &area, 0, &lines, &map, false);
         assert_eq!(
             result,
             Some((1, 3)),
@@ -1264,7 +1269,7 @@ mod tests {
         };
         let lines: Vec<String> = vec!["0123456789".into(), "second".into()];
         let map = DecorationMap::default();
-        let result = screen_to_doc(1, 1, &area, 0, &lines, &map);
+        let result = screen_to_doc(1, 1, &area, 0, &lines, &map, false);
         assert_eq!(
             result.map(|(r, _)| r),
             Some(0),
@@ -1286,7 +1291,7 @@ mod tests {
         let area = editor_rect(12, 5); // cw=10
         let lines: Vec<String> = vec!["- hello".into()];
         let map = dec_map_with_ci(0, 2);
-        let result = screen_to_doc(0, 5, &area, 0, &lines, &map);
+        let result = screen_to_doc(0, 5, &area, 0, &lines, &map, false);
         assert_eq!(
             result,
             Some((0, 4)),

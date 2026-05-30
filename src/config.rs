@@ -79,6 +79,11 @@ pub struct LayoutConfig {
     /// Requires a Nerd Font or Powerline-patched font. Default true.
     /// Set `powerline_glyphs = false` to opt out if your font lacks glyph U+E0B0.
     pub powerline_glyphs: Option<bool>,
+    /// Show line numbers in the left gutter. Default false.
+    /// Numbers are right-aligned and muted; the cursor line uses accent color.
+    /// The gutter width grows automatically as the document grows past 9, 99,
+    /// 999 … lines so the content column shifts by one cell at each threshold.
+    pub line_numbers: Option<bool>,
 }
 
 /// Configuration for syntax highlighting of fenced code blocks.
@@ -185,6 +190,9 @@ pub struct Theme {
     pub ui_bg: Color,
     pub ui_bar: Color,
     pub ui_text: Color,
+    // line numbers
+    pub line_num_active: Color,   // cursor line — muted
+    pub line_num_inactive: Color, // all other rows — muted blended toward bg
     // per-level headings
     pub headings: HeadingTheme,
     pub delimiter_blend: f32,
@@ -295,7 +303,7 @@ impl Theme {
         );
         let blockquote_color = resolve(
             &overrides.blockquote_color,
-            blend(muted, text, 0.5),
+            blend(accent, muted, 0.5),
             warnings,
         );
         let link_text = resolve(
@@ -319,6 +327,10 @@ impl Theme {
         let ui_bar_rgb = resolve(&overrides.ui_bar, bg, warnings);
         let ui_text_rgb = resolve(&overrides.ui_text, text, warnings);
         let delimiter_blend = overrides.delimiter_blend.unwrap_or(0.4).clamp(0.0, 1.0);
+        // Line-number colors: deliberately subdued so they don't compete with content.
+        // Active (cursor) row uses plain muted; inactive rows blend muted 60% toward bg.
+        let line_num_active_rgb = muted;
+        let line_num_inactive_rgb = blend(muted, bg, 0.6);
 
         // Per-level heading colors
         let heading_default = |blend_t: f32| blend(accent, text, blend_t);
@@ -376,6 +388,8 @@ impl Theme {
             ui_bg: to_color(ui_bg_rgb),
             ui_bar: to_color(ui_bar_rgb),
             ui_text: to_color(ui_text_rgb),
+            line_num_active: to_color(line_num_active_rgb),
+            line_num_inactive: to_color(line_num_inactive_rgb),
             headings: HeadingTheme {
                 h1: to_color(h1_rgb),
                 h2: to_color(h2_rgb),
@@ -462,6 +476,7 @@ warning = "#f38ba8"   # dirty flag, warnings
 # min_cols         = 60     # minimum editing-column width in characters
 # tab_width        = 4      # spaces per tab character expanded on load
 # powerline_glyphs = true   # set false to use the universal │ separator (no Nerd Font required)
+# line_numbers     = false  # set true to show line numbers in the left gutter
 
 # ── Syntax highlighting ────────────────────────────────────────────────────────
 [highlighting]

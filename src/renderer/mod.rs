@@ -288,6 +288,23 @@ pub fn char_col_at_visual(
 /// Blank columns on each side of the text content within the editor column.
 pub const GUTTER: u16 = 1;
 
+/// Width of the left gutter in terminal columns, including any line-number
+/// field and its trailing separator space.
+///
+/// When `show_line_numbers` is false: returns [`GUTTER`] (= 1), preserving the
+/// existing single-cell blank gutter behaviour.
+///
+/// When true: returns `digit_count(total_lines.max(1)) + 2`.
+/// The `+ 2` is the two-cell separator gap between the number and content.
+/// Examples: 0–9 lines → 3, 10–99 lines → 4, 100–999 lines → 5.
+pub fn left_gutter_width(total_lines: usize, show_line_numbers: bool) -> u16 {
+    if !show_line_numbers {
+        return GUTTER;
+    }
+    let digits = total_lines.max(1).ilog10() as usize + 1;
+    (digits + 2) as u16
+}
+
 // ---------------------------------------------------------------------------
 // MarkdownView widget
 // ---------------------------------------------------------------------------
@@ -301,12 +318,17 @@ pub struct MarkdownView<'a> {
     pub selection: Option<((usize, usize), (usize, usize))>,
     pub theme: &'a crate::config::Theme,
     pub column_width: u16,
+    /// When true, line numbers are rendered in the left gutter.
+    /// The gutter width adjusts automatically based on the total line count.
+    pub show_line_numbers: bool,
 }
 
 impl Widget for MarkdownView<'_> {
     #[mutants::skip] // Writes into ratatui Buffer — void, not testable via return value.
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let content_width = (self.column_width as usize).saturating_sub(2 * GUTTER as usize);
+        let left_gutter = left_gutter_width(self.lines.len(), self.show_line_numbers);
+        let content_width =
+            (self.column_width as usize).saturating_sub(left_gutter as usize + GUTTER as usize);
         let visible = area.height as usize;
         let bg = self.theme.bg;
         let default_style = Style::default().fg(self.theme.text).bg(bg);
@@ -405,7 +427,7 @@ impl Widget for MarkdownView<'_> {
                         let col_in_row = display_cols_for_chars(row_str, chars_into_row)
                             .min(content_width.saturating_sub(1));
                         cursor_buf_pos = Some((
-                            area.x + GUTTER + continuation_indent + col_in_row as u16,
+                            area.x + left_gutter + continuation_indent + col_in_row as u16,
                             area.y + visual_row as u16,
                         ));
                     }
@@ -424,8 +446,39 @@ impl Widget for MarkdownView<'_> {
 
                 let y = area.y + visual_row as u16;
 
-                for col in 0..self.column_width {
-                    buf[(area.x + col, y)].set_bg(line_bg);
+                // When line numbers are on, clip special block backgrounds (fenced,
+                // heading) to the content columns only — the gutter always uses the
+                // plain editor bg so numbers stay legible on any block background.
+                if self.show_line_numbers {
+                    for col in 0..left_gutter {
+                        buf[(area.x + col, y)].set_bg(bg);
+                    }
+                    for col in left_gutter..self.column_width {
+                        buf[(area.x + col, y)].set_bg(line_bg);
+                    }
+                } else {
+                    for col in 0..self.column_width {
+                        buf[(area.x + col, y)].set_bg(line_bg);
+                    }
+                }
+
+                // Line numbers: render right-aligned number on the first sub-row,
+                // leave continuation rows blank (gutter inherits plain bg from above).
+                if self.show_line_numbers && wrap_idx == 0 {
+                    let num_color = if log_row == cursor_log_row {
+                        self.theme.line_num_active
+                    } else {
+                        self.theme.line_num_inactive
+                    };
+                    // Number occupies exactly `digits` columns (left_gutter - 2),
+                    // right-aligned; the two trailing cells are the separator gap.
+                    let num_width = (left_gutter as usize).saturating_sub(2);
+                    let num_str = format!("{:>width$}", log_row + 1, width = num_width);
+                    for (i, ch) in num_str.chars().enumerate() {
+                        buf[(area.x + i as u16, y)]
+                            .set_char(ch)
+                            .set_fg(num_color);
+                    }
                 }
 
                 if is_rule {
@@ -434,7 +487,7 @@ impl Widget for MarkdownView<'_> {
                         .find(|s| s.is_rule)
                         .map(|s| s.style)
                         .unwrap_or(default_style);
-                    for x in area.x + GUTTER..area.x + GUTTER + content_width as u16 {
+                    for x in area.x + left_gutter..area.x + left_gutter + content_width as u16 {
                         buf[(x, y)].set_char('─').set_style(rule_style);
                     }
                 } else {
@@ -455,12 +508,14 @@ impl Widget for MarkdownView<'_> {
                         default_style.bg(line_bg)
                     };
                     let segments = split_into_spans(row_str, &row_spans, row_default);
-                    let mut x = area.x + GUTTER + continuation_indent;
+                    let mut x = area.x + left_gutter + continuation_indent;
                     for span in &segments {
                         for ch in span.content.chars() {
                             let cw = UnicodeWidthChar::width(ch).unwrap_or(1);
                             // Stop before this char would overflow the content area.
-                            if (x.saturating_sub(area.x + GUTTER)) as usize + cw > content_width {
+                            if (x.saturating_sub(area.x + left_gutter)) as usize + cw
+                                > content_width
+                            {
                                 break;
                             }
                             buf[(x, y)].set_char(ch).set_style(span.style);
@@ -470,7 +525,9 @@ impl Widget for MarkdownView<'_> {
                                 // "owns" that cell, so when the line scrolls away the
                                 // cell can retain stale content from the previous frame.
                                 let x2 = x + 1;
-                                if ((x2.saturating_sub(area.x + GUTTER)) as usize) < content_width {
+                                if ((x2.saturating_sub(area.x + left_gutter)) as usize)
+                                    < content_width
+                                {
                                     buf[(x2, y)].set_char(' ').set_style(span.style);
                                 }
                             }
@@ -479,16 +536,18 @@ impl Widget for MarkdownView<'_> {
                     }
                 }
 
-                // Bottom border (H1–H3 heading underline, last visual row only)
+                // Bottom border (H1–H3 heading underline, last visual row only).
+                // Starts after the gutter so the underline never bleeds into the
+                // line-number column.
                 if let Some(bc) = border_color
                     && is_last_wrap
                 {
                     use ratatui::layout::Rect as R;
                     buf.set_style(
                         R {
-                            x: area.x,
+                            x: area.x + left_gutter,
                             y,
-                            width: self.column_width,
+                            width: self.column_width.saturating_sub(left_gutter),
                             height: 1,
                         },
                         Style::default()
@@ -531,10 +590,9 @@ fn apply_selection_overlay(
     selection: ((usize, usize), (usize, usize)),
 ) {
     let ((sel_row_start, sel_col_start), (sel_row_end, sel_col_end)) = selection;
-    // Written as GUTTER + GUTTER (not 2 * GUTTER) so that operator-replacement
-    // mutants produce an observable difference: `+→-` gives 0, `+→*` gives 1.
+    let left_gutter = left_gutter_width(view.lines.len(), view.show_line_numbers);
     let content_width =
-        (view.column_width as usize).saturating_sub(GUTTER as usize + GUTTER as usize);
+        (view.column_width as usize).saturating_sub(left_gutter as usize + GUTTER as usize);
     let visible = area.height as usize;
     let total = view.lines.len();
     let sel_fg = view.theme.selection_fg;
@@ -616,9 +674,10 @@ fn apply_selection_overlay(
                     let y = area.y + visual_row as u16;
                     let start_dcols = display_cols_for_chars(row_str, row_sel_start - char_start);
                     let end_dcols = display_cols_for_chars(row_str, row_sel_end - char_start);
-                    let x_start = area.x + GUTTER + continuation_indent + start_dcols as u16;
-                    let x_end = (area.x + GUTTER + continuation_indent + end_dcols as u16)
-                        .min(area.x + GUTTER + content_width as u16);
+                    let x_start =
+                        area.x + left_gutter + continuation_indent + start_dcols as u16;
+                    let x_end = (area.x + left_gutter + continuation_indent + end_dcols as u16)
+                        .min(area.x + left_gutter + content_width as u16);
                     for x in x_start..x_end {
                         buf[(x, y)].set_fg(sel_fg).set_bg(sel_bg);
                     }
@@ -675,10 +734,54 @@ mod tests {
             tab_width: 4,
             highlight_cache: None,
             file_mode: crate::app::FileMode::Markdown,
+            show_line_numbers: false,
         }
     }
 
     // --- display_cols_for_chars ---
+
+    // ── left_gutter_width ────────────────────────────────────────────────────
+
+    #[test]
+    fn left_gutter_width_off_returns_gutter_constant() {
+        // When line numbers are disabled the gutter is always GUTTER (= 1),
+        // regardless of document size.
+        assert_eq!(left_gutter_width(0, false), GUTTER);
+        assert_eq!(left_gutter_width(9, false), GUTTER);
+        assert_eq!(left_gutter_width(1000, false), GUTTER);
+    }
+
+    #[test]
+    fn left_gutter_width_on_zero_or_single_digit_lines() {
+        // 0–9 lines → 1 digit + 2 separator cells = 3.
+        // 0.max(1) = 1; 1.ilog10() = 0; digits = 1; result = 3.
+        assert_eq!(left_gutter_width(0, true), 3);
+        assert_eq!(left_gutter_width(1, true), 3);
+        assert_eq!(left_gutter_width(9, true), 3);
+    }
+
+    #[test]
+    fn left_gutter_width_on_two_digit_lines() {
+        // 10–99 lines → 2 digits + 2 separator cells = 4.
+        assert_eq!(left_gutter_width(10, true), 4);
+        assert_eq!(left_gutter_width(99, true), 4);
+    }
+
+    #[test]
+    fn left_gutter_width_on_three_digit_lines() {
+        // 100–999 lines → 3 digits + 2 separator cells = 5.
+        assert_eq!(left_gutter_width(100, true), 5);
+        assert_eq!(left_gutter_width(999, true), 5);
+    }
+
+    #[test]
+    fn left_gutter_width_on_four_digit_lines() {
+        // 1000–9999 lines → 4 digits + 2 separator cells = 6.
+        assert_eq!(left_gutter_width(1000, true), 6);
+        assert_eq!(left_gutter_width(9999, true), 6);
+    }
+
+    // ── display_cols_for_chars ────────────────────────────────────────────────
 
     #[test]
     fn display_cols_ascii_equals_char_count() {
@@ -1444,6 +1547,7 @@ mod tests {
             selection: None,
             theme: &theme,
             column_width: 40,
+            show_line_numbers: false,
         };
         view.render(area, &mut buf);
 
@@ -1518,6 +1622,7 @@ mod tests {
             selection: None,
             theme: &theme,
             column_width: 20,
+            show_line_numbers: false,
         };
         view.render(area, &mut buf);
 
@@ -1580,6 +1685,7 @@ mod tests {
             selection: None,
             theme,
             column_width: 10,
+            show_line_numbers: false,
         }
     }
 
@@ -1868,6 +1974,7 @@ mod tests {
             selection: None,
             theme: &theme,
             column_width: 8, // cw = 8 - 2*1 = 6
+            show_line_numbers: false,
         };
         apply_selection_overlay(area, &mut buf, &view, ((0, 0), (0, 10)));
         let sel_bg = theme.selection_bg;
@@ -1963,6 +2070,7 @@ mod tests {
             selection: None,
             theme: &theme,
             column_width: 8,
+            show_line_numbers: false,
         };
         // Selection: char 7 to end of line (within sub-row 1, chars 6-9).
         // sub-row 1: row_sel_start=max(7,6)=7. x_start = 1+2+(7-6) = 4. Highlights x=4.
@@ -2016,7 +2124,8 @@ mod tests {
             cursor: (0, 0),
             selection: None,
             theme: &theme,
-            column_width: 10, // cw = 10 - (GUTTER+GUTTER) = 8
+            column_width: 10, // cw = 10 - (left_gutter+GUTTER) = 10-1-1 = 8
+            show_line_numbers: false,
         };
         apply_selection_overlay(area, &mut buf, &view, ((0, 0), (0, 9)));
         let sel_bg = theme.selection_bg;
@@ -2076,6 +2185,7 @@ mod tests {
             selection: None,
             theme: &theme,
             column_width: 10,
+            show_line_numbers: false,
         };
         // Select chars 7..9 on line 0 — straddles within the second visual row.
         apply_selection_overlay(area, &mut buf, &view, ((0, 7), (0, 9)));

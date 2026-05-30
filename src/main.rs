@@ -216,6 +216,7 @@ fn run(file_path: PathBuf) -> io::Result<()> {
 
     let tab_width = config.layout.tab_width.unwrap_or(4) as usize;
     let powerline_glyphs = config.layout.powerline_glyphs.unwrap_or(true);
+    let show_line_numbers = config.layout.line_numbers.unwrap_or(false);
     let highlight_cache = config.highlighting.enabled.then(|| {
         let palette_theme = config
             .highlighting
@@ -248,6 +249,7 @@ fn run(file_path: PathBuf) -> io::Result<()> {
         tab_width,
         highlight_cache,
         file_mode,
+        show_line_numbers,
     )?;
 
     if !italic_support {
@@ -350,6 +352,7 @@ mod tests {
             tab_width: 4,
             highlight_cache: None,
             file_mode: yame::app::FileMode::Markdown,
+            show_line_numbers: false,
         }
     }
 
@@ -376,8 +379,11 @@ mod tests {
     }
 
     // ── clamp_scroll tests ────────────────────────────────────────────────────
-    // col_width=82 → cw = 82 - 2*GUTTER. GUTTER=1 → cw=80. Using 82 gives cw=80.
+    // TEST_COL=82 → content_width = 82 - GUTTER - GUTTER = 80.
+    // make_app_with_lines pre-sets content_width=80 to match TEST_COL-based tests.
+    // Tests that exercise wrapping at a narrower width override content_width inline.
     const TEST_COL: u16 = 82;
+    const TEST_CW: usize = 80; // TEST_COL - 2*GUTTER
 
     fn make_editor_area(height: u16) -> Rect {
         Rect {
@@ -391,6 +397,7 @@ mod tests {
     fn make_app_with_lines(lines: &[&str]) -> App {
         let mut app = make_app();
         app.textarea = TextArea::new(lines.iter().map(|s| s.to_string()).collect());
+        app.content_width = TEST_CW;
         app
     }
 
@@ -400,7 +407,7 @@ mod tests {
         app.scroll_top = 5;
         app.textarea
             .move_cursor(tui_textarea::CursorMove::Jump(2, 0));
-        clamp_scroll(&mut app, make_editor_area(10), TEST_COL, 0);
+        clamp_scroll(&mut app, make_editor_area(10), 0);
         assert_eq!(
             app.scroll_top, 2,
             "cursor above viewport → scroll_top = cursor_row"
@@ -413,7 +420,7 @@ mod tests {
         app.scroll_top = 0;
         app.textarea
             .move_cursor(tui_textarea::CursorMove::Jump(3, 0));
-        clamp_scroll(&mut app, make_editor_area(10), TEST_COL, 0);
+        clamp_scroll(&mut app, make_editor_area(10), 0);
         assert_eq!(
             app.scroll_top, 0,
             "cursor inside viewport → scroll_top unchanged"
@@ -426,7 +433,7 @@ mod tests {
         app.scroll_top = 0;
         app.textarea
             .move_cursor(tui_textarea::CursorMove::Jump(9, 0));
-        clamp_scroll(&mut app, make_editor_area(10), TEST_COL, 3);
+        clamp_scroll(&mut app, make_editor_area(10), 3);
         assert!(
             app.scroll_top > 0,
             "cursor near bottom with padding → scroll_top advances"
@@ -436,7 +443,7 @@ mod tests {
     #[test]
     fn clamp_scroll_zero_height_does_not_panic() {
         let mut app = make_app_with_lines(&["a"; 5]);
-        clamp_scroll(&mut app, make_editor_area(0), TEST_COL, 3);
+        clamp_scroll(&mut app, make_editor_area(0), 3);
     }
 
     // col_width=4 → cw = 4 − 2×GUTTER(1) = 2.
@@ -453,9 +460,10 @@ mod tests {
         //        ln106 >→== / >→< (underflow), >→>= (breaks one step early → scroll_top=3),
         //        ln110 -=→+= and -=→/= (remaining never shrinks → scroll_top=0).
         let mut app = make_app_with_lines(&["aa"; 5]);
+        app.content_width = 2; // col_width=4 - 2*GUTTER = 2: "aa" fills one row, no wrap
         app.textarea
             .move_cursor(tui_textarea::CursorMove::Jump(4, 0));
-        clamp_scroll(&mut app, make_editor_area(3), 4, 0);
+        clamp_scroll(&mut app, make_editor_area(3), 0);
         assert_eq!(app.scroll_top, 2, "walk-backward must land on row 2");
     }
 
@@ -468,9 +476,10 @@ mod tests {
         // Kills: ln105 -→+ (reads row+1=wrong wrap count → scroll_top=2),
         //        ln105 -→/ (reads same row → wrong count → scroll_top=2).
         let mut app = make_app_with_lines(&["aaaa", "a", "aaaa", "a", "aa"]);
+        app.content_width = 2; // col_width=4 - 2*GUTTER = 2: "aaaa" wraps to 2 rows
         app.textarea
             .move_cursor(tui_textarea::CursorMove::Jump(4, 0));
-        clamp_scroll(&mut app, make_editor_area(3), 4, 0);
+        clamp_scroll(&mut app, make_editor_area(3), 0);
         assert_eq!(
             app.scroll_top, 3,
             "must read line new_top-1, not new_top or new_top+1"
@@ -487,9 +496,10 @@ mod tests {
         //        last-chunk fallback fires at chunk 1 → sub-row 1),
         //        ln89 <→== and <→> (cursor_col=0 never ==/>char_end → last fallback → sub-row 1).
         let mut app = make_app_with_lines(&["a", "a", "aaaaa"]);
+        app.content_width = 3; // col_width=5 - 2*GUTTER = 3: "aaaaa" wraps to ["aaa","aa"]
         app.textarea
             .move_cursor(tui_textarea::CursorMove::Jump(2, 0));
-        clamp_scroll(&mut app, make_editor_area(3), 5, 0);
+        clamp_scroll(&mut app, make_editor_area(3), 0);
         assert_eq!(
             app.scroll_top, 0,
             "cursor in sub-row 0 must not trigger scroll"
@@ -504,9 +514,10 @@ mod tests {
         // Kills: ln89 ==→!= (disables last-chunk fallback; sub-row stays 0 → no scroll → top=0),
         //        ln89 <→<= (cursor_col=3 ≤ char_end=3 → sub-row 0 → no scroll → top=0).
         let mut app = make_app_with_lines(&["a", "a", "aaaaa"]);
+        app.content_width = 3; // col_width=5 - 2*GUTTER = 3: "aaaaa" wraps to ["aaa","aa"]
         app.textarea
             .move_cursor(tui_textarea::CursorMove::Jump(2, 3));
-        clamp_scroll(&mut app, make_editor_area(3), 5, 0);
+        clamp_scroll(&mut app, make_editor_area(3), 0);
         assert_eq!(
             app.scroll_top, 1,
             "cursor in sub-row 1 must scroll to expose it"
@@ -521,9 +532,10 @@ mod tests {
         // Kills: ln100 +→- (1+0-2 underflows usize in debug → panic),
         //        ln100 +→* (1+0*2=1 → headroom=5 → walks all 4 rows → scroll_top=0).
         let mut app = make_app_with_lines(&["aa"; 5]);
+        app.content_width = 2; // col_width=4 - 2*GUTTER = 2
         app.textarea
             .move_cursor(tui_textarea::CursorMove::Jump(4, 0));
-        clamp_scroll(&mut app, make_editor_area(6), 4, 2);
+        clamp_scroll(&mut app, make_editor_area(6), 2);
         assert_eq!(app.scroll_top, 1, "padding must reduce headroom correctly");
     }
 
@@ -933,7 +945,7 @@ mod tests {
         app.scroll_top = 3;
         app.textarea
             .move_cursor(tui_textarea::CursorMove::Jump(3, 0));
-        clamp_scroll(&mut app, make_editor_area(10), TEST_COL, 0);
+        clamp_scroll(&mut app, make_editor_area(10), 0);
         assert_eq!(app.scroll_top, 3, "cursor == scroll_top must not scroll up");
     }
 
@@ -951,7 +963,7 @@ mod tests {
         app.textarea
             .move_cursor(tui_textarea::CursorMove::Jump(0, 99));
         // Viewport height=3, padding=1 → cursor_visual + 1 may exceed visible.
-        clamp_scroll(&mut app, make_editor_area(3), TEST_COL, 1);
+        clamp_scroll(&mut app, make_editor_area(3), 1);
         // scroll_top stays 0 because line 0 is the first line — just assert no panic
         // and that scroll_top hasn't gone negative.
         assert_eq!(
@@ -969,7 +981,7 @@ mod tests {
         app.scroll_top = 0;
         app.textarea
             .move_cursor(tui_textarea::CursorMove::Jump(6, 0));
-        clamp_scroll(&mut app, make_editor_area(10), TEST_COL, 3);
+        clamp_scroll(&mut app, make_editor_area(10), 3);
         assert_eq!(
             app.scroll_top, 0,
             "cursor at visible_rows - padding - 1 must not scroll"

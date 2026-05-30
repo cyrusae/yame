@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- feat: line numbers — `[layout] line_numbers = true` renders right-aligned numbers in a `ui_bg`-colored left gutter; cursor line uses accent color, others muted; gutter widens automatically at 10/100/1000… lines (#47)
+
 ## [0.1.0-alpha.1] - 2026-05-25
 
 ### Added
@@ -35,6 +38,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - v1 polish: italic startup warning, `delimiter_blend` config token, parent-dir creation on save (#35)
 
 ### Fixed
+- renderer: clip fenced/heading bg to content area, dim line-number colors (#131)
 - FEEDBACK-2 2.3: cap highlight cache to prevent unbounded memory growth (#142)
 - FEEDBACK-2 1.1: table header decoration swallows inline formatting (#141)
 - FEEDBACK-2 batch 2: deduplicate selection, clipboard enum, path cache, mutants skip (#140)
@@ -71,6 +75,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Italic default color now matches text color (not accent blend) (#60)
 
 ### Changed
+- line-numbers: revert gutter color, fix heading rule clip, blockquote accent blend (#130)
 - force-push to mirror after rebase (#129)
 - resolve stash-pop CHANGELOG conflict (#152)
 - cargo-deny unmaintained annotation (#151)
