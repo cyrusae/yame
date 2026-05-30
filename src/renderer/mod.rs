@@ -13,7 +13,7 @@ mod utils;
 
 pub use status::{render_info_line, render_status_bar};
 pub use utils::{format_thousands, shorten_path, split_into_spans};
-pub use self::search_bar::{render_search_bar, search_bar_height};
+pub use self::search_bar::{render_search_bar, render_search_help_modal, search_bar_height};
 
 mod search_bar;
 

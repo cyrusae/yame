@@ -286,6 +286,11 @@ pub(super) fn handle_search_key(
     app: &mut App,
     k: crossterm::event::KeyEvent,
 ) -> KeyOutcome {
+    // Dismiss the shortcut cheatsheet on the first keypress inside search mode.
+    if let Some(s) = &mut app.search {
+        s.show_help = false;
+    }
+
     match (k.modifiers, k.code) {
         // Close search.
         (KeyModifiers::NONE, KeyCode::Esc) => {
@@ -885,6 +890,9 @@ where
                 search_current,
             };
             f.render_widget(view, editor_area);
+            if app.search.as_ref().is_some_and(|s| s.show_help) {
+                renderer::render_search_help_modal(f, editor_area, app);
+            }
             renderer::render_status_bar(f, layout.status_bar, app);
             renderer::render_info_line(f, layout.info_line, app);
 

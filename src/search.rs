@@ -39,6 +39,11 @@ pub struct SearchState {
     pub current: usize,
     /// `true` when the last compile attempt produced a regex error.
     pub regex_error: bool,
+    /// Show the floating shortcut-cheatsheet overlay.
+    ///
+    /// Starts `true` every time a new search session opens; cleared on the
+    /// first keypress inside search mode so the hint is ephemeral.
+    pub show_help: bool,
 }
 
 impl SearchState {
@@ -54,6 +59,7 @@ impl SearchState {
             matches: Vec::new(),
             current: 0,
             regex_error: false,
+            show_help: true,
         }
     }
 
