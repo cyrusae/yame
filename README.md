@@ -6,7 +6,7 @@ The goal is something meaningfully lighter than VS Code for editing READMEs, not
 
 It can also be used as a distraction-free text editor!
 
-> **Alpha.** Core editing, decoration, and theming are solid. Keybindings are stable; config keys may be added to.
+> **v0.1.0.** Core editing, decoration, and theming are solid. Keybindings are stable; config keys may be added to.
 
 <!-- screenshot or demo GIF goes here -->
 

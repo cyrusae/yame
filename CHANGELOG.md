@@ -71,6 +71,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Italic default color now matches text color (not accent blend) (#60)
 
 ### Changed
+- force-push to mirror after rebase (#129)
+- resolve stash-pop CHANGELOG conflict (#152)
 - cargo-deny unmaintained annotation (#151)
 - close completed mutant issues (#150)
 - fix remaining mutant survivors post-session-110 (#149)
@@ -79,6 +81,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - mutants: kill decorate() FileMode dispatch missed mutants (input.rs:55) (#146)
 - mutants: kill handle_key_event missed + timeout key arms via unit tests (input.rs) (#145)
 - mutants: kill clamp_scroll arithmetic missed mutants (commands.rs) (#144)
+- git stash and sync with remote (#128)
+- bump version to v0.1.0 for release (#127)
 - kill surviving mutants: screen_to_doc, decoration, highlighting, renderer (#138)
 - Integration test planning: catalogue scenarios from FEEDBACK-1 (#89)
 - perf: lazy-init SyntaxSet/ThemeSet in HighlightCache (defer cost to first code block) (#136)
