@@ -71,6 +71,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Italic default color now matches text color (not accent blend) (#60)
 
 ### Changed
+- force-push to mirror after rebase (#129)
 - resolve stash-pop CHANGELOG conflict (#152)
 - cargo-deny unmaintained annotation (#151)
 - close completed mutant issues (#150)
