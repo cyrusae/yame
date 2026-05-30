@@ -7,6 +7,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- v1.5: CJK / wide character support (unicode-width) (#41)
+- v1.5: syntect fenced code block syntax highlighting (#44)
+- Search help modal — keyboard shortcut cheatsheet on open (#135)
 - v2: Ctrl+F search with regex (#46)
 - feat: line numbers — `[layout] line_numbers = true` renders right-aligned numbers in a `ui_bg`-colored left gutter; cursor line uses accent color, others muted; gutter widens automatically at 10/100/1000… lines (#47)
 
@@ -77,6 +80,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Italic default color now matches text color (not accent blend) (#60)
 
 ### Changed
+- refactor: split main.rs — extract event loop, parse_args, shell helpers into own modules (#149)
+- ui: add Alt+T and ^F to command bar, remove ^R (#138)
+- feat: Alt+T format-table command — reflow pipe table to uniform column widths (#137)
+- chore: add GFM table to sample.md fixture for visual testing (#136)
+- v2: improved GFM table rendering (alignment, column padding, border chars) (#133)
+- v1.5: move decoration pass to background thread (#45)
 - perf: background decoration thread — move decoration pass off event loop (#134)
 - line-numbers: revert gutter color, fix heading rule clip, blockquote accent blend (#130)
 - force-push to mirror after rebase (#129)

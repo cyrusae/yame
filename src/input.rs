@@ -520,6 +520,12 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
 
         (KeyModifiers::CONTROL, KeyCode::Char('r')) => KeyOutcome::ReloadConfig,
 
+        // Alt+T: reflow the GFM table under the cursor to uniform column widths.
+        (KeyModifiers::ALT, KeyCode::Char('t')) => {
+            yame::table_format::handle_format_table(app);
+            KeyOutcome::Continue
+        }
+
         // Ctrl+Up/Down: scroll viewport without moving cursor.
         (KeyModifiers::CONTROL, KeyCode::Up) => {
             app.scroll_top = app.scroll_top.saturating_sub(1);

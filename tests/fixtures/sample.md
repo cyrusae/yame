@@ -129,6 +129,8 @@ just fenced_bg tint
 
 ## Tables
 
+Plain separator — pipes and dashes styled muted, no alignment colons:
+
 | Element       | Style                        | Notes               |
 | ------------- | ---------------------------- | ------------------- |
 | Heading       | Bold + accent color          | Full-line bg tint   |
@@ -136,6 +138,14 @@ just fenced_bg tint
 | Italic        | Italic + emphasis color      | With fallback       |
 | Inline code   | Code color + bg tint         | Backticks included  |
 | Link          | Underline + accent / muted   | Split at `](`       |
+
+Alignment markers — colons in separator should appear in accent color:
+
+| Left-aligned  | Centered          |     Right-aligned |  None  |
+| :------------ | :---------------: | ----------------: | ------ |
+| `code` cell   | **bold** cell     |    *italic* cell  | plain  |
+| short         | a longer value    |               42  | text   |
+| left text     | center text       |        999.99     | more   |
 
 ---
 

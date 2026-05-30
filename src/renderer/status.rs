@@ -132,7 +132,7 @@ pub(super) fn build_normal_status_bar(app: &App) -> Line<'static> {
     let cap1 = Span::styled(sep.clone(), Style::default().fg(pill_bg).bg(hints_bg));
 
     let hints = Span::styled(
-        " ^S Save  ^X Exit  ^Z Undo  ^Y Redo  ^R Reload ",
+        " ^S Save  ^X Exit  ^Z Undo  ^Y Redo  ^F Search  ⌥T FmtTbl ",
         Style::default().fg(muted_fg).bg(hints_bg),
     );
     let cap2 = Span::styled(sep, Style::default().fg(hints_bg).bg(canvas_bg));

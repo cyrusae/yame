@@ -9,3 +9,4 @@ pub mod layout;
 pub mod renderer;
 pub mod search;
 pub mod status;
+pub mod table_format;

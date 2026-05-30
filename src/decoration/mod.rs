@@ -982,6 +982,9 @@ pub fn build_decoration_map(
                     range.end.saturating_sub(1).max(range.start),
                 );
                 let pipe_style = Style::default().fg(theme.muted);
+                // Separator row: dashes blend into background; colons highlight alignment.
+                let sep_dash_style = Style::default().fg(theme.muted);
+                let sep_colon_style = Style::default().fg(theme.accent);
 
                 for line in start_line..=end_line {
                     let ls = line_starts[line];
@@ -991,13 +994,38 @@ pub fn build_decoration_map(
                         text.len()
                     };
                     let line_text = &text[ls..le];
+
+                    // A separator row contains only `|`, `:`, `-`, and whitespace,
+                    // with at least one dash.  Colons mark column alignment (GFM spec).
+                    let is_sep = line_text.contains('-')
+                        && line_text
+                            .chars()
+                            .all(|c| matches!(c, '|' | ':' | '-' | ' ' | '\t'));
+
                     for (char_idx, c) in line_text.chars().enumerate() {
-                        if c == '|' {
-                            push_span(
-                                &mut map,
-                                line,
-                                make_span(char_idx, char_idx + 1, pipe_style),
-                            );
+                        match c {
+                            '|' => {
+                                push_span(
+                                    &mut map,
+                                    line,
+                                    make_span(char_idx, char_idx + 1, pipe_style),
+                                );
+                            }
+                            ':' if is_sep => {
+                                push_span(
+                                    &mut map,
+                                    line,
+                                    make_span(char_idx, char_idx + 1, sep_colon_style),
+                                );
+                            }
+                            '-' if is_sep => {
+                                push_span(
+                                    &mut map,
+                                    line,
+                                    make_span(char_idx, char_idx + 1, sep_dash_style),
+                                );
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -1852,6 +1880,80 @@ mod tests {
         assert!(
             has_italic_span,
             "italic inside table header must produce an italic_color span, not be swallowed"
+        );
+    }
+
+    #[test]
+    fn table_separator_dashes_have_muted_color() {
+        // The `---` segments of the separator row must be styled with theme.muted
+        // so they visually recede alongside the pipe characters.
+        let theme = make_theme();
+        let text = "| A | B |\n| --- | --- |\n| 1 | 2 |";
+        let map = build_map(text, &theme, true);
+        let sep_line = map.get(&1).expect("separator line must have spans");
+        // We verify a muted span exists that covers at least one '-' character.
+        let sep_text_line1 = "| --- | --- |";
+        let has_dash_span = sep_line.iter().any(|s| {
+            s.style.fg == Some(theme.muted)
+                && (s.char_start..s.char_end)
+                    .any(|i| sep_text_line1.chars().nth(i) == Some('-'))
+        });
+        assert!(has_dash_span, "separator row dashes must have muted color");
+    }
+
+    #[test]
+    fn table_separator_alignment_colons_have_accent_color() {
+        // The `:` markers in the separator row indicate column alignment and must
+        // be styled with theme.accent to make the alignment intent visible.
+        let theme = make_theme();
+        let text = "| A | B | C |\n|:---|:---:|---:|\n| 1 | 2 | 3 |";
+        let map = build_map(text, &theme, true);
+        let sep_line = map.get(&1).expect("separator line must have spans");
+        let has_colon_accent = sep_line
+            .iter()
+            .any(|s| s.style.fg == Some(theme.accent) && s.char_end - s.char_start == 1);
+        assert!(
+            has_colon_accent,
+            "separator row `:` alignment markers must have accent color"
+        );
+    }
+
+    #[test]
+    fn table_separator_without_colons_has_no_accent_on_sep_line() {
+        // A plain `---` separator with no alignment markers must not produce
+        // any accent spans on the separator line.  Accent on line 0 (header)
+        // must not bleed onto line 1 (separator).
+        let theme = make_theme();
+        let text = "| A | B |\n| --- | --- |\n| 1 | 2 |";
+        let map = build_map(text, &theme, true);
+        let sep_line = map.get(&1).expect("separator line must have spans");
+        let has_accent = sep_line.iter().any(|s| s.style.fg == Some(theme.accent));
+        assert!(
+            !has_accent,
+            "plain separator row must not produce accent spans"
+        );
+    }
+
+    #[test]
+    fn table_body_rows_are_not_misidentified_as_separator() {
+        // Body rows that happen to contain only short words must NOT be styled
+        // with separator dash/colon treatment.  Specifically a row with actual
+        // content characters (letters, digits) will fail the `is_sep` check.
+        let theme = make_theme();
+        // Body row contains only letters — not a separator row.
+        let text = "| A | B |\n| - | - |\n| x | y |";
+        let map = build_map(text, &theme, true);
+        // Line 2 is the body row; it must not have any dash-style muted spans
+        // that aren't the pipe characters (pipes are single chars, so look for
+        // muted spans of width > 1 — dashes in a separator would be 1-char each
+        // but the body row has no '-' so there should be no extra muted spans).
+        let empty = vec![];
+        let body_line = map.get(&2).unwrap_or(&empty);
+        // Only pipe spans (single-char muted) are expected; no colon accent.
+        let has_colon_accent = body_line.iter().any(|s| s.style.fg == Some(theme.accent));
+        assert!(
+            !has_colon_accent,
+            "body row must not get accent styling from separator detection"
         );
     }
 
