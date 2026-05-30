@@ -193,6 +193,9 @@ pub struct Theme {
     // line numbers
     pub line_num_active: Color,   // cursor line — muted
     pub line_num_inactive: Color, // all other rows — muted blended toward bg
+    // search match highlights
+    pub search_match_bg: Color,   // all non-current matches — dim tint
+    pub search_current_bg: Color, // the currently selected match — brighter tint
     // per-level headings
     pub headings: HeadingTheme,
     pub delimiter_blend: f32,
@@ -331,6 +334,10 @@ impl Theme {
         // Active (cursor) row uses plain muted; inactive rows blend muted 60% toward bg.
         let line_num_active_rgb = muted;
         let line_num_inactive_rgb = blend(muted, bg, 0.6);
+        // Search-match highlight colors derived from code_color (green) so they are
+        // visually distinct from selections (which use accent/lavender).
+        let search_match_bg_rgb = blend(code_rgb, bg, 0.35);
+        let search_current_bg_rgb = blend(code_rgb, bg, 0.70);
 
         // Per-level heading colors
         let heading_default = |blend_t: f32| blend(accent, text, blend_t);
@@ -390,6 +397,8 @@ impl Theme {
             ui_text: to_color(ui_text_rgb),
             line_num_active: to_color(line_num_active_rgb),
             line_num_inactive: to_color(line_num_inactive_rgb),
+            search_match_bg: to_color(search_match_bg_rgb),
+            search_current_bg: to_color(search_current_bg_rgb),
             headings: HeadingTheme {
                 h1: to_color(h1_rgb),
                 h2: to_color(h2_rgb),

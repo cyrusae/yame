@@ -353,6 +353,7 @@ mod tests {
             highlight_cache: None,
             file_mode: yame::app::FileMode::Markdown,
             show_line_numbers: false,
+            search: None,
         }
     }
 

@@ -7,4 +7,5 @@ pub mod decoration;
 pub mod highlighting;
 pub mod layout;
 pub mod renderer;
+pub mod search;
 pub mod status;

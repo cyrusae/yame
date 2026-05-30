@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- v2: Ctrl+F search with regex (#46)
 - feat: line numbers — `[layout] line_numbers = true` renders right-aligned numbers in a `ui_bg`-colored left gutter; cursor line uses accent color, others muted; gutter widens automatically at 10/100/1000… lines (#47)
 
 ## [0.1.0-alpha.1] - 2026-05-25

@@ -6,12 +6,16 @@ use ratatui::{
 };
 
 use crate::decoration::{DecorationMap, StyledSpan};
+use crate::search::Match as SearchMatch;
 
 mod status;
 mod utils;
 
 pub use status::{render_info_line, render_status_bar};
 pub use utils::{format_thousands, shorten_path, split_into_spans};
+pub use self::search_bar::{render_search_bar, search_bar_height};
+
+mod search_bar;
 
 // ---------------------------------------------------------------------------
 // Soft-wrap helpers
@@ -321,6 +325,11 @@ pub struct MarkdownView<'a> {
     /// When true, line numbers are rendered in the left gutter.
     /// The gutter width adjusts automatically based on the total line count.
     pub show_line_numbers: bool,
+    /// All current search matches `(line, char_start, char_end)`.  Empty when
+    /// no search is active or the query is blank.
+    pub search_matches: &'a [SearchMatch],
+    /// Index of the currently selected search match (highlighted brighter).
+    pub search_current: usize,
 }
 
 impl Widget for MarkdownView<'_> {
@@ -562,6 +571,11 @@ impl Widget for MarkdownView<'_> {
             log_row += 1;
         }
 
+        // Search-match overlay — below selection so selection takes priority.
+        if !self.search_matches.is_empty() {
+            apply_search_overlay(area, buf, &self);
+        }
+
         // Selection overlay — applied after content, before cursor.
         if let Some(selection) = self.selection {
             apply_selection_overlay(area, buf, &self, selection);
@@ -691,6 +705,108 @@ fn apply_selection_overlay(
     }
 }
 
+/// Paint search-match highlights over already-rendered content.
+///
+/// Dim background for all non-current matches; brighter background for the
+/// current one.  Applied before the selection and cursor overlays so those
+/// always win when they overlap a match cell.
+#[mutants::skip] // Writes into ratatui Buffer — no return value to assert.
+fn apply_search_overlay(area: Rect, buf: &mut Buffer, view: &MarkdownView<'_>) {
+    let left_gutter = left_gutter_width(view.lines.len(), view.show_line_numbers);
+    let content_width =
+        (view.column_width as usize).saturating_sub(left_gutter as usize + GUTTER as usize);
+    let visible = area.height as usize;
+    let total = view.lines.len();
+
+    let dim_bg = view.theme.search_match_bg;
+    let cur_bg = view.theme.search_current_bg;
+
+    // Group matches by line for efficient lookup during the visual scan.
+    // Build a small sorted vec of (char_start, char_end, is_current).
+    let mut by_line: std::collections::HashMap<usize, Vec<(usize, usize, bool)>> =
+        std::collections::HashMap::new();
+    for (i, &(ml, ms, me)) in view.search_matches.iter().enumerate() {
+        by_line
+            .entry(ml)
+            .or_default()
+            .push((ms, me, i == view.search_current));
+    }
+
+    let mut visual_row: usize = 0;
+    let mut log_row = view.scroll_top;
+
+    while visual_row < visible && log_row < total {
+        if let Some(row_matches) = by_line.get(&log_row) {
+            let line = &view.lines[log_row];
+            let line_ci = view
+                .decoration_map
+                .get(&log_row)
+                .map(|decs| decs.iter().map(|s| s.continuation_indent).max().unwrap_or(0))
+                .unwrap_or(0) as usize;
+            let wrapped = wrap_line_indented(
+                line,
+                content_width.max(1),
+                content_width.saturating_sub(line_ci).max(1),
+            );
+            let char_ranges = wrap_char_ranges(line, &wrapped);
+
+            for (wrap_idx, (&row_str, &(char_start, char_len))) in
+                wrapped.iter().zip(char_ranges.iter()).enumerate()
+            {
+                if visual_row >= visible {
+                    break;
+                }
+                let char_end = char_start + char_len;
+                let continuation_indent: u16 = if wrap_idx > 0 {
+                    view.decoration_map
+                        .get(&log_row)
+                        .map(|decs| decs.iter().map(|s| s.continuation_indent).max().unwrap_or(0))
+                        .unwrap_or(0) as u16
+                } else {
+                    0
+                };
+
+                for &(ms, me, is_current) in row_matches {
+                    let row_ms = ms.max(char_start);
+                    let row_me = me.min(char_end);
+                    if row_ms >= row_me {
+                        visual_row += 1;
+                        continue;
+                    }
+                    let y = area.y + visual_row as u16;
+                    let start_dcols = display_cols_for_chars(row_str, row_ms - char_start);
+                    let end_dcols = display_cols_for_chars(row_str, row_me - char_start);
+                    let x_start =
+                        area.x + left_gutter + continuation_indent + start_dcols as u16;
+                    let x_end = (area.x + left_gutter + continuation_indent + end_dcols as u16)
+                        .min(area.x + left_gutter + content_width as u16);
+                    let highlight_bg = if is_current { cur_bg } else { dim_bg };
+                    for x in x_start..x_end {
+                        buf[(x, y)].set_bg(highlight_bg);
+                    }
+                }
+                visual_row += 1;
+            }
+            log_row += 1;
+        } else {
+            // No matches on this line — count its visual rows and move on.
+            let line = &view.lines[log_row];
+            let line_ci = view
+                .decoration_map
+                .get(&log_row)
+                .map(|decs| decs.iter().map(|s| s.continuation_indent).max().unwrap_or(0))
+                .unwrap_or(0) as usize;
+            let wrapped = wrap_line_indented(
+                line,
+                content_width.max(1),
+                content_width.saturating_sub(line_ci).max(1),
+            );
+            visual_row += wrapped.len().max(1);
+            log_row += 1;
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -735,6 +851,7 @@ mod tests {
             highlight_cache: None,
             file_mode: crate::app::FileMode::Markdown,
             show_line_numbers: false,
+            search: None,
         }
     }
 
@@ -1548,6 +1665,8 @@ mod tests {
             theme: &theme,
             column_width: 40,
             show_line_numbers: false,
+            search_matches: &[],
+            search_current: 0,
         };
         view.render(area, &mut buf);
 
@@ -1623,6 +1742,8 @@ mod tests {
             theme: &theme,
             column_width: 20,
             show_line_numbers: false,
+            search_matches: &[],
+            search_current: 0,
         };
         view.render(area, &mut buf);
 
@@ -1686,6 +1807,8 @@ mod tests {
             theme,
             column_width: 10,
             show_line_numbers: false,
+            search_matches: &[],
+            search_current: 0,
         }
     }
 
@@ -1975,6 +2098,8 @@ mod tests {
             theme: &theme,
             column_width: 8, // cw = 8 - 2*1 = 6
             show_line_numbers: false,
+            search_matches: &[],
+            search_current: 0,
         };
         apply_selection_overlay(area, &mut buf, &view, ((0, 0), (0, 10)));
         let sel_bg = theme.selection_bg;
@@ -2071,6 +2196,8 @@ mod tests {
             theme: &theme,
             column_width: 8,
             show_line_numbers: false,
+            search_matches: &[],
+            search_current: 0,
         };
         // Selection: char 7 to end of line (within sub-row 1, chars 6-9).
         // sub-row 1: row_sel_start=max(7,6)=7. x_start = 1+2+(7-6) = 4. Highlights x=4.
@@ -2126,6 +2253,8 @@ mod tests {
             theme: &theme,
             column_width: 10, // cw = 10 - (left_gutter+GUTTER) = 10-1-1 = 8
             show_line_numbers: false,
+            search_matches: &[],
+            search_current: 0,
         };
         apply_selection_overlay(area, &mut buf, &view, ((0, 0), (0, 9)));
         let sel_bg = theme.selection_bg;
@@ -2186,6 +2315,8 @@ mod tests {
             theme: &theme,
             column_width: 10,
             show_line_numbers: false,
+            search_matches: &[],
+            search_current: 0,
         };
         // Select chars 7..9 on line 0 — straddles within the second visual row.
         apply_selection_overlay(area, &mut buf, &view, ((0, 7), (0, 9)));

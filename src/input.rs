@@ -18,6 +18,7 @@ use yame::decoration::{
 use yame::highlighting::HighlightCache;
 use yame::layout::{DEFAULT_MIN_COLS, compute_layout};
 use yame::renderer;
+use yame::search::SearchState;
 use yame::status::StatusMode;
 
 use super::commands::{clamp_scroll, handle_exit, handle_save};
@@ -213,6 +214,191 @@ pub(super) fn handle_pair_wrap(app: &mut App, k: crossterm::event::KeyEvent) -> 
 }
 
 // ---------------------------------------------------------------------------
+// Search helpers (called from handle_search_key)
+// ---------------------------------------------------------------------------
+
+/// Replace the current match with `search.replace`, then refresh matches.
+fn do_replace_current(app: &mut App) {
+    let Some((ml, ms, me)) = app.search.as_ref().and_then(|s| s.current_match()) else {
+        return;
+    };
+    let replace_text = app
+        .search
+        .as_ref()
+        .map(|s| s.replace.clone())
+        .unwrap_or_default();
+    let match_len = me - ms;
+
+    app.textarea
+        .move_cursor(CursorMove::Jump(ml as u16, ms as u16));
+    for _ in 0..match_len {
+        app.textarea.delete_next_char();
+    }
+    app.textarea.insert_str(&replace_text);
+    app.force_redecorate = true;
+    app.recompute_dirty();
+    app.last_keystroke = Some(std::time::Instant::now());
+
+    let lines: Vec<String> = app.textarea.lines().iter().map(|s| s.to_string()).collect();
+    if let Some(s) = &mut app.search {
+        s.update_matches(&lines);
+        // current index now points to the next match (positions shifted after replacement).
+    }
+}
+
+/// Replace every match with `search.replace`, processing from bottom to top
+/// so earlier char offsets stay valid as later spans are overwritten.
+fn do_replace_all(app: &mut App) {
+    let Some(search) = &app.search else { return };
+    if search.matches.is_empty() {
+        return;
+    }
+    let matches = search.matches.clone();
+    let replace_text = search.replace.clone();
+
+    for &(ml, ms, me) in matches.iter().rev() {
+        app.textarea
+            .move_cursor(CursorMove::Jump(ml as u16, ms as u16));
+        for _ in 0..(me - ms) {
+            app.textarea.delete_next_char();
+        }
+        app.textarea.insert_str(&replace_text);
+    }
+    app.force_redecorate = true;
+    app.recompute_dirty();
+    app.last_keystroke = Some(std::time::Instant::now());
+
+    let lines: Vec<String> = app.textarea.lines().iter().map(|s| s.to_string()).collect();
+    if let Some(s) = &mut app.search {
+        s.update_matches(&lines);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Search-mode key dispatcher
+// ---------------------------------------------------------------------------
+
+/// Handle a key event while the search bar is active.
+///
+/// Printable characters feed the active field. Action keys navigate matches
+/// or perform replacements. Ctrl+S still saves; Escape closes the bar.
+pub(super) fn handle_search_key(
+    app: &mut App,
+    k: crossterm::event::KeyEvent,
+) -> KeyOutcome {
+    match (k.modifiers, k.code) {
+        // Close search.
+        (KeyModifiers::NONE, KeyCode::Esc) => {
+            app.search = None;
+        }
+
+        // Save still works inside search mode.
+        (KeyModifiers::CONTROL, KeyCode::Char('s'))
+        | (KeyModifiers::SUPER, KeyCode::Char('s')) => {
+            return KeyOutcome::Save;
+        }
+
+        // Next match: Ctrl+F or Enter while search field is focused.
+        // Enter while replace field is focused: replace current then advance.
+        (KeyModifiers::CONTROL, KeyCode::Char('f'))
+        | (KeyModifiers::NONE, KeyCode::Enter) => {
+            let replace_enter = k.code == KeyCode::Enter
+                && app
+                    .search
+                    .as_ref()
+                    .is_some_and(|s| !s.focus_search && s.show_replace);
+            if replace_enter {
+                do_replace_current(app);
+            } else {
+                if let Some(s) = &mut app.search {
+                    s.next_match();
+                }
+                let jump = app.search.as_ref().and_then(|s| s.current_match());
+                if let Some((ml, ms, _)) = jump {
+                    app.textarea
+                        .move_cursor(CursorMove::Jump(ml as u16, ms as u16));
+                }
+            }
+        }
+
+        // Prev match: Shift+Enter.
+        (KeyModifiers::SHIFT, KeyCode::Enter) => {
+            if let Some(s) = &mut app.search {
+                s.prev_match();
+            }
+            let jump = app.search.as_ref().and_then(|s| s.current_match());
+            if let Some((ml, ms, _)) = jump {
+                app.textarea
+                    .move_cursor(CursorMove::Jump(ml as u16, ms as u16));
+            }
+        }
+
+        // Delete last char of the active field.
+        (KeyModifiers::NONE, KeyCode::Backspace) => {
+            let lines: Vec<String> =
+                app.textarea.lines().iter().map(|s| s.to_string()).collect();
+            if let Some(s) = &mut app.search {
+                s.pop_char(&lines);
+            }
+        }
+
+        // Toggle regex mode.
+        (KeyModifiers::ALT, KeyCode::Char('r')) => {
+            let lines: Vec<String> =
+                app.textarea.lines().iter().map(|s| s.to_string()).collect();
+            if let Some(s) = &mut app.search {
+                s.regex_mode = !s.regex_mode;
+                s.update_matches(&lines);
+            }
+        }
+
+        // Ctrl+H: toggle the replace row.
+        (KeyModifiers::CONTROL, KeyCode::Char('h')) => {
+            if let Some(s) = &mut app.search {
+                s.show_replace = !s.show_replace;
+                s.focus_search = true; // return focus to search field
+            }
+        }
+
+        // Tab: switch focus between search / replace fields.
+        (KeyModifiers::NONE, KeyCode::Tab) => {
+            if let Some(s) = &mut app.search
+                && s.show_replace
+            {
+                s.focus_search = !s.focus_search;
+            }
+        }
+
+        // Ctrl+A: replace all (only active when the replace row is visible).
+        (KeyModifiers::CONTROL, KeyCode::Char('a'))
+            if app.search.as_ref().is_some_and(|s| s.show_replace) =>
+        {
+            do_replace_all(app);
+        }
+
+        // Printable character with no control modifier → feed active field.
+        _ if !k
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+            && matches!(k.code, KeyCode::Char(_)) =>
+        {
+            if let KeyCode::Char(c) = k.code {
+                let lines: Vec<String> =
+                    app.textarea.lines().iter().map(|s| s.to_string()).collect();
+                if let Some(s) = &mut app.search {
+                    s.push_char(c, &lines);
+                }
+            }
+        }
+
+        // Swallow everything else so stray keys don't reach the editor.
+        _ => {}
+    }
+
+    KeyOutcome::Continue
+}
+
+// ---------------------------------------------------------------------------
 // Key-event dispatcher (pure — no file I/O, no terminal I/O)
 // ---------------------------------------------------------------------------
 
@@ -253,10 +439,39 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
         };
     }
 
+    // ── Search mode — intercepts all keys while the bar is open ────────────
+    if app.search.is_some() {
+        return handle_search_key(app, k);
+    }
+
     // ── Normal editing mode ─────────────────────────────────────────────────
     match (k.modifiers, k.code) {
         (KeyModifiers::CONTROL, KeyCode::Char('s')) | (KeyModifiers::SUPER, KeyCode::Char('s')) => {
             KeyOutcome::Save
+        }
+
+        // Open search bar.
+        (KeyModifiers::CONTROL, KeyCode::Char('f')) => {
+            let (cur_line, cur_col) = app.textarea.cursor();
+            let lines: Vec<String> =
+                app.textarea.lines().iter().map(|s| s.to_string()).collect();
+            let mut s = SearchState::new(false);
+            s.update_matches(&lines);
+            s.snap_to_cursor(cur_line, cur_col);
+            app.search = Some(s);
+            KeyOutcome::Continue
+        }
+
+        // Open search-and-replace bar.
+        (KeyModifiers::CONTROL, KeyCode::Char('h')) => {
+            let (cur_line, cur_col) = app.textarea.cursor();
+            let lines: Vec<String> =
+                app.textarea.lines().iter().map(|s| s.to_string()).collect();
+            let mut s = SearchState::new(true);
+            s.update_matches(&lines);
+            s.snap_to_cursor(cur_line, cur_col);
+            app.search = Some(s);
+            KeyOutcome::Continue
         }
 
         (KeyModifiers::CONTROL, KeyCode::Char('x')) | (KeyModifiers::NONE, KeyCode::Esc) => {
@@ -569,15 +784,17 @@ where
             let term_size = terminal.size()?;
             let term_area = Rect::new(0, 0, term_size.width, term_size.height);
             let pre_layout = compute_layout(term_area, min_cols);
-            let pre_editor_area = if !app.config_warnings.is_empty() && pre_layout.column.height > 0
-            {
-                Rect {
-                    y: pre_layout.column.y + 1,
-                    height: pre_layout.column.height.saturating_sub(1),
-                    ..pre_layout.column
-                }
-            } else {
-                pre_layout.column
+            // Account for warning banner and search bar when computing the
+            // editor area so scroll clamping uses the same geometry as the draw.
+            let warn_rows = u16::from(
+                !app.config_warnings.is_empty() && pre_layout.column.height > 0,
+            );
+            let sb_rows = renderer::search_bar_height(app);
+            let top_rows = warn_rows + sb_rows;
+            let pre_editor_area = Rect {
+                y: pre_layout.column.y + top_rows,
+                height: pre_layout.column.height.saturating_sub(top_rows),
+                ..pre_layout.column
             };
             // Keep content_width current so handle_visual_move wraps identically
             // to the renderer.  Computed here (pre-draw) so it is valid before
@@ -613,11 +830,9 @@ where
                 content_bg_area,
             );
 
-            let editor_area = if !app.config_warnings.is_empty() && layout.column.height > 0 {
-                let warn_area = Rect {
-                    height: 1,
-                    ..layout.column
-                };
+            // Warning banner (if any) — always the topmost row of the column.
+            let after_warn = if !app.config_warnings.is_empty() && layout.column.height > 0 {
+                let warn_area = Rect { height: 1, ..layout.column };
                 let msg = format!(" ⚠  {}  [any key to dismiss]", app.config_warnings[0]);
                 f.render_widget(
                     Paragraph::new(msg)
@@ -633,6 +848,30 @@ where
                 layout.column
             };
 
+            // Search bar — rendered below any warning banner, above the editor.
+            let sb_rows = renderer::search_bar_height(app);
+            let editor_area = if sb_rows > 0 && after_warn.height > sb_rows {
+                let sb_area = Rect {
+                    x: layout.full.x,
+                    y: after_warn.y,
+                    width: layout.full.width,
+                    height: sb_rows,
+                };
+                renderer::render_search_bar(f, sb_area, app);
+                Rect {
+                    y: after_warn.y + sb_rows,
+                    height: after_warn.height.saturating_sub(sb_rows),
+                    ..after_warn
+                }
+            } else {
+                after_warn
+            };
+
+            let (search_matches, search_current) = app
+                .search
+                .as_ref()
+                .map(|s| (s.matches.as_slice(), s.current))
+                .unwrap_or((&[], 0));
             let view = renderer::MarkdownView {
                 lines: app.textarea.lines(),
                 decoration_map: &app.decoration_map,
@@ -642,6 +881,8 @@ where
                 theme: &app.theme,
                 column_width: layout.column.width,
                 show_line_numbers: app.show_line_numbers,
+                search_matches,
+                search_current,
             };
             f.render_widget(view, editor_area);
             renderer::render_status_bar(f, layout.status_bar, app);
@@ -800,6 +1041,7 @@ mod tests {
             highlight_cache: None,
             file_mode: FileMode::Markdown,
             show_line_numbers: false,
+            search: None,
         }
     }
 

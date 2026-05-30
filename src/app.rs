@@ -6,6 +6,7 @@ use std::time::Instant;
 use tui_textarea::TextArea;
 
 use crate::config::{FiletypeConfig, Theme};
+use crate::search::SearchState;
 use crate::decoration::{
     DecorationMap, block_highlights_to_decoration_map, build_decoration_map, count_words,
 };
@@ -178,6 +179,8 @@ pub struct App {
     /// Resolved from the file extension and `[filetype]` config at startup and
     /// updated on config reload (Ctrl+R).
     pub file_mode: FileMode,
+    /// Active search/replace session, or `None` when the search bar is closed.
+    pub search: Option<SearchState>,
 }
 
 impl App {
@@ -249,6 +252,7 @@ impl App {
             highlight_cache,
             file_mode,
             show_line_numbers,
+            search: None,
         })
     }
 
@@ -433,6 +437,7 @@ mod tests {
             highlight_cache: None,
             file_mode: FileMode::Markdown,
             show_line_numbers: false,
+            search: None,
         }
     }
 

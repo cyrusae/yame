@@ -2544,6 +2544,7 @@ version = "0.1.0"
 dependencies = [
  "arboard",
  "crossterm 0.28.1",
+ "fancy-regex 0.16.2",
  "mutants",
  "pulldown-cmark",
  "ratatui 0.30.0",
