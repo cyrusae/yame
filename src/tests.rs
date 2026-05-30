@@ -44,6 +44,7 @@ fn make_app() -> App {
         show_line_numbers: false,
         search: None,
         typewriter_mode: false,
+        focus_mode: false,
     }
 }
 
@@ -1034,4 +1035,99 @@ fn handle_key_event_exit_prompt_unknown_key_continues() {
         matches!(app.status.mode, StatusMode::ExitPrompt),
         "unknown key in exit prompt must not change mode"
     );
+}
+
+// ── focus mode: paragraph-bounds logic ───────────────────────────────────────
+
+#[test]
+fn focus_paragraph_bounds_no_blank_lines_spans_whole_doc() {
+    use yame::renderer::focus_paragraph_bounds;
+    let lines: Vec<String> = vec!["alpha".into(), "beta".into(), "gamma".into()];
+    // Cursor anywhere in a single-paragraph doc → whole document range.
+    assert_eq!(focus_paragraph_bounds(&lines, 1), (0, 2));
+}
+
+#[test]
+fn focus_paragraph_bounds_cursor_on_blank_line_is_self() {
+    use yame::renderer::focus_paragraph_bounds;
+    let lines: Vec<String> = vec!["alpha".into(), "".into(), "gamma".into()];
+    // Blank line → single-line "paragraph".
+    assert_eq!(focus_paragraph_bounds(&lines, 1), (1, 1));
+}
+
+#[test]
+fn focus_paragraph_bounds_first_paragraph() {
+    use yame::renderer::focus_paragraph_bounds;
+    let lines: Vec<String> = vec!["hello".into(), "world".into(), "".into(), "other".into()];
+    // Cursor on line 0 → paragraph (0, 1).
+    assert_eq!(focus_paragraph_bounds(&lines, 0), (0, 1));
+}
+
+#[test]
+fn focus_paragraph_bounds_second_paragraph() {
+    use yame::renderer::focus_paragraph_bounds;
+    let lines: Vec<String> = vec!["hello".into(), "".into(), "world".into(), "foo".into()];
+    // Cursor on line 2 → paragraph (2, 3).
+    assert_eq!(focus_paragraph_bounds(&lines, 2), (2, 3));
+}
+
+#[test]
+fn focus_paragraph_bounds_middle_paragraph() {
+    use yame::renderer::focus_paragraph_bounds;
+    // "a\n\nb\nc\nd\n\ne"
+    let lines: Vec<String> = vec![
+        "a".into(), "".into(),
+        "b".into(), "c".into(), "d".into(),
+        "".into(), "e".into(),
+    ];
+    // Cursor at line 3 (inside "b c d" block) → (2, 4).
+    assert_eq!(focus_paragraph_bounds(&lines, 3), (2, 4));
+}
+
+#[test]
+fn focus_paragraph_bounds_empty_doc_returns_zero_zero() {
+    use yame::renderer::focus_paragraph_bounds;
+    let lines: Vec<String> = vec![];
+    assert_eq!(focus_paragraph_bounds(&lines, 0), (0, 0));
+}
+
+#[test]
+fn focus_paragraph_bounds_cursor_oob_clamps_to_last_line() {
+    use yame::renderer::focus_paragraph_bounds;
+    let lines: Vec<String> = vec!["a".into(), "b".into()];
+    // cursor_row=99 → clamped to 1 → whole doc (0, 1).
+    assert_eq!(focus_paragraph_bounds(&lines, 99), (0, 1));
+}
+
+#[test]
+fn focus_paragraph_bounds_single_line_doc() {
+    use yame::renderer::focus_paragraph_bounds;
+    let lines: Vec<String> = vec!["only".into()];
+    assert_eq!(focus_paragraph_bounds(&lines, 0), (0, 0));
+}
+
+// ── focus mode: toggle keybinding ────────────────────────────────────────────
+
+#[test]
+fn focus_mode_off_by_default() {
+    let app = make_app();
+    assert!(!app.focus_mode, "focus_mode must default to false");
+}
+
+#[test]
+fn ctrl_d_toggles_focus_mode_on() {
+    use super::input::{KeyOutcome, handle_key_event};
+    let mut app = make_app();
+    let outcome = handle_key_event(&mut app, ctrl(KeyCode::Char('d')));
+    assert_eq!(outcome, KeyOutcome::Continue);
+    assert!(app.focus_mode, "Ctrl+D must enable focus mode");
+}
+
+#[test]
+fn ctrl_d_toggles_focus_mode_off() {
+    use super::input::handle_key_event;
+    let mut app = make_app();
+    app.focus_mode = true;
+    handle_key_event(&mut app, ctrl(KeyCode::Char('d')));
+    assert!(!app.focus_mode, "second Ctrl+D must disable focus mode");
 }

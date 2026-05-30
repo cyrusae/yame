@@ -581,6 +581,12 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
             KeyOutcome::Continue
         }
 
+        // Ctrl+D: toggle focus mode (dim lines outside the current paragraph).
+        (KeyModifiers::CONTROL, KeyCode::Char('d')) => {
+            app.focus_mode = !app.focus_mode;
+            KeyOutcome::Continue
+        }
+
         (KeyModifiers::CONTROL, KeyCode::Char('r')) => KeyOutcome::ReloadConfig,
 
         // Alt+T: reflow the GFM table under the cursor to uniform column widths.
@@ -953,6 +959,14 @@ where
                 .as_ref()
                 .map(|s| (s.matches.as_slice(), s.current))
                 .unwrap_or((&[], 0));
+            let focus_mode_paragraph = if app.focus_mode {
+                Some(renderer::focus_paragraph_bounds(
+                    app.textarea.lines(),
+                    app.textarea.cursor().0,
+                ))
+            } else {
+                None
+            };
             let view = renderer::MarkdownView {
                 lines: app.textarea.lines(),
                 decoration_map: &app.decoration_map,
@@ -964,6 +978,7 @@ where
                 show_line_numbers: app.show_line_numbers,
                 search_matches,
                 search_current,
+                focus_mode_paragraph,
             };
             f.render_widget(view, editor_area);
             if app.search.as_ref().is_some_and(|s| s.show_help) {
@@ -1127,6 +1142,7 @@ mod tests {
             show_line_numbers: false,
             search: None,
             typewriter_mode: false,
+            focus_mode: false,
         }
     }
 

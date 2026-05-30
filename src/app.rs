@@ -186,6 +186,9 @@ pub struct App {
     /// Free-scrolling (mouse wheel, Ctrl+Up/Down) still works; the view
     /// re-centres on the next cursor-moving keypress.
     pub typewriter_mode: bool,
+    /// When true, lines outside the logical paragraph containing the cursor
+    /// are dimmed to `theme.muted`.  Toggled by Ctrl+D.
+    pub focus_mode: bool,
 }
 
 impl App {
@@ -259,6 +262,7 @@ impl App {
             show_line_numbers,
             search: None,
             typewriter_mode: false,
+            focus_mode: false,
         })
     }
 
@@ -445,6 +449,7 @@ mod tests {
             show_line_numbers: false,
             search: None,
             typewriter_mode: false,
+            focus_mode: false,
         }
     }
 

@@ -103,6 +103,7 @@ mod tests {
             show_line_numbers: false,
             search: None,
             typewriter_mode: false,
+            focus_mode: false,
         }
     }
 

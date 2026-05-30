@@ -166,6 +166,10 @@ pub(super) fn build_goto_line_bar(app: &App, input: &str) -> Line<'static> {
 const TYPEWRITER_GLYPH: &str = "󰓃";
 /// ASCII fallback for the typewriter mode indicator.
 const TYPEWRITER_ASCII: &str = "[T]";
+/// Nerd Font eye icon (nf-md-eye, U+F06D2) for focus mode.  Requires a patched font.
+const FOCUS_GLYPH: &str = "󰛐";
+/// ASCII fallback for the focus mode indicator.
+const FOCUS_ASCII: &str = "[F]";
 
 /// Render the second-to-last row: cursor position, word count, and mode indicators.
 #[cfg_attr(feature = "mutants-skip", mutants::skip)] // Writes into ratatui Buffer — void, not testable via return value.
@@ -194,15 +198,28 @@ pub fn render_info_line(f: &mut Frame, area: Rect, app: &App) {
         text_area,
     );
 
-    // Typewriter mode indicator — right-aligned, accent coloured.
+    // Mode indicators — right-aligned, accent coloured.
+    // Each active mode contributes a token; they are concatenated and rendered
+    // as a single right-aligned widget so they stack naturally.
+    let mut indicators = String::new();
+    if app.focus_mode {
+        let icon = if app.powerline_glyphs {
+            FOCUS_GLYPH
+        } else {
+            FOCUS_ASCII
+        };
+        indicators.push_str(&format!(" {icon} "));
+    }
     if app.typewriter_mode {
         let icon = if app.powerline_glyphs {
             TYPEWRITER_GLYPH
         } else {
             TYPEWRITER_ASCII
         };
-        let indicator = format!(" {icon} ");
-        let iw = indicator.chars().count() as u16;
+        indicators.push_str(&format!(" {icon} "));
+    }
+    if !indicators.is_empty() {
+        let iw = indicators.chars().count() as u16;
         if iw <= area.width {
             let indicator_area = Rect {
                 x: area.x + area.width - iw,
@@ -210,7 +227,7 @@ pub fn render_info_line(f: &mut Frame, area: Rect, app: &App) {
                 ..area
             };
             f.render_widget(
-                Paragraph::new(indicator)
+                Paragraph::new(indicators)
                     .style(Style::default().fg(theme.accent).bg(theme.bg)),
                 indicator_area,
             );

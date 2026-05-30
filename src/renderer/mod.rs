@@ -330,6 +330,10 @@ pub struct MarkdownView<'a> {
     pub search_matches: &'a [SearchMatch],
     /// Index of the currently selected search match (highlighted brighter).
     pub search_current: usize,
+    /// When `Some((start, end))`, lines outside the inclusive range are dimmed
+    /// to `theme.muted`.  Compute with [`focus_paragraph_bounds`] when focus
+    /// mode is active; pass `None` to disable.
+    pub focus_mode_paragraph: Option<(usize, usize)>,
 }
 
 impl Widget for MarkdownView<'_> {
@@ -571,6 +575,13 @@ impl Widget for MarkdownView<'_> {
             log_row += 1;
         }
 
+        // Focus overlay — dims lines outside the current paragraph so the
+        // cursor paragraph reads as the primary content.  Applied before the
+        // search and selection overlays so those always win on top.
+        if let Some(focus) = self.focus_mode_paragraph {
+            apply_focus_overlay(area, buf, &self, focus);
+        }
+
         // Search-match overlay — below selection so selection takes priority.
         if !self.search_matches.is_empty() {
             apply_search_overlay(area, buf, &self);
@@ -808,6 +819,96 @@ fn apply_search_overlay(area: Rect, buf: &mut Buffer, view: &MarkdownView<'_>) {
 }
 
 // ---------------------------------------------------------------------------
+// Focus mode helpers
+// ---------------------------------------------------------------------------
+
+/// Return the inclusive `(start, end)` line range of the logical paragraph that
+/// contains `cursor_row`.
+///
+/// A paragraph is a contiguous run of non-blank lines bounded above and below
+/// by blank lines (or the document edges).  Blank lines are their own
+/// single-line "paragraph": when the cursor sits on a blank line the function
+/// returns `(cursor_row, cursor_row)`.
+///
+/// This is a pure function with no ratatui dependency — it is unit-tested
+/// directly from the test suite.
+pub fn focus_paragraph_bounds(lines: &[String], cursor_row: usize) -> (usize, usize) {
+    let n = lines.len();
+    if n == 0 {
+        return (0, 0);
+    }
+    let cursor_row = cursor_row.min(n.saturating_sub(1));
+    // Cursor on a blank line → the focus is just that single line.
+    if lines[cursor_row].trim().is_empty() {
+        return (cursor_row, cursor_row);
+    }
+    // Scan upward to find the first blank line above; the paragraph starts
+    // on the line immediately after it (or at 0 if none found).
+    let start = (0..cursor_row)
+        .rev()
+        .find(|&i| lines[i].trim().is_empty())
+        .map_or(0, |i| i + 1);
+    // Scan downward to find the first blank line below; the paragraph ends
+    // on the line immediately before it (or at n-1 if none found).
+    let end = (cursor_row + 1..n)
+        .find(|&i| lines[i].trim().is_empty())
+        .map_or(n - 1, |i| i - 1);
+    (start, end)
+}
+
+/// Dim all text cells outside the focus paragraph by overwriting their fg with
+/// `theme.muted`, making out-of-focus content recede visually.
+///
+/// Applied before search and selection overlays so those always render on top.
+#[cfg_attr(feature = "mutants-skip", mutants::skip)] // Writes into ratatui Buffer — void, not testable via return value.
+fn apply_focus_overlay(
+    area: Rect,
+    buf: &mut Buffer,
+    view: &MarkdownView<'_>,
+    focus: (usize, usize),
+) {
+    let (focus_start, focus_end) = focus;
+    let left_gutter = left_gutter_width(view.lines.len(), view.show_line_numbers);
+    let content_width =
+        (view.column_width as usize).saturating_sub(left_gutter as usize + GUTTER as usize);
+    let dim_fg = view.theme.muted;
+    let visible = area.height as usize;
+    let total = view.lines.len();
+
+    let mut visual_row = 0usize;
+    let mut log_row = view.scroll_top;
+
+    while visual_row < visible && log_row < total {
+        let line = &view.lines[log_row];
+        let line_ci = view
+            .decoration_map
+            .get(&log_row)
+            .map(|decs| decs.iter().map(|s| s.continuation_indent).max().unwrap_or(0))
+            .unwrap_or(0) as usize;
+        let wrapped = wrap_line_indented(
+            line,
+            content_width.max(1),
+            content_width.saturating_sub(line_ci).max(1),
+        );
+
+        for _ in 0..wrapped.len() {
+            if visual_row >= visible {
+                break;
+            }
+            if log_row < focus_start || log_row > focus_end {
+                let y = area.y + visual_row as u16;
+                let x_end = (area.x + left_gutter + content_width as u16).min(area.x + area.width);
+                for x in (area.x + left_gutter)..x_end {
+                    buf[(x, y)].set_fg(dim_fg);
+                }
+            }
+            visual_row += 1;
+        }
+        log_row += 1;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -853,6 +954,7 @@ mod tests {
             show_line_numbers: false,
             search: None,
             typewriter_mode: false,
+            focus_mode: false,
         }
     }
 
@@ -1668,6 +1770,7 @@ mod tests {
             show_line_numbers: false,
             search_matches: &[],
             search_current: 0,
+            focus_mode_paragraph: None,
         };
         view.render(area, &mut buf);
 
@@ -1745,6 +1848,7 @@ mod tests {
             show_line_numbers: false,
             search_matches: &[],
             search_current: 0,
+            focus_mode_paragraph: None,
         };
         view.render(area, &mut buf);
 
@@ -1810,6 +1914,7 @@ mod tests {
             show_line_numbers: false,
             search_matches: &[],
             search_current: 0,
+            focus_mode_paragraph: None,
         }
     }
 
@@ -2101,6 +2206,7 @@ mod tests {
             show_line_numbers: false,
             search_matches: &[],
             search_current: 0,
+            focus_mode_paragraph: None,
         };
         apply_selection_overlay(area, &mut buf, &view, ((0, 0), (0, 10)));
         let sel_bg = theme.selection_bg;
@@ -2199,6 +2305,7 @@ mod tests {
             show_line_numbers: false,
             search_matches: &[],
             search_current: 0,
+            focus_mode_paragraph: None,
         };
         // Selection: char 7 to end of line (within sub-row 1, chars 6-9).
         // sub-row 1: row_sel_start=max(7,6)=7. x_start = 1+2+(7-6) = 4. Highlights x=4.
@@ -2256,6 +2363,7 @@ mod tests {
             show_line_numbers: false,
             search_matches: &[],
             search_current: 0,
+            focus_mode_paragraph: None,
         };
         apply_selection_overlay(area, &mut buf, &view, ((0, 0), (0, 9)));
         let sel_bg = theme.selection_bg;
@@ -2318,6 +2426,7 @@ mod tests {
             show_line_numbers: false,
             search_matches: &[],
             search_current: 0,
+            focus_mode_paragraph: None,
         };
         // Select chars 7..9 on line 0 — straddles within the second visual row.
         apply_selection_overlay(area, &mut buf, &view, ((0, 7), (0, 9)));
