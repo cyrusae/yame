@@ -112,7 +112,7 @@ pub(super) fn add_byte_range_span(
 mod tests {
     use ratatui::style::{Color, Modifier, Style};
 
-    use super::{add_byte_range_span, line_start_bytes, SpanParams};
+    use super::{SpanParams, add_byte_range_span, line_start_bytes};
     use crate::decoration::DecorationMap;
 
     // Kills spans.rs:90:17 `delete field style from struct StyledSpan expression in
@@ -126,7 +126,11 @@ mod tests {
         let text = "hello world";
         let line_starts = line_start_bytes(text);
         let bold = Style::default().add_modifier(Modifier::BOLD);
-        let params = SpanParams { style: bold, full_line_bg: None, is_blockquote: false };
+        let params = SpanParams {
+            style: bold,
+            full_line_bg: None,
+            is_blockquote: false,
+        };
 
         let mut map: DecorationMap = Default::default();
         // Span covering "hello" (bytes 0..5).
@@ -134,7 +138,9 @@ mod tests {
 
         let spans = map.get(&0).expect("line 0 must have at least one span");
         assert!(
-            spans.iter().any(|s| s.style.add_modifier.contains(Modifier::BOLD)),
+            spans
+                .iter()
+                .any(|s| s.style.add_modifier.contains(Modifier::BOLD)),
             "add_byte_range_span must propagate the BOLD style to the produced span"
         );
     }

@@ -231,7 +231,10 @@ fn run(file_path: PathBuf) -> io::Result<()> {
 
     // Refuse to open binary files — null bytes would corrupt the editor buffer.
     if is_likely_binary(&file_path) {
-        eprintln!("error: '{}' appears to be a binary file.", file_path.display());
+        eprintln!(
+            "error: '{}' appears to be a binary file.",
+            file_path.display()
+        );
         eprintln!("yame can only open text files.");
         std::process::exit(1);
     }

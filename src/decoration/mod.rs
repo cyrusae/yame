@@ -1015,8 +1015,7 @@ pub fn build_decoration_map(
                         .fg(theme.accent)
                         .add_modifier(Modifier::BOLD);
 
-                    let (start_line, _) =
-                        byte_to_line_char(&line_starts, text, head_range.start);
+                    let (start_line, _) = byte_to_line_char(&line_starts, text, head_range.start);
                     let (end_line, _) = byte_to_line_char(
                         &line_starts,
                         text,
@@ -1607,7 +1606,9 @@ mod tests {
             .get(&3)
             .expect("blank content line (line 3) must have spans");
         assert!(
-            blank_line.iter().any(|s| s.full_line_bg == Some(theme.fenced_bg)),
+            blank_line
+                .iter()
+                .any(|s| s.full_line_bg == Some(theme.fenced_bg)),
             "blank line inside fenced block must carry full_line_bg = fenced_bg; \
              got: {blank_line:?}"
         );
@@ -1847,9 +1848,7 @@ mod tests {
         let text = "| *Italic* | Plain |\n| --- | --- |\n| a | b |";
         let map = build_map(text, &theme, true);
         let line0 = map.get(&0).expect("line 0 should have spans");
-        let has_italic_span = line0
-            .iter()
-            .any(|s| s.style.fg == Some(theme.italic_color));
+        let has_italic_span = line0.iter().any(|s| s.style.fg == Some(theme.italic_color));
         assert!(
             has_italic_span,
             "italic inside table header must produce an italic_color span, not be swallowed"
@@ -2825,12 +2824,19 @@ mod tests {
     fn bh_to_deco_empty_highlights_gives_empty_map() {
         let hl: crate::highlighting::BlockHighlights = vec![];
         let map = block_highlights_to_decoration_map(&hl, 0);
-        assert!(map.is_empty(), "empty BlockHighlights must produce empty map");
+        assert!(
+            map.is_empty(),
+            "empty BlockHighlights must produce empty map"
+        );
     }
 
     #[test]
     fn bh_to_deco_single_line_single_span() {
-        let hl = vec![vec![HlSpan { char_start: 0, char_end: 3, fg: Color::Rgb(255, 0, 0) }]];
+        let hl = vec![vec![HlSpan {
+            char_start: 0,
+            char_end: 3,
+            fg: Color::Rgb(255, 0, 0),
+        }]];
         let map = block_highlights_to_decoration_map(&hl, 0);
         let spans = map.get(&0).expect("line 0 must be present");
         assert_eq!(spans.len(), 1);
@@ -2841,7 +2847,11 @@ mod tests {
     #[test]
     fn bh_to_deco_fg_colour_preserved() {
         let fg = Color::Rgb(100, 200, 50);
-        let hl = vec![vec![HlSpan { char_start: 0, char_end: 5, fg }]];
+        let hl = vec![vec![HlSpan {
+            char_start: 0,
+            char_end: 5,
+            fg,
+        }]];
         let map = block_highlights_to_decoration_map(&hl, 0);
         let spans = map.get(&0).unwrap();
         assert_eq!(
@@ -2854,8 +2864,16 @@ mod tests {
     #[test]
     fn bh_to_deco_multiline_maps_correct_line_indices() {
         let hl = vec![
-            vec![HlSpan { char_start: 0, char_end: 2, fg: Color::Rgb(1, 2, 3) }],
-            vec![HlSpan { char_start: 0, char_end: 4, fg: Color::Rgb(4, 5, 6) }],
+            vec![HlSpan {
+                char_start: 0,
+                char_end: 2,
+                fg: Color::Rgb(1, 2, 3),
+            }],
+            vec![HlSpan {
+                char_start: 0,
+                char_end: 4,
+                fg: Color::Rgb(4, 5, 6),
+            }],
         ];
         let map = block_highlights_to_decoration_map(&hl, 0);
         assert!(map.contains_key(&0), "line 0 must be present");
@@ -2867,16 +2885,30 @@ mod tests {
     #[test]
     fn bh_to_deco_line_offset_applied() {
         // With line_offset=5, the first hl line maps to DecorationMap key 5.
-        let hl = vec![vec![HlSpan { char_start: 0, char_end: 1, fg: Color::Rgb(0, 0, 0) }]];
+        let hl = vec![vec![HlSpan {
+            char_start: 0,
+            char_end: 1,
+            fg: Color::Rgb(0, 0, 0),
+        }]];
         let map = block_highlights_to_decoration_map(&hl, 5);
-        assert!(map.contains_key(&5), "line_offset must shift line index to 5");
-        assert!(!map.contains_key(&0), "line 0 must not be present when offset=5");
+        assert!(
+            map.contains_key(&5),
+            "line_offset must shift line index to 5"
+        );
+        assert!(
+            !map.contains_key(&0),
+            "line 0 must not be present when offset=5"
+        );
     }
 
     #[test]
     fn bh_to_deco_markdown_fields_are_zero() {
         // Markdown-specific fields must all be at their zero/false defaults.
-        let hl = vec![vec![HlSpan { char_start: 0, char_end: 3, fg: Color::Rgb(1, 1, 1) }]];
+        let hl = vec![vec![HlSpan {
+            char_start: 0,
+            char_end: 3,
+            fg: Color::Rgb(1, 1, 1),
+        }]];
         let map = block_highlights_to_decoration_map(&hl, 0);
         let span = &map.get(&0).unwrap()[0];
         assert!(!span.is_blockquote, "is_blockquote must be false");
@@ -2891,10 +2923,20 @@ mod tests {
         // Lines with no spans should not create entries in the map.
         let hl = vec![
             vec![],
-            vec![HlSpan { char_start: 0, char_end: 2, fg: Color::Rgb(0, 0, 0) }],
+            vec![HlSpan {
+                char_start: 0,
+                char_end: 2,
+                fg: Color::Rgb(0, 0, 0),
+            }],
         ];
         let map = block_highlights_to_decoration_map(&hl, 0);
-        assert!(!map.contains_key(&0), "empty span list must not create a map entry");
-        assert!(map.contains_key(&1), "non-empty span list must create a map entry");
+        assert!(
+            !map.contains_key(&0),
+            "empty span list must not create a map entry"
+        );
+        assert!(
+            map.contains_key(&1),
+            "non-empty span list must create a map entry"
+        );
     }
 }

@@ -71,6 +71,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Italic default color now matches text color (not accent blend) (#60)
 
 ### Changed
+- cargo-deny unmaintained annotation (#151)
 - close completed mutant issues (#150)
 - fix remaining mutant survivors post-session-110 (#149)
 - mutants: skip timeout-only functions (screen_to_doc, apply_selection_overlay, spans helpers) (#148)

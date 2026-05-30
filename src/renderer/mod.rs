@@ -221,12 +221,7 @@ pub fn chars_for_display_cols(s: &str, target_dcols: usize) -> usize {
 ///
 /// Equivalent to `cursor_col - subrow_char_start` for ASCII text but correctly
 /// accounts for wide characters (CJK, emoji) whose display width is 2 columns.
-pub fn cursor_vcol(
-    line: &str,
-    cursor_col: usize,
-    first_width: usize,
-    cont_width: usize,
-) -> usize {
+pub fn cursor_vcol(line: &str, cursor_col: usize, first_width: usize, cont_width: usize) -> usize {
     let wrapped = wrap_line_indented(line, first_width.max(1), cont_width.max(1));
     let char_ranges = wrap_char_ranges(line, &wrapped);
     let last = char_ranges.len().saturating_sub(1);
@@ -619,10 +614,8 @@ fn apply_selection_overlay(
                 // so the for loop produces an empty range regardless.
                 if row_sel_start < row_sel_end {
                     let y = area.y + visual_row as u16;
-                    let start_dcols =
-                        display_cols_for_chars(row_str, row_sel_start - char_start);
-                    let end_dcols =
-                        display_cols_for_chars(row_str, row_sel_end - char_start);
+                    let start_dcols = display_cols_for_chars(row_str, row_sel_start - char_start);
+                    let end_dcols = display_cols_for_chars(row_str, row_sel_end - char_start);
                     let x_start = area.x + GUTTER + continuation_indent + start_dcols as u16;
                     let x_end = (area.x + GUTTER + continuation_indent + end_dcols as u16)
                         .min(area.x + GUTTER + content_width as u16);
@@ -1480,7 +1473,12 @@ mod tests {
         use ratatui::widgets::Widget;
 
         // Two visible rows: row 0 = "code" (cursor here), row 1 = "" (blank).
-        let area = Rect { x: 0, y: 0, width: 20, height: 2 };
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 20,
+            height: 2,
+        };
         let mut buf = Buffer::empty(area);
 
         let theme = crate::config::Theme::default_theme();
@@ -2059,7 +2057,12 @@ mod tests {
     #[test]
     fn selection_overlay_continuation_row_end_dcols_uses_subtraction() {
         use ratatui::buffer::Buffer;
-        let area = Rect { x: 0, y: 0, width: 10, height: 2 };
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 10,
+            height: 2,
+        };
         let mut buf = Buffer::empty(area);
         let theme = Theme::default_theme();
         let deco = DecorationMap::default();
@@ -2079,15 +2082,24 @@ mod tests {
         let sel_bg = theme.selection_bg;
 
         // x=2 and x=3 must be highlighted (chars 7 and 8 of "fghij").
-        assert_eq!(buf.cell((2, 1)).unwrap().bg, sel_bg,
-            "char 7 ('g') at x=2 must be selected");
-        assert_eq!(buf.cell((3, 1)).unwrap().bg, sel_bg,
-            "char 8 ('h') at x=3 must be selected");
+        assert_eq!(
+            buf.cell((2, 1)).unwrap().bg,
+            sel_bg,
+            "char 7 ('g') at x=2 must be selected"
+        );
+        assert_eq!(
+            buf.cell((3, 1)).unwrap().bg,
+            sel_bg,
+            "char 8 ('h') at x=3 must be selected"
+        );
         // x=4 is NOT selected (end_dcols=3 makes x_end=4 exclusive).
         // With `- → +`: end_dcols = display_cols("fghij", 9+6=15) = 5 → x_end=6
         // → cells (4,1) and (5,1) would be wrongly coloured.
-        assert_ne!(buf.cell((4, 1)).unwrap().bg, sel_bg,
-            "char 9 at x=4 must NOT be selected (end_dcols must use row_sel_end - char_start)");
+        assert_ne!(
+            buf.cell((4, 1)).unwrap().bg,
+            sel_bg,
+            "char 9 at x=4 must NOT be selected (end_dcols must use row_sel_end - char_start)"
+        );
     }
 
     // Kills: renderer/mod.rs:425 `&&→||` and `log_row < total → <=`.

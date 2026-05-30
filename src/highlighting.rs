@@ -70,7 +70,12 @@ pub type BlockHighlights = Vec<Vec<HlSpan>>;
 fn to_sc(c: Color) -> SC {
     match c {
         Color::Rgb(r, g, b) => SC { r, g, b, a: 0xFF },
-        _ => SC { r: 205, g: 214, b: 244, a: 0xFF },
+        _ => SC {
+            r: 205,
+            g: 214,
+            b: 244,
+            a: 0xFF,
+        },
     }
 }
 
@@ -150,14 +155,16 @@ pub fn build_palette_theme(yame: &crate::config::Theme) -> SyntectTheme {
     let scopes: Vec<ThemeItem> = rules
         .iter()
         .filter_map(|(scope_str, fg)| {
-            ScopeSelectors::from_str(scope_str).ok().map(|scope| ThemeItem {
-                scope,
-                style: StyleModifier {
-                    foreground: Some(*fg),
-                    background: None,
-                    font_style: None,
-                },
-            })
+            ScopeSelectors::from_str(scope_str)
+                .ok()
+                .map(|scope| ThemeItem {
+                    scope,
+                    style: StyleModifier {
+                        foreground: Some(*fg),
+                        background: None,
+                        font_style: None,
+                    },
+                })
         })
         .collect();
 
@@ -222,11 +229,7 @@ impl HighlightCache {
     /// `palette_theme` — pass `Some(build_palette_theme(&yame_theme))` to use
     /// palette-derived colours (recommended), or `None` to fall through to the
     /// named `theme_name` built-in.
-    pub fn new(
-        enabled: bool,
-        theme_name: String,
-        palette_theme: Option<SyntectTheme>,
-    ) -> Self {
+    pub fn new(enabled: bool, theme_name: String, palette_theme: Option<SyntectTheme>) -> Self {
         Self {
             syntax_set: OnceLock::new(),
             extra_syntax_set: OnceLock::new(),
@@ -262,15 +265,16 @@ impl HighlightCache {
         // Try the syntect defaults first; fall back to the two-face extras.
         // The active set must be threaded into highlight_line because syntect
         // binds SyntaxReferences to the SyntaxSet they were parsed from.
-        let default_set = self.syntax_set.get_or_init(SyntaxSet::load_defaults_newlines);
+        let default_set = self
+            .syntax_set
+            .get_or_init(SyntaxSet::load_defaults_newlines);
         let (syntax, active_set) = if let Some(s) = default_set
             .find_syntax_by_token(&lang_lower)
             .or_else(|| default_set.find_syntax_by_extension(&lang_lower))
         {
             (s, default_set)
         } else {
-            let extra_set =
-                self.extra_syntax_set.get_or_init(tf_syntax::extra_newlines);
+            let extra_set = self.extra_syntax_set.get_or_init(tf_syntax::extra_newlines);
             let s = extra_set
                 .find_syntax_by_token(&lang_lower)
                 .or_else(|| extra_set.find_syntax_by_extension(&lang_lower))?;
@@ -293,9 +297,7 @@ impl HighlightCache {
         let mut block_hl: BlockHighlights = Vec::new();
 
         for line in LinesWithEndings::from(content) {
-            let ranges = highlighter
-                .highlight_line(line, active_set)
-                .ok()?;
+            let ranges = highlighter.highlight_line(line, active_set).ok()?;
 
             let mut line_spans: Vec<HlSpan> = Vec::new();
             let mut char_col = 0usize;
@@ -306,11 +308,7 @@ impl HighlightCache {
                     line_spans.push(HlSpan {
                         char_start: char_col,
                         char_end: char_col + char_count,
-                        fg: Color::Rgb(
-                            style.foreground.r,
-                            style.foreground.g,
-                            style.foreground.b,
-                        ),
+                        fg: Color::Rgb(style.foreground.r, style.foreground.g, style.foreground.b),
                     });
                     char_col += char_count;
                 }
@@ -411,14 +409,20 @@ mod tests {
     #[test]
     fn unknown_lang_returns_none() {
         let cache = make_cache();
-        assert!(cache.highlight_block("notareallangnobodywoulduse", "hello").is_none());
+        assert!(
+            cache
+                .highlight_block("notareallangnobodywoulduse", "hello")
+                .is_none()
+        );
     }
 
     #[test]
     fn rust_block_returns_spans() {
         let cache = make_cache();
         let content = "let x: u32 = 42;\n";
-        let hl = cache.highlight_block("rust", content).expect("rust should be recognised");
+        let hl = cache
+            .highlight_block("rust", content)
+            .expect("rust should be recognised");
         assert_eq!(hl.len(), 1, "one content line → one entry");
         assert!(!hl[0].is_empty(), "rust line must produce spans");
     }
@@ -427,7 +431,9 @@ mod tests {
     fn yaml_block_returns_spans() {
         let cache = make_cache();
         let content = "section:\n  key: value\n";
-        let hl = cache.highlight_block("yaml", content).expect("yaml should be recognised");
+        let hl = cache
+            .highlight_block("yaml", content)
+            .expect("yaml should be recognised");
         assert_eq!(hl.len(), 2, "two content lines → two entries");
     }
 
@@ -448,7 +454,9 @@ mod tests {
     fn cache_miss_different_content_same_language_gives_different_spans() {
         let cache = make_cache();
         let hl_let = cache.highlight_block("rust", "let x = 1;\n").unwrap();
-        let hl_fn = cache.highlight_block("rust", "fn foo() -> bool { true }\n").unwrap();
+        let hl_fn = cache
+            .highlight_block("rust", "fn foo() -> bool { true }\n")
+            .unwrap();
         // These two Rust snippets have different token structures and must
         // produce different span lists.  If hash_str → constant, the second
         // call hits the entry from the first call and returns hl_let wrongly.
@@ -481,7 +489,11 @@ mod tests {
         let cache = make_cache();
         let content = "fn a() {}\nfn b() {}\nfn c() {}\n";
         let hl = cache.highlight_block("rust", content).unwrap();
-        assert_eq!(hl.len(), 3, "three-line block must produce three line-span lists");
+        assert_eq!(
+            hl.len(),
+            3,
+            "three-line block must produce three line-span lists"
+        );
     }
 
     #[test]
@@ -512,7 +524,9 @@ mod tests {
     #[test]
     fn python_block_produces_spans() {
         let cache = make_cache();
-        let hl = cache.highlight_block("python", "def foo():\n    pass\n").unwrap();
+        let hl = cache
+            .highlight_block("python", "def foo():\n    pass\n")
+            .unwrap();
         assert_eq!(hl.len(), 2);
     }
 
@@ -644,7 +658,10 @@ mod tests {
     fn palette_cache_rust_returns_spans() {
         let cache = make_palette_cache();
         let hl = cache.highlight_block("rust", "let x = 1;\n").unwrap();
-        assert!(!hl[0].is_empty(), "palette cache must produce spans for rust");
+        assert!(
+            !hl[0].is_empty(),
+            "palette cache must produce spans for rust"
+        );
     }
 
     #[test]
@@ -681,7 +698,9 @@ mod tests {
         // A quoted string literal should render with code_color.
         let yame = Theme::default_theme();
         let cache = make_palette_cache();
-        let hl = cache.highlight_block("rust", "let s = \"hello\";\n").unwrap();
+        let hl = cache
+            .highlight_block("rust", "let s = \"hello\";\n")
+            .unwrap();
 
         let code_color = match yame.code_color {
             Color::Rgb(r, g, b) => Color::Rgb(r, g, b),
@@ -806,8 +825,17 @@ mod tests {
         use crate::config::blend_colors;
         let yame = Theme::default_theme();
         let op_color = blend_colors(yame.code_color, yame.accent, 0.3);
-        assert_ne!(op_color, yame.code_color, "op_color must differ from code_color (strings)");
-        assert_ne!(op_color, yame.accent, "op_color must differ from accent (keywords)");
-        assert_ne!(op_color, yame.text, "op_color must differ from text (identifiers)");
+        assert_ne!(
+            op_color, yame.code_color,
+            "op_color must differ from code_color (strings)"
+        );
+        assert_ne!(
+            op_color, yame.accent,
+            "op_color must differ from accent (keywords)"
+        );
+        assert_ne!(
+            op_color, yame.text,
+            "op_color must differ from text (identifiers)"
+        );
     }
 }

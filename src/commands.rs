@@ -200,7 +200,12 @@ mod tests {
         app.textarea.move_cursor(CursorMove::Jump(2, 13));
 
         // editor_area height=3 (exactly 3 visual rows visible), width=12.
-        let area = Rect { x: 0, y: 0, width: 12, height: 3 };
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 12,
+            height: 3,
+        };
         clamp_scroll(&mut app, area, 12, 0);
 
         assert_eq!(

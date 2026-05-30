@@ -164,8 +164,16 @@ mod tests {
         let result = split_into_spans("hello", &spans, Style::default());
 
         // Expect: "h" (default), "ell" (red), "o" (default) = 3 spans.
-        assert_eq!(result.len(), 3, "must produce 3 segments: prefix, styled, suffix");
-        assert_eq!(result[1].style.fg, Some(Color::Red), "middle span must be Red");
+        assert_eq!(
+            result.len(),
+            3,
+            "must produce 3 segments: prefix, styled, suffix"
+        );
+        assert_eq!(
+            result[1].style.fg,
+            Some(Color::Red),
+            "middle span must be Red"
+        );
         assert_eq!(result[0].content, "h");
         assert_eq!(result[1].content, "ell");
         assert_eq!(result[2].content, "o");

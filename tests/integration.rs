@@ -284,7 +284,9 @@ fn disabled_highlighting_fenced_block_has_bg_no_syntect_fg() {
     let content_line = map.get(&1).expect("line 1 (code content) must have spans");
     // Must have the fenced_bg full-line background.
     assert!(
-        content_line.iter().any(|s| s.full_line_bg == Some(theme.fenced_bg)),
+        content_line
+            .iter()
+            .any(|s| s.full_line_bg == Some(theme.fenced_bg)),
         "disabled-highlighting fenced line must still have fenced_bg full_line_bg"
     );
     // Must NOT have a syntect fg span (no Color::Rgb that differs from the
@@ -309,7 +311,9 @@ fn no_cache_fenced_block_falls_back_to_fenced_bg() {
 
     let content_line = map.get(&1).expect("line 1 must have spans");
     assert!(
-        content_line.iter().any(|s| s.full_line_bg == Some(theme.fenced_bg)),
+        content_line
+            .iter()
+            .any(|s| s.full_line_bg == Some(theme.fenced_bg)),
         "None-cache fenced block must have fenced_bg full_line_bg on content lines"
     );
 }
@@ -329,7 +333,9 @@ fn highlighted_block_fence_delimiters_still_dimmed() {
             .get(&fence_line)
             .unwrap_or_else(|| panic!("fence line {fence_line} must have spans"));
         assert!(
-            spans.iter().any(|s| s.full_line_bg == Some(theme.fenced_bg)),
+            spans
+                .iter()
+                .any(|s| s.full_line_bg == Some(theme.fenced_bg)),
             "fence delimiter line {fence_line} must have fenced_bg full_line_bg"
         );
     }
@@ -346,7 +352,9 @@ fn unknown_lang_tag_falls_back_silently() {
 
     let content_line = map.get(&1).expect("line 1 must have spans");
     assert!(
-        content_line.iter().any(|s| s.full_line_bg == Some(theme.fenced_bg)),
+        content_line
+            .iter()
+            .any(|s| s.full_line_bg == Some(theme.fenced_bg)),
         "unknown lang fenced block must fall back to fenced_bg on content lines"
     );
 }
@@ -455,9 +463,13 @@ fn blank_line_inside_fenced_block_keeps_fenced_bg() {
     let text = "```rust\nlet x = 1;\n\nlet y = 2;\n```\n";
     let theme = Theme::default_theme();
     let (map, _) = build_decoration_map(text, &theme, true, None);
-    let blank_line = map.get(&2).expect("blank line inside fenced block must have spans");
+    let blank_line = map
+        .get(&2)
+        .expect("blank line inside fenced block must have spans");
     assert!(
-        blank_line.iter().any(|s| s.full_line_bg == Some(theme.fenced_bg)),
+        blank_line
+            .iter()
+            .any(|s| s.full_line_bg == Some(theme.fenced_bg)),
         "blank line inside fenced block must retain fenced_bg full_line_bg"
     );
 }

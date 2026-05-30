@@ -53,9 +53,12 @@ pub(super) enum KeyOutcome {
 /// - `PlainText` → no decoration; word count only.
 fn decorate(text: &str, app: &App) -> (yame::decoration::DecorationMap, usize) {
     match &app.file_mode {
-        FileMode::Markdown => {
-            build_decoration_map(text, &app.theme, app.italic_support, app.highlight_cache.as_ref())
-        }
+        FileMode::Markdown => build_decoration_map(
+            text,
+            &app.theme,
+            app.italic_support,
+            app.highlight_cache.as_ref(),
+        ),
         FileMode::PlainHighlight(lang) => {
             let map = app
                 .highlight_cache
@@ -66,7 +69,10 @@ fn decorate(text: &str, app: &App) -> (yame::decoration::DecorationMap, usize) {
             let wc = count_words(text);
             (map, wc)
         }
-        FileMode::PlainText => (yame::decoration::DecorationMap::default(), count_words(text)),
+        FileMode::PlainText => (
+            yame::decoration::DecorationMap::default(),
+            count_words(text),
+        ),
     }
 }
 
@@ -119,7 +125,12 @@ pub(super) fn screen_to_doc(
         // visual row counts are identical.
         let line_ci = decoration_map
             .get(&li)
-            .map(|decs| decs.iter().map(|s| s.continuation_indent).max().unwrap_or(0))
+            .map(|decs| {
+                decs.iter()
+                    .map(|s| s.continuation_indent)
+                    .max()
+                    .unwrap_or(0)
+            })
             .unwrap_or(0) as usize;
         let cont_width = cw.saturating_sub(line_ci).max(1);
         let wrapped = renderer::wrap_line_indented(line, cw, cont_width);
@@ -215,7 +226,8 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
         // Guard the destructive y/n responses: Ctrl+Y must not trigger SaveAndExit
         // and Ctrl+N must not trigger Exit.  Other modifier+char combos (Ctrl+C,
         // Ctrl+X …) still pass through so they continue to act as cancel shortcuts.
-        if k.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+        if k.modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
             && matches!(k.code, KeyCode::Char('y') | KeyCode::Char('n'))
         {
             return KeyOutcome::Continue;
@@ -966,7 +978,12 @@ mod tests {
     // Helper: editor area spanning the full terminal at (0,0), width includes
     // two GUTTER columns (1 each side), so content_width = area.width - 2.
     fn editor_rect(width: u16, height: u16) -> Rect {
-        Rect { x: 0, y: 0, width, height }
+        Rect {
+            x: 0,
+            y: 0,
+            width,
+            height,
+        }
     }
 
     // Helper: build a DecorationMap with a single span on logical line `li`
@@ -974,7 +991,13 @@ mod tests {
     fn dec_map_with_ci(li: usize, ci: u8) -> DecorationMap {
         use yame::decoration::StyledSpan;
         let mut map = DecorationMap::default();
-        map.insert(li, vec![StyledSpan { continuation_indent: ci, ..StyledSpan::default() }]);
+        map.insert(
+            li,
+            vec![StyledSpan {
+                continuation_indent: ci,
+                ..StyledSpan::default()
+            }],
+        );
         map
     }
 
@@ -985,7 +1008,22 @@ mod tests {
         let lines: Vec<String> = vec!["hello".into()];
         let map = DecorationMap::default();
         // Row above area
-        assert!(screen_to_doc(0, 0, &Rect { x: 0, y: 2, width: 12, height: 5 }, 0, &lines, &map).is_none());
+        assert!(
+            screen_to_doc(
+                0,
+                0,
+                &Rect {
+                    x: 0,
+                    y: 2,
+                    width: 12,
+                    height: 5
+                },
+                0,
+                &lines,
+                &map
+            )
+            .is_none()
+        );
         // Col outside area
         assert!(screen_to_doc(0, 20, &area, 0, &lines, &map).is_none());
     }
@@ -1064,7 +1102,12 @@ mod tests {
     fn screen_to_doc_outside_area_nonzero_x_returns_none() {
         // area starts at x=3, y=1; any click with screen_col < 3 or screen_row < 1
         // (while the other coordinate is inside) must return None.
-        let area = Rect { x: 3, y: 1, width: 10, height: 5 };
+        let area = Rect {
+            x: 3,
+            y: 1,
+            width: 10,
+            height: 5,
+        };
         let lines: Vec<String> = vec!["hello".into()];
         let map = DecorationMap::default();
 
@@ -1090,7 +1133,12 @@ mod tests {
     fn screen_to_doc_click_at_area_x_edge_returns_some() {
         // area.x = 2, so the valid column range is [2, 12).  screen_col = 2 (= area.x)
         // is the first valid column.  click_col = 2 - (x=2 + GUTTER=1) saturating = 0.
-        let area = Rect { x: 2, y: 0, width: 10, height: 5 };
+        let area = Rect {
+            x: 2,
+            y: 0,
+            width: 10,
+            height: 5,
+        };
         let lines: Vec<String> = vec!["hello".into()];
         let map = DecorationMap::default();
         let result = screen_to_doc(0, 2, &area, 0, &lines, &map);
@@ -1109,7 +1157,12 @@ mod tests {
         // Lines: ["aaa", "bbb", "ccc"] — each one visual row.
         // Click at screen_row=2: correct click_vis_row = 2-1 = 1 → logical line 1 ("bbb").
         // With `+ mutation: click_vis_row = 2+1 = 3 → falls off the 3-row doc → line 2.
-        let area = Rect { x: 0, y: 1, width: 12, height: 5 };
+        let area = Rect {
+            x: 0,
+            y: 1,
+            width: 12,
+            height: 5,
+        };
         let lines: Vec<String> = vec!["aaa".into(), "bbb".into(), "ccc".into()];
         let map = DecorationMap::default();
         let result = screen_to_doc(2, 1, &area, 0, &lines, &map);
@@ -1203,7 +1256,12 @@ mod tests {
         // area.width=11. Correct: cw = 11 - (GUTTER+GUTTER) = 11-2 = 9.
         // "0123456789" (10 chars) at cw=9: hard-breaks into 2 rows.
         // Click at vis_row=1 → INSIDE line 0 (not line 1 "second").
-        let area = Rect { x: 0, y: 0, width: 11, height: 5 };
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 11,
+            height: 5,
+        };
         let lines: Vec<String> = vec!["0123456789".into(), "second".into()];
         let map = DecorationMap::default();
         let result = screen_to_doc(1, 1, &area, 0, &lines, &map);
@@ -1282,7 +1340,11 @@ mod tests {
         let mut app = make_app();
         app.status.mode = yame::status::StatusMode::ExitPrompt;
         let outcome = handle_key_event(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-        assert_eq!(outcome, KeyOutcome::Continue, "Esc in ExitPrompt must return Continue");
+        assert_eq!(
+            outcome,
+            KeyOutcome::Continue,
+            "Esc in ExitPrompt must return Continue"
+        );
         assert!(
             matches!(app.status.mode, yame::status::StatusMode::Normal),
             "Esc in ExitPrompt must restore Normal mode"
@@ -1297,8 +1359,7 @@ mod tests {
         for modifiers in [KeyModifiers::NONE, KeyModifiers::CONTROL] {
             let mut app = make_app();
             app.status.mode = yame::status::StatusMode::ExitPrompt;
-            let outcome =
-                handle_key_event(&mut app, KeyEvent::new(KeyCode::Char('c'), modifiers));
+            let outcome = handle_key_event(&mut app, KeyEvent::new(KeyCode::Char('c'), modifiers));
             assert_eq!(
                 outcome,
                 KeyOutcome::Continue,
@@ -1322,7 +1383,11 @@ mod tests {
             &mut app,
             KeyEvent::new(KeyCode::Char('y'), KeyModifiers::CONTROL),
         );
-        assert_eq!(outcome, KeyOutcome::Continue, "Ctrl+Y must not trigger SaveAndExit");
+        assert_eq!(
+            outcome,
+            KeyOutcome::Continue,
+            "Ctrl+Y must not trigger SaveAndExit"
+        );
         assert!(
             matches!(app.status.mode, yame::status::StatusMode::ExitPrompt),
             "ExitPrompt must remain open after Ctrl+Y"
@@ -1337,7 +1402,11 @@ mod tests {
             &mut app,
             KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL),
         );
-        assert_eq!(outcome, KeyOutcome::Continue, "Ctrl+N must not trigger Exit");
+        assert_eq!(
+            outcome,
+            KeyOutcome::Continue,
+            "Ctrl+N must not trigger Exit"
+        );
         assert!(
             matches!(app.status.mode, yame::status::StatusMode::ExitPrompt),
             "ExitPrompt must remain open after Ctrl+N"
@@ -1369,8 +1438,14 @@ mod tests {
     fn tab_key_aligns_to_next_stop_mid_line() {
         let mut app = make_app();
         // Type two chars to reach col 2.
-        handle_key_event(&mut app, KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
-        handle_key_event(&mut app, KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE));
+        handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
+        );
+        handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE),
+        );
         handle_key_event(&mut app, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
         assert_eq!(
             app.textarea.lines()[0],
@@ -1408,7 +1483,10 @@ mod tests {
         let mut app = make_app();
         app.status.mode = yame::status::StatusMode::ExitPrompt;
         assert_eq!(
-            handle_key_event(&mut app, KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE)),
+            handle_key_event(
+                &mut app,
+                KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE)
+            ),
             KeyOutcome::SaveAndExit,
             "plain 'y' in ExitPrompt must return SaveAndExit"
         );
@@ -1420,7 +1498,10 @@ mod tests {
         let mut app = make_app();
         app.status.mode = yame::status::StatusMode::ExitPrompt;
         assert_eq!(
-            handle_key_event(&mut app, KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE)),
+            handle_key_event(
+                &mut app,
+                KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE)
+            ),
             KeyOutcome::Exit,
             "plain 'n' in ExitPrompt must return Exit"
         );
@@ -1437,7 +1518,10 @@ mod tests {
         let mut app = make_app();
         app.status.mode = yame::status::StatusMode::ExitPrompt;
         assert_eq!(
-            handle_key_event(&mut app, KeyEvent::new(KeyCode::Char('y'), KeyModifiers::ALT)),
+            handle_key_event(
+                &mut app,
+                KeyEvent::new(KeyCode::Char('y'), KeyModifiers::ALT)
+            ),
             KeyOutcome::Continue,
             "Alt+Y in ExitPrompt must be suppressed by the modifier guard"
         );
@@ -1450,7 +1534,10 @@ mod tests {
     fn ctrl_s_returns_save() {
         let mut app = make_app();
         assert_eq!(
-            handle_key_event(&mut app, KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)),
+            handle_key_event(
+                &mut app,
+                KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)
+            ),
             KeyOutcome::Save,
             "Ctrl+S must return Save"
         );
@@ -1462,7 +1549,10 @@ mod tests {
         let mut app = make_app();
         // is_dirty=false (default make_app) → handle_exit returns true → Exit.
         assert_eq!(
-            handle_key_event(&mut app, KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL)),
+            handle_key_event(
+                &mut app,
+                KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL)
+            ),
             KeyOutcome::Exit,
             "Ctrl+X on a clean file must return Exit"
         );
@@ -1485,10 +1575,7 @@ mod tests {
     fn shift_down_moves_by_visual_row() {
         let mut app = nav_app(vec!["abcde fghij"], 8);
         app.textarea.move_cursor(CursorMove::Jump(0, 0));
-        handle_key_event(
-            &mut app,
-            KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT),
-        );
+        handle_key_event(&mut app, KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT));
         assert_eq!(
             app.textarea.cursor(),
             (0, 6),
@@ -1504,10 +1591,7 @@ mod tests {
     fn shift_up_moves_by_visual_row() {
         let mut app = nav_app(vec!["abcde fghij"], 8);
         app.textarea.move_cursor(CursorMove::Jump(0, 6));
-        handle_key_event(
-            &mut app,
-            KeyEvent::new(KeyCode::Up, KeyModifiers::SHIFT),
-        );
+        handle_key_event(&mut app, KeyEvent::new(KeyCode::Up, KeyModifiers::SHIFT));
         assert_eq!(
             app.textarea.cursor(),
             (0, 0),
