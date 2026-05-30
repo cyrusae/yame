@@ -102,6 +102,7 @@ mod tests {
             file_mode: crate::app::FileMode::Markdown,
             show_line_numbers: false,
             search: None,
+            typewriter_mode: false,
         }
     }
 

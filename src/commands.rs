@@ -118,6 +118,19 @@ pub(super) fn clamp_scroll(
     }
 }
 
+/// Centre the viewport on the cursor line for typewriter mode.
+///
+/// Sets `scroll_top` so the cursor logical line sits at `viewport_height / 2`.
+/// Uses logical-line counting (not visual rows) — fast, allocation-free, and
+/// imperceptibly off for prose where wrapped lines are uncommon.  Called
+/// instead of `clamp_scroll` when `app.typewriter_mode` is active and
+/// `app.free_scroll` is false.
+pub(super) fn center_scroll(app: &mut App, editor_area: Rect) {
+    let (cursor_row, _) = app.textarea.cursor();
+    let half = (editor_area.height as usize) / 2;
+    app.scroll_top = cursor_row.saturating_sub(half);
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -162,6 +175,7 @@ mod tests {
             file_mode: FileMode::Markdown,
             show_line_numbers: false,
             search: None,
+            typewriter_mode: false,
         }
     }
 

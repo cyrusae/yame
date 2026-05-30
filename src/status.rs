@@ -11,6 +11,9 @@ pub enum StatusMode {
     },
     DismissibleMessage(String),
     ExitPrompt,
+    /// Active go-to-line prompt.  `input` accumulates the digits the user types;
+    /// the prompt is confirmed with Enter or cancelled with Esc.
+    GoToLine { input: String },
 }
 
 /// All mutable state for the status bar / hint line.
@@ -34,6 +37,40 @@ impl StatusLine {
     pub fn dismiss(&mut self) {
         if matches!(self.mode, StatusMode::DismissibleMessage(_)) {
             self.mode = StatusMode::Normal;
+        }
+    }
+
+    /// Enter go-to-line prompt mode with an empty input buffer.
+    pub fn start_goto_line(&mut self) {
+        self.mode = StatusMode::GoToLine {
+            input: String::new(),
+        };
+    }
+
+    /// Append a digit character to the go-to-line input buffer.
+    /// Only digits are accepted; call sites are responsible for filtering.
+    /// The buffer is capped at 7 characters (covers up to line 9,999,999).
+    pub fn goto_push(&mut self, c: char) {
+        if let StatusMode::GoToLine { input } = &mut self.mode
+            && input.len() < 7
+        {
+            input.push(c);
+        }
+    }
+
+    /// Remove the last character from the go-to-line input buffer.
+    pub fn goto_pop(&mut self) {
+        if let StatusMode::GoToLine { input } = &mut self.mode {
+            input.pop();
+        }
+    }
+
+    /// Return the current go-to-line input, if we are in that mode.
+    pub fn goto_input(&self) -> Option<&str> {
+        if let StatusMode::GoToLine { input } = &self.mode {
+            Some(input)
+        } else {
+            None
         }
     }
 

@@ -21,7 +21,7 @@ use yame::renderer;
 use yame::search::SearchState;
 use yame::status::StatusMode;
 
-use super::commands::{clamp_scroll, handle_exit, handle_save};
+use super::commands::{center_scroll, clamp_scroll, handle_exit, handle_save};
 
 // ---------------------------------------------------------------------------
 // Key-event outcome
@@ -404,6 +404,53 @@ pub(super) fn handle_search_key(
 }
 
 // ---------------------------------------------------------------------------
+// Go-to-line key dispatcher
+// ---------------------------------------------------------------------------
+
+/// Handle a key event while the go-to-line prompt is active.
+///
+/// Only digit characters are accepted into the input buffer; Backspace edits it;
+/// Enter commits the jump; Esc cancels without moving the cursor.
+pub(super) fn handle_goto_line_key(
+    app: &mut App,
+    k: crossterm::event::KeyEvent,
+) -> KeyOutcome {
+    match (k.modifiers, k.code) {
+        (KeyModifiers::NONE, KeyCode::Esc) => {
+            app.status.mode = StatusMode::Normal;
+        }
+
+        (KeyModifiers::NONE, KeyCode::Enter) => {
+            // Parse the buffered digits and jump, then always close the prompt.
+            // Scroll clamping is handled automatically on the next frame because
+            // `free_scroll` is always false after a key press.
+            if let Some(raw) = app.status.goto_input()
+                && let Ok(n) = raw.parse::<usize>()
+                && n >= 1
+            {
+                let max_line = app.textarea.lines().len().saturating_sub(1);
+                let target = (n - 1).min(max_line);
+                app.textarea
+                    .move_cursor(CursorMove::Jump(target as u16, 0));
+            }
+            app.status.mode = StatusMode::Normal;
+        }
+
+        (KeyModifiers::NONE, KeyCode::Backspace) => {
+            app.status.goto_pop();
+        }
+
+        // Accept digits only; silently ignore everything else.
+        (KeyModifiers::NONE, KeyCode::Char(c)) if c.is_ascii_digit() => {
+            app.status.goto_push(c);
+        }
+
+        _ => {}
+    }
+    KeyOutcome::Continue
+}
+
+// ---------------------------------------------------------------------------
 // Key-event dispatcher (pure — no file I/O, no terminal I/O)
 // ---------------------------------------------------------------------------
 
@@ -442,6 +489,11 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
             }
             _ => KeyOutcome::Continue,
         };
+    }
+
+    // ── Go-to-line mode — intercepts all keys while the prompt is open ────
+    if matches!(app.status.mode, StatusMode::GoToLine { .. }) {
+        return handle_goto_line_key(app, k);
     }
 
     // ── Search mode — intercepts all keys while the bar is open ────────────
@@ -515,6 +567,17 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
             app.force_redecorate = true;
             app.last_keystroke = Some(std::time::Instant::now());
             app.recompute_dirty();
+            KeyOutcome::Continue
+        }
+
+        (KeyModifiers::CONTROL, KeyCode::Char('g')) => {
+            app.status.start_goto_line();
+            KeyOutcome::Continue
+        }
+
+        // Ctrl+T: toggle typewriter mode (keep cursor line centred in viewport).
+        (KeyModifiers::CONTROL, KeyCode::Char('t')) => {
+            app.typewriter_mode = !app.typewriter_mode;
             KeyOutcome::Continue
         }
 
@@ -821,8 +884,15 @@ where
             // Clamp is skipped while the user is free-scrolling (mouse wheel or
             // Ctrl+Up/Down).  free_scroll persists until a key press, mouse click,
             // drag, or terminal resize clears it (scroll and hover events do not).
+            // In typewriter mode the cursor line is kept vertically centred instead
+            // of merely kept in-viewport.  Free-scroll still works; the view
+            // re-centres on the next non-scroll event.
             if !app.free_scroll {
-                clamp_scroll(app, pre_editor_area, BOTTOM_PADDING);
+                if app.typewriter_mode {
+                    center_scroll(app, pre_editor_area);
+                } else {
+                    clamp_scroll(app, pre_editor_area, BOTTOM_PADDING);
+                }
             }
         }
 
@@ -1056,6 +1126,7 @@ mod tests {
             file_mode: FileMode::Markdown,
             show_line_numbers: false,
             search: None,
+            typewriter_mode: false,
         }
     }
 

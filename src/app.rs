@@ -181,6 +181,11 @@ pub struct App {
     pub file_mode: FileMode,
     /// Active search/replace session, or `None` when the search bar is closed.
     pub search: Option<SearchState>,
+    /// When true, the viewport is kept centred on the cursor line after every
+    /// non-free-scroll keypress (typewriter mode).  Toggled by Ctrl+T.
+    /// Free-scrolling (mouse wheel, Ctrl+Up/Down) still works; the view
+    /// re-centres on the next cursor-moving keypress.
+    pub typewriter_mode: bool,
 }
 
 impl App {
@@ -253,6 +258,7 @@ impl App {
             file_mode,
             show_line_numbers,
             search: None,
+            typewriter_mode: false,
         })
     }
 
@@ -438,6 +444,7 @@ mod tests {
             file_mode: FileMode::Markdown,
             show_line_numbers: false,
             search: None,
+            typewriter_mode: false,
         }
     }
 

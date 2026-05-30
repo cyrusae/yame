@@ -80,6 +80,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Italic default color now matches text color (not accent blend) (#60)
 
 ### Changed
+- Typewriter mode: toggle to keep current line vertically centred in viewport (#141)
+- Go-to-line: jump to line number via shortcut (#143)
 - Add --version / -V CLI flag (#140)
 - refactor: move mutants crate to dev-dependencies via cfg_attr feature flag (#147)
 - refactor: split main.rs — extract event loop, parse_args, shell helpers into own modules (#149)

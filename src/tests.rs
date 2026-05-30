@@ -14,7 +14,7 @@ use yame::decoration::DecorationMap;
 use yame::status::{StatusLine, StatusMode};
 
 use super::commands::{clamp_scroll, handle_exit};
-use super::input::handle_pair_wrap;
+use super::input::{handle_goto_line_key, handle_pair_wrap};
 use yame::app::get_selection_text;
 
 fn make_app() -> App {
@@ -43,6 +43,7 @@ fn make_app() -> App {
         file_mode: yame::app::FileMode::Markdown,
         show_line_numbers: false,
         search: None,
+        typewriter_mode: false,
     }
 }
 
@@ -526,6 +527,179 @@ fn version_string_matches_cargo_pkg_version() {
     let v = super::cli::version_string();
     let expected = format!("yame {}", env!("CARGO_PKG_VERSION"));
     assert_eq!(v, expected, "version_string() must equal 'yame {{CARGO_PKG_VERSION}}'");
+}
+
+// ── typewriter mode tests ─────────────────────────────────────────────────
+
+#[test]
+fn typewriter_mode_off_by_default() {
+    let app = make_app();
+    assert!(!app.typewriter_mode, "typewriter_mode must default to false");
+}
+
+#[test]
+fn ctrl_t_toggles_typewriter_mode_on() {
+    use super::input::{KeyOutcome, handle_key_event};
+    let mut app = make_app();
+    let outcome = handle_key_event(&mut app, ctrl(KeyCode::Char('t')));
+    assert_eq!(outcome, KeyOutcome::Continue);
+    assert!(app.typewriter_mode, "Ctrl+T must enable typewriter mode");
+}
+
+#[test]
+fn ctrl_t_toggles_typewriter_mode_off() {
+    use super::input::handle_key_event;
+    let mut app = make_app();
+    app.typewriter_mode = true;
+    handle_key_event(&mut app, ctrl(KeyCode::Char('t')));
+    assert!(!app.typewriter_mode, "second Ctrl+T must disable typewriter mode");
+}
+
+#[test]
+fn center_scroll_places_cursor_at_midpoint() {
+    use super::commands::center_scroll;
+    let mut app = make_app_with_lines(&["a"; 30]);
+    app.textarea
+        .move_cursor(tui_textarea::CursorMove::Jump(20, 0));
+    center_scroll(&mut app, make_editor_area(10));
+    // cursor_row=20, half=5 → scroll_top should be 15
+    assert_eq!(app.scroll_top, 15, "scroll_top must be cursor_row - viewport_height/2");
+}
+
+#[test]
+fn center_scroll_clamps_to_zero_near_top() {
+    use super::commands::center_scroll;
+    let mut app = make_app_with_lines(&["a"; 30]);
+    app.textarea
+        .move_cursor(tui_textarea::CursorMove::Jump(2, 0));
+    center_scroll(&mut app, make_editor_area(10));
+    // cursor_row=2, half=5 → saturating_sub → 0
+    assert_eq!(app.scroll_top, 0, "scroll_top must not underflow past 0");
+}
+
+#[test]
+fn center_scroll_exact_midpoint_cursor() {
+    use super::commands::center_scroll;
+    let mut app = make_app_with_lines(&["a"; 20]);
+    app.textarea
+        .move_cursor(tui_textarea::CursorMove::Jump(5, 0));
+    center_scroll(&mut app, make_editor_area(10));
+    // cursor_row=5, half=5 → scroll_top=0
+    assert_eq!(app.scroll_top, 0);
+}
+
+// ── go-to-line tests ──────────────────────────────────────────────────────
+
+fn key(code: KeyCode) -> crossterm::event::KeyEvent {
+    crossterm::event::KeyEvent::new(code, KeyModifiers::NONE)
+}
+
+fn ctrl(code: KeyCode) -> crossterm::event::KeyEvent {
+    crossterm::event::KeyEvent::new(code, KeyModifiers::CONTROL)
+}
+
+#[test]
+fn goto_line_ctrl_g_enters_mode() {
+    use super::input::{KeyOutcome, handle_key_event};
+    let mut app = make_app();
+    let outcome = handle_key_event(&mut app, ctrl(KeyCode::Char('g')));
+    assert_eq!(outcome, KeyOutcome::Continue);
+    assert!(
+        matches!(app.status.mode, StatusMode::GoToLine { .. }),
+        "Ctrl+G must enter GoToLine mode"
+    );
+}
+
+#[test]
+fn goto_line_digits_appended_to_buffer() {
+    let mut app = make_app();
+    app.status.start_goto_line();
+    handle_goto_line_key(&mut app, key(KeyCode::Char('4')));
+    handle_goto_line_key(&mut app, key(KeyCode::Char('2')));
+    assert_eq!(app.status.goto_input(), Some("42"));
+}
+
+#[test]
+fn goto_line_non_digits_ignored() {
+    let mut app = make_app();
+    app.status.start_goto_line();
+    handle_goto_line_key(&mut app, key(KeyCode::Char('a')));
+    handle_goto_line_key(&mut app, key(KeyCode::Char('!')));
+    assert_eq!(app.status.goto_input(), Some(""), "letters and symbols must be ignored");
+}
+
+#[test]
+fn goto_line_backspace_removes_last_digit() {
+    let mut app = make_app();
+    app.status.start_goto_line();
+    handle_goto_line_key(&mut app, key(KeyCode::Char('1')));
+    handle_goto_line_key(&mut app, key(KeyCode::Char('2')));
+    handle_goto_line_key(&mut app, key(KeyCode::Backspace));
+    assert_eq!(app.status.goto_input(), Some("1"));
+}
+
+#[test]
+fn goto_line_esc_cancels_without_jump() {
+    let mut app = make_app();
+    app.status.start_goto_line();
+    handle_goto_line_key(&mut app, key(KeyCode::Char('1')));
+    let (row_before, _) = app.textarea.cursor();
+    handle_goto_line_key(&mut app, key(KeyCode::Esc));
+    let (row_after, _) = app.textarea.cursor();
+    assert!(
+        matches!(app.status.mode, StatusMode::Normal),
+        "Esc must return to Normal mode"
+    );
+    assert_eq!(row_before, row_after, "Esc must not move the cursor");
+}
+
+#[test]
+fn goto_line_enter_with_empty_input_is_noop() {
+    let mut app = make_app();
+    app.status.start_goto_line();
+    let (row_before, _) = app.textarea.cursor();
+    handle_goto_line_key(&mut app, key(KeyCode::Enter));
+    let (row_after, _) = app.textarea.cursor();
+    assert!(matches!(app.status.mode, StatusMode::Normal));
+    assert_eq!(row_before, row_after, "empty input must not move the cursor");
+}
+
+#[test]
+fn goto_line_enter_jumps_to_correct_line() {
+    let mut app = make_app_with_lines(&["line 1", "line 2", "line 3", "line 4", "line 5"]);
+    app.status.start_goto_line();
+    handle_goto_line_key(&mut app, key(KeyCode::Char('3')));
+    handle_goto_line_key(&mut app, key(KeyCode::Enter));
+    let (row, col) = app.textarea.cursor();
+    assert_eq!(row, 2, "line 3 (1-indexed) == row 2 (0-indexed)");
+    assert_eq!(col, 0, "cursor must land at column 0");
+    assert!(matches!(app.status.mode, StatusMode::Normal));
+}
+
+#[test]
+fn goto_line_enter_clamps_to_last_line() {
+    let mut app = make_app_with_lines(&["only", "two"]);
+    app.status.start_goto_line();
+    for c in "9999".chars() {
+        handle_goto_line_key(&mut app, key(KeyCode::Char(c)));
+    }
+    handle_goto_line_key(&mut app, key(KeyCode::Enter));
+    let (row, _) = app.textarea.cursor();
+    assert_eq!(row, 1, "line number beyond doc length must clamp to last line");
+}
+
+#[test]
+fn goto_line_input_capped_at_seven_digits() {
+    let mut app = make_app();
+    app.status.start_goto_line();
+    for c in "12345678".chars() {
+        handle_goto_line_key(&mut app, key(KeyCode::Char(c)));
+    }
+    assert_eq!(
+        app.status.goto_input().map(|s| s.len()),
+        Some(7),
+        "input buffer must be capped at 7 digits"
+    );
 }
 
 // ── handle_pair_wrap: one test per pair character ────────────────────────

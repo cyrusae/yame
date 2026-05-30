@@ -77,6 +77,8 @@ pub fn render_status_bar(f: &mut Frame, area: Rect, app: &App) {
         }
 
         StatusMode::Normal => build_normal_status_bar(app),
+
+        StatusMode::GoToLine { input } => build_goto_line_bar(app, input),
     };
 
     let para = Paragraph::new(content).style(Style::default().bg(canvas_bg));
@@ -140,7 +142,32 @@ pub(super) fn build_normal_status_bar(app: &App) -> Line<'static> {
     Line::from(vec![pill1, cap1, hints, cap2])
 }
 
-/// Render the second-to-last row: cursor position and word count.
+/// Build the status bar for the go-to-line prompt.
+///
+/// Shows `" Go to line: {input}_ "` centred on `hints_bg` so the prompt is
+/// visually distinct from the normal hints bar but not as alarming as the exit
+/// prompt.  The trailing `_` acts as a simple text cursor indicator.
+pub(super) fn build_goto_line_bar(app: &App, input: &str) -> Line<'static> {
+    let theme = &app.theme;
+    let hints_bg = theme.ui_bg;
+    let accent_fg = theme.accent;
+
+    let content = format!(" Go to line: {input}_ ");
+    Line::from(vec![Span::styled(
+        content,
+        Style::default()
+            .fg(accent_fg)
+            .bg(hints_bg)
+            .add_modifier(Modifier::BOLD),
+    )])
+}
+
+/// Nerd Font typewriter icon (nf-md-typewriter, U+F04C3).  Requires a patched font.
+const TYPEWRITER_GLYPH: &str = "󰓃";
+/// ASCII fallback for the typewriter mode indicator.
+const TYPEWRITER_ASCII: &str = "[T]";
+
+/// Render the second-to-last row: cursor position, word count, and mode indicators.
 #[cfg_attr(feature = "mutants-skip", mutants::skip)] // Writes into ratatui Buffer — void, not testable via return value.
 pub fn render_info_line(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
@@ -166,4 +193,27 @@ pub fn render_info_line(f: &mut Frame, area: Rect, app: &App) {
         Paragraph::new(text).style(Style::default().fg(theme.muted).bg(theme.bg)),
         text_area,
     );
+
+    // Typewriter mode indicator — right-aligned, accent coloured.
+    if app.typewriter_mode {
+        let icon = if app.powerline_glyphs {
+            TYPEWRITER_GLYPH
+        } else {
+            TYPEWRITER_ASCII
+        };
+        let indicator = format!(" {icon} ");
+        let iw = indicator.chars().count() as u16;
+        if iw <= area.width {
+            let indicator_area = Rect {
+                x: area.x + area.width - iw,
+                width: iw,
+                ..area
+            };
+            f.render_widget(
+                Paragraph::new(indicator)
+                    .style(Style::default().fg(theme.accent).bg(theme.bg)),
+                indicator_area,
+            );
+        }
+    }
 }
