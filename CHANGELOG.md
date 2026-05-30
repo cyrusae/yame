@@ -71,6 +71,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Italic default color now matches text color (not accent blend) (#60)
 
 ### Changed
+- close completed mutant issues (#150)
+- fix remaining mutant survivors post-session-110 (#149)
+- mutants: skip timeout-only functions (screen_to_doc, apply_selection_overlay, spans helpers) (#148)
+- mutants: kill spans.rs add_byte_range_span style + renderer/utils pure-fn mutants (#147)
+- mutants: kill decorate() FileMode dispatch missed mutants (input.rs:55) (#146)
+- mutants: kill handle_key_event missed + timeout key arms via unit tests (input.rs) (#145)
+- mutants: kill clamp_scroll arithmetic missed mutants (commands.rs) (#144)
 - kill surviving mutants: screen_to_doc, decoration, highlighting, renderer (#138)
 - Integration test planning: catalogue scenarios from FEEDBACK-1 (#89)
 - perf: lazy-init SyntaxSet/ThemeSet in HighlightCache (defer cost to first code block) (#136)

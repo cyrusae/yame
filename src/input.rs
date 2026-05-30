@@ -1346,6 +1346,12 @@ mod tests {
 
     // Tab key must insert spaces to the next tab stop, not a raw '\t'.
     // With app.tab_width=4 and cursor at col 0, pressing Tab should add 4 spaces.
+    //
+    // NOTE: these two tests use tab_width=4, which matches tui-textarea's default
+    // tab_len (also 4).  They verify correct behaviour but cannot kill the
+    // `delete match arm Tab` mutant because tui-textarea's built-in Tab handler
+    // happens to produce identical output for tab_width==4.  The test below
+    // (`tab_key_uses_app_tab_width_not_tui_textarea_default`) covers that case.
     #[test]
     fn tab_key_inserts_spaces_to_next_stop() {
         let mut app = make_app();
@@ -1370,6 +1376,27 @@ mod tests {
             app.textarea.lines()[0],
             "ab  ",
             "Tab at col 2 with tab_width=4 must insert 2 spaces (align to col 4)"
+        );
+    }
+
+    // Kills input.rs:308:9 `delete match arm (KeyModifiers::NONE, KeyCode::Tab)`.
+    //
+    // The existing two Tab tests use app.tab_width=4, which happens to equal
+    // tui-textarea's own default tab_len (4).  When the arm is deleted the key
+    // falls through to `_ => { textarea.input(k) }`, and tui-textarea's built-in
+    // handler inserts the same number of spaces → tests pass → mutant survives.
+    //
+    // Setting tab_width=2 breaks the equivalence: our arm inserts 2 spaces, but
+    // tui-textarea (tab_len still 4) inserts 4 → assertion on 2 fails → mutant caught.
+    #[test]
+    fn tab_key_uses_app_tab_width_not_tui_textarea_default() {
+        let mut app = make_app();
+        app.tab_width = 2; // differs from tui-textarea's default tab_len of 4
+        handle_key_event(&mut app, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(
+            app.textarea.lines()[0],
+            "  ",
+            "Tab at col 0 with tab_width=2 must insert 2 spaces (not 4, which tui-textarea would produce)"
         );
     }
 
