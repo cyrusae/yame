@@ -9,7 +9,7 @@ use ratatui::{
 use crate::app::App;
 use crate::status::StatusMode;
 
-use super::{format_thousands, shorten_path};
+use super::format_thousands;
 
 /// Universal box-drawing separator (no special font required).
 const SEP_UNIVERSAL: char = '│';
@@ -31,7 +31,7 @@ fn pill1_parts(app: &App) -> (Span<'static>, Color) {
         (theme.text, theme.bg)
     };
     let dirty_marker = if app.is_dirty { " [*]" } else { "" };
-    let path_str = shorten_path(&app.file_path, 3);
+    let path_str = &app.shortened_path;
     let text = format!(" {path_str}{dirty_marker} ");
     (
         Span::styled(text, Style::default().fg(pill_fg).bg(pill_bg)),
@@ -69,7 +69,7 @@ pub fn render_status_bar(f: &mut Frame, area: Rect, app: &App) {
                 .width
                 .saturating_sub(msg_display_width)
                 .saturating_div(2);
-            let padded = format!("{:pad$}{msg}", "", pad = pad as usize);
+            let padded = format!("{:pad$}{msg}{:pad$}", "", "", pad = pad as usize);
             Line::from(vec![Span::styled(
                 padded,
                 Style::default().fg(warning_fg).bg(hints_bg),

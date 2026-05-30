@@ -182,6 +182,60 @@ pub fn wrap_char_ranges(line: &str, wrapped: &[&str]) -> Vec<(usize, usize)> {
     result
 }
 
+/// Count the display columns occupied by the first `n_chars` characters of `s`.
+///
+/// Wide characters (e.g. CJK, emoji) count as 2 columns; narrow characters
+/// count as 1.  If `n_chars` exceeds the string's character count the full
+/// display width is returned.
+pub fn display_cols_for_chars(s: &str, n_chars: usize) -> usize {
+    use unicode_width::UnicodeWidthChar;
+    s.chars()
+        .take(n_chars)
+        .map(|c| UnicodeWidthChar::width(c).unwrap_or(1))
+        .sum()
+}
+
+/// Return the number of characters from the start of `s` that fit within
+/// `target_dcols` display columns.
+///
+/// Stops before including a wide character that would push the total past
+/// `target_dcols` (i.e. rounds down).  Returns `s.chars().count()` if the
+/// string is exhausted before the budget is reached.
+pub fn chars_for_display_cols(s: &str, target_dcols: usize) -> usize {
+    use unicode_width::UnicodeWidthChar;
+    let mut cols = 0usize;
+    let mut n = 0usize;
+    for c in s.chars() {
+        let cw = UnicodeWidthChar::width(c).unwrap_or(1);
+        if cols + cw > target_dcols {
+            break;
+        }
+        cols += cw;
+        n += 1;
+    }
+    n
+}
+
+/// Compute the display-column offset of `cursor_col` within its visual subrow,
+/// using the same wrap parameters as the renderer.
+///
+/// Equivalent to `cursor_col - subrow_char_start` for ASCII text but correctly
+/// accounts for wide characters (CJK, emoji) whose display width is 2 columns.
+pub fn cursor_vcol(line: &str, cursor_col: usize, first_width: usize, cont_width: usize) -> usize {
+    let wrapped = wrap_line_indented(line, first_width.max(1), cont_width.max(1));
+    let char_ranges = wrap_char_ranges(line, &wrapped);
+    let last = char_ranges.len().saturating_sub(1);
+    for (i, (row_str, &(char_start, char_len))) in
+        wrapped.iter().zip(char_ranges.iter()).enumerate()
+    {
+        if cursor_col < char_start + char_len || i == last {
+            let chars_into_row = cursor_col.saturating_sub(char_start);
+            return display_cols_for_chars(row_str, chars_into_row);
+        }
+    }
+    0
+}
+
 /// Find which visual subrow the cursor sits on within a soft-wrapped logical
 /// line.
 ///
@@ -210,8 +264,9 @@ pub fn cursor_subrow_info(
 /// Find the logical char column for a given `(target_subrow, target_vcol)`
 /// within a soft-wrapped logical line.
 ///
-/// `target_vcol` is the visual-column offset within the subrow (i.e. the
-/// sticky column from a vertical-navigation gesture).  Clamps to the last
+/// `target_vcol` is the **display-column** offset within the subrow (i.e. the
+/// sticky column from a vertical-navigation gesture, stored in display columns
+/// so that wide characters are accounted for correctly).  Clamps to the last
 /// character of the subrow so the cursor never overshoots a short row.
 pub fn char_col_at_visual(
     line: &str,
@@ -223,11 +278,11 @@ pub fn char_col_at_visual(
     let wrapped = wrap_line_indented(line, first_width.max(1), cont_width.max(1));
     let char_ranges = wrap_char_ranges(line, &wrapped);
     let last_idx = char_ranges.len().saturating_sub(1);
-    let (char_start, char_len) = char_ranges
-        .get(target_subrow)
-        .copied()
-        .unwrap_or_else(|| char_ranges.get(last_idx).copied().unwrap_or((0, 0)));
-    (char_start + target_vcol).min(char_start + char_len)
+    let idx = target_subrow.min(last_idx);
+    let row_str = wrapped.get(idx).copied().unwrap_or("");
+    let (char_start, char_len) = char_ranges.get(idx).copied().unwrap_or((0, 0));
+    let chars_at_vcol = chars_for_display_cols(row_str, target_vcol);
+    (char_start + chars_at_vcol).min(char_start + char_len)
 }
 
 /// Blank columns on each side of the text content within the editor column.
@@ -346,7 +401,8 @@ impl Widget for MarkdownView<'_> {
                     let in_range =
                         cursor_log_col >= char_start && (cursor_log_col < char_end || is_last_wrap);
                     if in_range {
-                        let col_in_row = (cursor_log_col.saturating_sub(char_start))
+                        let chars_into_row = cursor_log_col.saturating_sub(char_start);
+                        let col_in_row = display_cols_for_chars(row_str, chars_into_row)
                             .min(content_width.saturating_sub(1));
                         cursor_buf_pos = Some((
                             area.x + GUTTER + continuation_indent + col_in_row as u16,
@@ -355,7 +411,13 @@ impl Widget for MarkdownView<'_> {
                     }
                 }
 
-                let line_bg = row_spans.iter().find_map(|s| s.full_line_bg).unwrap_or(bg);
+                // full_line_bg is a whole-line property: look it up from the
+                // full logical-line decorations, not from row_spans (which are
+                // filtered to this visual subrow's char range and drop spans on
+                // blank lines where char_len == 0).
+                let line_bg = line_decs
+                    .and_then(|decs| decs.iter().find_map(|s| s.full_line_bg))
+                    .unwrap_or(bg);
                 let border_color = row_spans.iter().find_map(|s| s.border_bottom);
                 let is_rule = row_spans.iter().any(|s| s.is_rule);
                 let is_last_wrap = wrap_idx + 1 == wrapped.len();
@@ -455,6 +517,13 @@ impl Widget for MarkdownView<'_> {
     }
 }
 
+// Writes terminal cell colours into a ratatui Buffer — no return value to assert.
+// The `< → >` mutant at line 613 is also not a live defect: the existing comment
+// at that line explains that `<→<=` is untestable for an analogous reason, and
+// `<→>` would simply paint no overlay (observable only through rendered pixels,
+// not through a pure-Rust unit assertion).  Suite timeouts caused by parallel
+// slow integration tests prevent cargo-mutants from confirming the skip empirically.
+#[mutants::skip]
 fn apply_selection_overlay(
     area: Rect,
     buf: &mut Buffer,
@@ -500,7 +569,7 @@ fn apply_selection_overlay(
         );
 
         let char_ranges = wrap_char_ranges(line, &wrapped);
-        for (wrap_idx, (_row_str, &(char_start, char_len))) in
+        for (wrap_idx, (row_str, &(char_start, char_len))) in
             wrapped.iter().zip(char_ranges.iter()).enumerate()
         {
             if visual_row >= visible {
@@ -545,9 +614,10 @@ fn apply_selection_overlay(
                 // so the for loop produces an empty range regardless.
                 if row_sel_start < row_sel_end {
                     let y = area.y + visual_row as u16;
-                    let x_start =
-                        area.x + GUTTER + continuation_indent + (row_sel_start - char_start) as u16;
-                    let x_end = (area.x + GUTTER + (row_sel_end - char_start) as u16)
+                    let start_dcols = display_cols_for_chars(row_str, row_sel_start - char_start);
+                    let end_dcols = display_cols_for_chars(row_str, row_sel_end - char_start);
+                    let x_start = area.x + GUTTER + continuation_indent + start_dcols as u16;
+                    let x_end = (area.x + GUTTER + continuation_indent + end_dcols as u16)
                         .min(area.x + GUTTER + content_width as u16);
                     for x in x_start..x_end {
                         buf[(x, y)].set_fg(sel_fg).set_bg(sel_bg);
@@ -600,9 +670,152 @@ mod tests {
             free_scroll: false,
             sticky_col: None,
             content_width: 0,
-            clipboard: None,
-            initial_file_empty: false,
+            clipboard: crate::app::ClipboardState::Uninitialized,
+            shortened_path: "notes/foo.md".to_string(),
+            tab_width: 4,
+            highlight_cache: None,
+            file_mode: crate::app::FileMode::Markdown,
         }
+    }
+
+    // --- display_cols_for_chars ---
+
+    #[test]
+    fn display_cols_ascii_equals_char_count() {
+        assert_eq!(display_cols_for_chars("hello", 3), 3);
+    }
+
+    #[test]
+    fn display_cols_cjk_each_two_columns() {
+        // "日本語" = 3 chars × 2 cols each = 6 display cols total.
+        assert_eq!(display_cols_for_chars("日本語", 3), 6);
+    }
+
+    #[test]
+    fn display_cols_cjk_partial() {
+        // First 2 chars of "日本語" = 4 display cols.
+        assert_eq!(display_cols_for_chars("日本語", 2), 4);
+    }
+
+    #[test]
+    fn display_cols_mixed_ascii_and_cjk() {
+        // "a日b" = 1 + 2 + 1 = 4 display cols.
+        assert_eq!(display_cols_for_chars("a日b", 3), 4);
+    }
+
+    #[test]
+    fn display_cols_zero_chars_is_zero() {
+        assert_eq!(display_cols_for_chars("hello", 0), 0);
+    }
+
+    #[test]
+    fn display_cols_n_exceeds_string_returns_full_width() {
+        // Asking for 99 chars of a 3-char string returns the full display width.
+        assert_eq!(display_cols_for_chars("abc", 99), 3);
+    }
+
+    // --- chars_for_display_cols ---
+
+    #[test]
+    fn chars_for_display_ascii_equals_display_cols() {
+        assert_eq!(chars_for_display_cols("hello", 3), 3);
+    }
+
+    #[test]
+    fn chars_for_display_cjk_two_cols_per_char() {
+        // 4 display cols into "日本語" = 2 chars (日本).
+        assert_eq!(chars_for_display_cols("日本語", 4), 2);
+    }
+
+    #[test]
+    fn chars_for_display_cjk_odd_budget_rounds_down() {
+        // 3 display cols into "日本語": 日 takes 2, next char (本) would push to 4 > 3 → 1 char.
+        assert_eq!(chars_for_display_cols("日本語", 3), 1);
+    }
+
+    #[test]
+    fn chars_for_display_zero_budget_returns_zero() {
+        assert_eq!(chars_for_display_cols("hello", 0), 0);
+    }
+
+    #[test]
+    fn chars_for_display_budget_exceeds_string() {
+        // Budget larger than string width → returns full char count.
+        assert_eq!(chars_for_display_cols("ab", 99), 2);
+    }
+
+    // --- cursor_vcol ---
+
+    #[test]
+    fn cursor_vcol_ascii_equals_char_offset() {
+        // ASCII: display cols == char count.
+        // "abcde fghij" at width 8 → ["abcde", "fghij"]. Cursor at char 7 (index 1 into "fghij").
+        assert_eq!(cursor_vcol("abcde fghij", 7, 8, 8), 1);
+    }
+
+    #[test]
+    fn cursor_vcol_cjk_counts_display_cols() {
+        // "日本語" fits on one row at width=10. Cursor at char 1 (本) → 2 display cols (日 = 2).
+        assert_eq!(cursor_vcol("日本語", 1, 10, 10), 2);
+    }
+
+    #[test]
+    fn cursor_vcol_cjk_start_of_line_is_zero() {
+        assert_eq!(cursor_vcol("日本語", 0, 10, 10), 0);
+    }
+
+    // Cursor at the very end of a single-segment line (col == char_count).
+    // The last-segment fallback (`i == last`) must fire via `||`, not `&&`.
+    //
+    // Kills `|| → &&` (col 47): with `&&`, entering the if requires BOTH
+    // `cursor_col < char_start + char_len` AND `i == last`.  At the end of a
+    // single-segment line cursor_col = char_len and `cursor_col < char_len` is
+    // false, so the `&&` mutant never enters the branch → returns 0 instead of 3.
+    #[test]
+    fn cursor_vcol_cursor_at_end_of_single_segment() {
+        // "abc" at width=10 → one segment [(0,3)]. Cursor at col 3 (past last char).
+        assert_eq!(cursor_vcol("abc", 3, 10, 10), 3);
+    }
+
+    // Cursor in the first segment of a two-segment wrapped line.
+    //
+    // Kills `< → ==` (col 23): with `==`, cursor_col=2 never equals 0+5=5 on
+    // the first segment, so we skip it and land on the last-segment fallback
+    // with char_start=6 → chars_into_row = 2-6 = 0 → returns 0 instead of 2.
+    //
+    // Kills `+ → *` (col 36): char_start(0) * char_len(5) = 0 → cursor_col=2
+    // passes the `<0` check on the last segment (char_start=6) → same wrong path.
+    #[test]
+    fn cursor_vcol_cursor_in_first_of_two_rows() {
+        // "abcde fghij" width 8 → ["abcde" (0-4), "fghij" (6-10)].
+        // Cursor at col 2 (inside "abcde") → vcol 2.
+        assert_eq!(cursor_vcol("abcde fghij", 2, 8, 8), 2);
+    }
+
+    // Cursor at exactly the wrap boundary (the consumed space char, col 5).
+    //
+    // Kills `< → <=` (col 23): with `<=`, 5 <= 0+5 is true on segment 0
+    // → chars_into_row = 5-0=5 → display_cols("abcde",5)=5 → returns 5.
+    // Original: 5 < 5 is false → falls through to segment 1 (char_start=6)
+    // → chars_into_row = 5-6 = 0 → returns 0 (space is at the wrap point).
+    #[test]
+    fn cursor_vcol_cursor_at_wrap_boundary() {
+        // "abcde fghij" width 8. Col 5 is the consumed space → visual col 0 on row 1.
+        assert_eq!(cursor_vcol("abcde fghij", 5, 8, 8), 0);
+    }
+
+    // --- char_col_at_visual (CJK) ---
+
+    #[test]
+    fn char_col_at_visual_cjk_display_col_to_char() {
+        // "日本語" on one subrow. vcol=2 display cols → char 1 (after 日 which takes 2 cols).
+        assert_eq!(char_col_at_visual("日本語", 0, 2, 10, 10), 1);
+    }
+
+    #[test]
+    fn char_col_at_visual_cjk_odd_vcol_rounds_down() {
+        // vcol=1 into "日本語": 日 would take 2 cols, can't fit → 0 chars → char 0.
+        assert_eq!(char_col_at_visual("日本語", 0, 1, 10, 10), 0);
     }
 
     // --- cursor_subrow_info ---
@@ -641,6 +854,36 @@ mod tests {
         assert_eq!(sub, 0);
         assert_eq!(char_start, 0);
         assert_eq!(total, 1);
+    }
+
+    // Cursor at the wrap boundary (the consumed space, col 5) must land on
+    // subrow 1, not subrow 0.
+    //
+    // Kills `< → <=` (col 23): with `<=`, cursor_col=5 satisfies 5 <= 0+5=5 on
+    // segment 0, returning (0, 0, 2) instead of (1, 6, 2).
+    #[test]
+    fn subrow_info_cursor_at_wrap_boundary_lands_on_next_subrow() {
+        // "abcde fghij" width 8: char_ranges = [(0,5),(6,5)].
+        // col 5 is the space (consumed by wrap) → first char of second subrow.
+        let (sub, char_start, total) = cursor_subrow_info("abcde fghij", 5, 8, 8);
+        assert_eq!(sub, 1, "space col must map to second subrow");
+        assert_eq!(char_start, 6);
+        assert_eq!(total, 2);
+    }
+
+    // Cursor at the very end of the last segment (col == line char count)
+    // must still return the last subrow via the `i+1 == len` fallback.
+    //
+    // Kills `+ → *` (col 52): `i * 1 == len` is never true inside the loop
+    // bounds, disabling the fallback.  When cursor_col=11 >= char_start(6)+char_len(5)=11
+    // on the last segment, the loop exits without returning, yielding (0, 0, 2).
+    #[test]
+    fn subrow_info_cursor_at_end_of_line_returns_last_subrow() {
+        // "abcde fghij" (11 chars). Col 11 (past end) → last subrow (1, char_start=6).
+        let (sub, char_start, total) = cursor_subrow_info("abcde fghij", 11, 8, 8);
+        assert_eq!(sub, 1, "cursor past end must land on last subrow");
+        assert_eq!(char_start, 6);
+        assert_eq!(total, 2);
     }
 
     // --- char_col_at_visual ---
@@ -1212,6 +1455,83 @@ mod tests {
         );
     }
 
+    /// Regression test for #133: blank lines inside a fenced code block must
+    /// render with `fenced_bg`, not the plain editor background.
+    ///
+    /// Root cause: the `row_spans` filter (`s.char_start < char_end`) dropped
+    /// every span on blank lines because `char_end == 0` for an empty line,
+    /// making `full_line_bg` invisible to the renderer.  The fix sources
+    /// `full_line_bg` from `line_decs` (all logical spans) instead.
+    ///
+    /// Note: the cursor is on row 0 ("code"), so its accent-bg cell is at
+    /// visual row 0.  We assert on visual row 1 (the blank line) to avoid the
+    /// cursor cell.
+    #[test]
+    fn fenced_blank_line_renders_with_fenced_bg() {
+        use ratatui::buffer::Buffer;
+        use ratatui::layout::Rect;
+        use ratatui::widgets::Widget;
+
+        // Two visible rows: row 0 = "code" (cursor here), row 1 = "" (blank).
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 20,
+            height: 2,
+        };
+        let mut buf = Buffer::empty(area);
+
+        let theme = crate::config::Theme::default_theme();
+        let fenced_bg = theme.fenced_bg;
+
+        // Both lines carry fenced_bg; the blank one (log_row 1) is the
+        // regression target.  The decoration pass emits char_end=1 even for
+        // blank lines so the span exists in the map — the bug was the renderer
+        // dropping it because `char_start (0) < char_end (0)` is false.
+        let mut deco = DecorationMap::default();
+        deco.insert(
+            0,
+            vec![StyledSpan {
+                char_start: 0,
+                char_end: 4,
+                style: Style::default().fg(theme.text).bg(fenced_bg),
+                full_line_bg: Some(fenced_bg),
+                ..Default::default()
+            }],
+        );
+        deco.insert(
+            1,
+            vec![StyledSpan {
+                char_start: 0,
+                char_end: 1, // blank line — max(line_len, 1) = 1
+                style: Style::default().fg(theme.text).bg(fenced_bg),
+                full_line_bg: Some(fenced_bg),
+                ..Default::default()
+            }],
+        );
+
+        let view = MarkdownView {
+            lines: &["code".to_string(), "".to_string()],
+            decoration_map: &deco,
+            scroll_top: 0,
+            cursor: (0, 0), // cursor on row 0 → accent cell at (GUTTER, 0)
+            selection: None,
+            theme: &theme,
+            column_width: 20,
+        };
+        view.render(area, &mut buf);
+
+        // Every cell on visual row 1 (the blank line) must have fenced_bg.
+        // Row 0 contains the cursor cell which legitimately has accent bg.
+        for x in 0..area.width {
+            let cell = buf.cell((x, 1)).expect("cell must exist");
+            assert_eq!(
+                cell.bg, fenced_bg,
+                "blank fenced line cell x={x} y=1 must have fenced_bg (regression #133)"
+            );
+        }
+    }
+
     #[test]
     fn heading_delimiter_fg_survives_split_into_spans() {
         use ratatui::style::Color;
@@ -1506,16 +1826,16 @@ mod tests {
     // Selection: full line (0..10).
     //
     // Sub-row 0 (wrap_idx=0): ci must be 0 (original: wrap_idx > 0 is false).
-    //   x_start=1, x_end=min(1+6, 1+6)=7. Highlights x=1..6.
+    //   x_start=1+0+0=1, x_end=min(1+0+6, 1+6)=min(7,7)=7. Highlights x=1..6.
     // Sub-row 1 (wrap_idx=1): ci=2 (original: wrap_idx > 0 is true).
-    //   x_start=1+2+0=3, x_end=min(1+(10-6), 1+6)=min(5,7)=5. Highlights x=3..4.
+    //   x_start=1+2+0=3, x_end=min(1+2+(10-6), 1+6)=min(7,7)=7. Highlights x=3..6.
     //
     // Kills:
     //   346:71  *→+ or *→/: cw=5 → sub-row 0 x_end clips at 6, cell (6,0) excluded.
     //   375:56  >→== / >→>=: ci applied to sub-row 0 → x_start=3, cell (1,0) excluded.
     //   375:56  >→<: no ci ever → sub-row 1 x_start=1, cell (1,1) highlighted (wrong).
     //   407:80  -→+: x_start=1+2+(6+6)=15, out of area → cell (3,1) not highlighted.
-    //   408:65  -→+: x_end=min(1+(10+6),7)=7 → cell (5,1) highlighted (wrong).
+    //   408:97  -→+: x_end=min(1+2+(10+6),7)=7 (same); killed instead by (5,1) and (6,1).
     //   409:37  +→*: min clips 1 cell early → cell (6,0) not highlighted.
     //   409:46  +→*: same.
     #[test]
@@ -1573,20 +1893,35 @@ mod tests {
             sel_bg,
             "sub-row 1 x=1 must not be highlighted (before continuation_indent=2)"
         );
-        // Sub-row 1, first highlighted cell: x = GUTTER + ci + (char_start - char_start) = 1+2+0 = 3.
-        // With >→<: ci=0 → x_start=1, cell (1,1) highlighted instead.
+        // Sub-row 1, all four chars "ghij" at x=3..6 must be highlighted.
+        // x_start=GUTTER+ci+0=3, x_end=min(GUTTER+ci+(10-6), GUTTER+cw)=min(7,7)=7.
+        // With >→<: ci=0 → x_start=1, cell (1,1) highlighted instead of (3,1).
         // With 407:80 -→+: x_start=1+2+(6+6)=15, out of area → cell (3,1) not highlighted.
         assert_eq!(
             buf.cell((3, 1)).unwrap().bg,
             sel_bg,
-            "sub-row 1 first char (x=3 with ci=2) must be highlighted"
+            "sub-row 1 char 0 'g' (x=3 with ci=2) must be highlighted"
         );
-        // Sub-row 1, one past the last char (x=5): must not be highlighted (char_len=4, x_end=5).
-        // With 408:65 -→+: x_end=min(1+(10+6),7)=7 → x=5 highlighted (wrong).
-        assert_ne!(
+        assert_eq!(
+            buf.cell((4, 1)).unwrap().bg,
+            sel_bg,
+            "sub-row 1 char 1 'h' (x=4) must be highlighted"
+        );
+        assert_eq!(
             buf.cell((5, 1)).unwrap().bg,
             sel_bg,
-            "sub-row 1 x=5 (past char_len=4) must not be highlighted"
+            "sub-row 1 char 2 'i' (x=5) must be highlighted"
+        );
+        assert_eq!(
+            buf.cell((6, 1)).unwrap().bg,
+            sel_bg,
+            "sub-row 1 char 3 'j' (x=6) must be highlighted"
+        );
+        // x=7 is one past the last char on sub-row 1 — must not be highlighted.
+        assert_ne!(
+            buf.cell((7, 1)).unwrap().bg,
+            sel_bg,
+            "sub-row 1 x=7 (one past char_len=4 with ci=2) must not be highlighted"
         );
     }
 
@@ -1697,6 +2032,73 @@ mod tests {
             buf.cell((9, 0)).unwrap().bg,
             sel_bg,
             "x=9 is past content_width=8 and must not be highlighted"
+        );
+    }
+
+    // Kills: renderer/mod.rs `replace - with + in apply_selection_overlay` (end_dcols formula).
+    //
+    // `end_dcols = display_cols_for_chars(row_str, row_sel_end - char_start)`
+    // On sub-row 0 char_start=0 so `-` and `+` produce the same result — the
+    // mutation is only observable on a continuation sub-row where char_start > 0.
+    //
+    // "abcde fghij" at cw=8 wraps into:
+    //   sub-row 0: "abcde"  char_start=0, char_len=5
+    //   sub-row 1: "fghij"  char_start=6, char_len=5
+    //
+    // Selection: chars 7..9 on logical line 0 (two chars "gh" inside "fghij"):
+    //   row_sel_start = max(7, 6) = 7,  row_sel_end = min(9, 11) = 9
+    //   start_dcols = display_cols_for_chars("fghij", 7-6=1) = 1  → x_start = 1+0+1 = 2
+    //   end_dcols   = display_cols_for_chars("fghij", 9-6=3) = 3  → x_end   = min(1+0+3,9) = 4
+    //   Highlighted cells: x=2 and x=3  (y=1).
+    //
+    // With `- → +` mutation:
+    //   end_dcols = display_cols_for_chars("fghij", 9+6=15) = 5   → x_end = min(1+0+5,9) = 6
+    //   Highlighted cells: x=2..5 — cell (4,1) and (5,1) are wrongly coloured.
+    #[test]
+    fn selection_overlay_continuation_row_end_dcols_uses_subtraction() {
+        use ratatui::buffer::Buffer;
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 10,
+            height: 2,
+        };
+        let mut buf = Buffer::empty(area);
+        let theme = Theme::default_theme();
+        let deco = DecorationMap::default();
+        let lines: Vec<String> = vec!["abcde fghij".into()];
+        // column_width=10, cw = 10-2 = 8. "abcde fghij" wraps at 8: ["abcde","fghij"].
+        let view = MarkdownView {
+            lines: &lines,
+            decoration_map: &deco,
+            scroll_top: 0,
+            cursor: (0, 0),
+            selection: None,
+            theme: &theme,
+            column_width: 10,
+        };
+        // Select chars 7..9 on line 0 — straddles within the second visual row.
+        apply_selection_overlay(area, &mut buf, &view, ((0, 7), (0, 9)));
+        let sel_bg = theme.selection_bg;
+
+        // x=2 and x=3 must be highlighted (chars 7 and 8 of "fghij").
+        assert_eq!(
+            buf.cell((2, 1)).unwrap().bg,
+            sel_bg,
+            "char 7 ('g') at x=2 must be selected"
+        );
+        assert_eq!(
+            buf.cell((3, 1)).unwrap().bg,
+            sel_bg,
+            "char 8 ('h') at x=3 must be selected"
+        );
+        // x=4 is NOT selected (end_dcols=3 makes x_end=4 exclusive).
+        // With `- → +`: end_dcols = display_cols("fghij", 9+6=15) = 5 → x_end=6
+        // → cells (4,1) and (5,1) would be wrongly coloured.
+        assert_ne!(
+            buf.cell((4, 1)).unwrap().bg,
+            sel_bg,
+            "char 9 at x=4 must NOT be selected (end_dcols must use row_sel_end - char_start)"
         );
     }
 

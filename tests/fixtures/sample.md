@@ -87,17 +87,34 @@ Test entry
 ## Fenced Code Blocks
 
 ```rust
-fn blend(fg: (u8, u8, u8), bg: (u8, u8, u8), ratio: f32) -> (u8, u8, u8) {
-    let r = (fg.0 as f32 * ratio + bg.0 as f32 * (1.0 - ratio)) as u8;
-    let g = (fg.1 as f32 * ratio + bg.1 as f32 * (1.0 - ratio)) as u8;
-    let b = (fg.2 as f32 * ratio + bg.2 as f32 * (1.0 - ratio)) as u8;
-    (r, g, b)
+// Count vowels in a string slice and return a summary.
+fn count_vowels(s: &str) -> usize {
+    s.chars().filter(|c| "aeiouAEIOU".contains(*c)).count()
+}
+
+fn main() {
+    let greeting = "Hello, world!";
+    let n = count_vowels(greeting);
+    println!("Vowels: {n}");  // 3
+
+    let values: Vec<i32> = vec![1, 2, 3, 4, 5];
+    let total: i32 = values.iter().sum();
+    let doubled: Vec<i32> = values.iter().map(|&x| x * 2).collect();
+    assert!(total > 0 && doubled.len() == values.len());
 }
 ```
 
 ```python
-def word_count(text: str) -> int:
-    return len(text.split())
+# Compute factorials up to n using recursion.
+def factorial(n: int) -> int:
+    if n <= 1:
+        return 1
+    return n * factorial(n - 1)
+
+results = [factorial(i) for i in range(1, 6)]
+total = sum(results)
+print(f"Results: {results}")   # [1, 2, 6, 24, 120]
+print(f"Sum: {total}")         # 153
 ```
 
 A fenced block with no language tag:

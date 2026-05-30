@@ -4,6 +4,7 @@ pub mod app;
 pub mod clipboard;
 pub mod config;
 pub mod decoration;
+pub mod highlighting;
 pub mod layout;
 pub mod renderer;
 pub mod status;

@@ -81,6 +81,58 @@ pub struct LayoutConfig {
     pub powerline_glyphs: Option<bool>,
 }
 
+/// Configuration for syntax highlighting of fenced code blocks.
+#[derive(Debug, Deserialize)]
+#[serde(default)]
+pub struct HighlightingConfig {
+    /// Enable syntect syntax highlighting for fenced code blocks. Default true.
+    pub enabled: bool,
+    /// Derive token colours from the yame palette instead of a built-in syntect
+    /// theme.  When true (the default) keywords use `accent`, strings use
+    /// `code`, comments use `muted`, etc.  Set false to use `syntect_theme`
+    /// colours instead (e.g. for a light-mode code block on a dark editor).
+    pub use_palette_colors: bool,
+    /// Name of the bundled syntect theme to use when `use_palette_colors = false`.
+    /// Available: "base16-ocean.dark", "base16-ocean.light", "base16-eighties.dark",
+    /// "base16-mocha.dark", "InspiredGitHub", "Solarized (dark)", "Solarized (light)".
+    /// Invalid names fall back to "base16-ocean.dark".
+    pub syntect_theme: String,
+}
+
+impl Default for HighlightingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            use_palette_colors: true,
+            syntect_theme: "base16-ocean.dark".into(),
+        }
+    }
+}
+
+/// Configuration for file-type detection and editing mode selection.
+#[derive(Debug, Deserialize)]
+#[serde(default)]
+pub struct FiletypeConfig {
+    /// Additional file extensions (without the leading dot, case-insensitive)
+    /// to treat as Markdown on top of the built-in list
+    /// (`md`, `markdown`, `mdx`, `mkd`, `mkdn`, `mdown`).
+    pub extra_markdown_extensions: Vec<String>,
+    /// What to do with files whose extension is not in the Markdown list and
+    /// not recognised by syntect.
+    /// `"markdown"` (default) — open as Markdown.
+    /// `"plain"` — open as unstyled plain text.
+    pub unknown_as: String,
+}
+
+impl Default for FiletypeConfig {
+    fn default() -> Self {
+        Self {
+            extra_markdown_extensions: vec![],
+            unknown_as: "markdown".into(),
+        }
+    }
+}
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -88,6 +140,8 @@ pub struct Config {
     pub theme: ThemeOverrides,
     pub headings: HeadingColors,
     pub layout: LayoutConfig,
+    pub highlighting: HighlightingConfig,
+    pub filetype: FiletypeConfig,
 }
 
 // ---------------------------------------------------------------------------
@@ -408,6 +462,27 @@ warning = "#f38ba8"   # dirty flag, warnings
 # min_cols         = 60     # minimum editing-column width in characters
 # tab_width        = 4      # spaces per tab character expanded on load
 # powerline_glyphs = true   # set false to use the universal │ separator (no Nerd Font required)
+
+# ── Syntax highlighting ────────────────────────────────────────────────────────
+[highlighting]
+# enabled            = true   # set false to disable fenced-block syntax highlighting
+# use_palette_colors = true   # derive token colours from your palette (recommended)
+#                             # set false to use a standalone syntect theme instead
+# syntect_theme = "base16-ocean.dark"   # only used when use_palette_colors = false
+#   Other bundled themes: base16-ocean.light · base16-eighties.dark · base16-mocha.dark
+#                         InspiredGitHub · Solarized (dark) · Solarized (light)
+
+# ── File-type detection ───────────────────────────────────────────────────────
+[filetype]
+# Built-in Markdown extensions: md · markdown · mdx · mkd · mkdn · mdown
+# All other extensions are opened in plain-highlight mode (syntect whole-file).
+#
+# extra_markdown_extensions = []   # additional extensions to treat as Markdown
+#                                  # e.g. ["txt", "rst"]
+#
+# unknown_as = "markdown"          # what to do with extensionless files
+#                                  # (CONTRIBUTING, Makefile, …)
+#                                  # "markdown" (default) | "plain"
 "##;
 
 pub fn config_path() -> PathBuf {

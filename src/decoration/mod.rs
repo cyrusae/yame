@@ -4,6 +4,7 @@ use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, T
 use ratatui::style::{Color, Modifier, Style};
 
 use crate::config::{Theme, blend_colors};
+use crate::highlighting::HighlightCache;
 
 mod spans;
 mod words;
@@ -202,6 +203,45 @@ pub struct StyledSpan {
 pub type DecorationMap = HashMap<usize, Vec<StyledSpan>>;
 
 // ---------------------------------------------------------------------------
+// block_highlights_to_decoration_map
+// ---------------------------------------------------------------------------
+
+/// Convert `BlockHighlights` (syntect per-line spans) into a `DecorationMap`.
+///
+/// Used when the editor is in `FileMode::PlainHighlight` mode to apply
+/// whole-file syntax colouring without running the markdown decoration pass.
+/// Each `HlSpan` becomes a `StyledSpan` with a plain fg-colour style and no
+/// markdown-specific fields (`is_blockquote`, `full_line_bg`, etc. are all
+/// left at their zero/false defaults).
+///
+/// `line_offset` is added to every line index so the result aligns with
+/// `DecorationMap` line numbers.  Pass `0` for a whole-file conversion.
+pub fn block_highlights_to_decoration_map(
+    hl: &crate::highlighting::BlockHighlights,
+    line_offset: usize,
+) -> DecorationMap {
+    use ratatui::style::Style;
+    let mut map: DecorationMap = HashMap::new();
+    for (line_idx, line_spans) in hl.iter().enumerate() {
+        let log_line = line_offset + line_idx;
+        for hs in line_spans {
+            let span = StyledSpan {
+                char_start: hs.char_start,
+                char_end: hs.char_end,
+                style: Style::default().fg(hs.fg),
+                is_blockquote: false,
+                continuation_indent: 0,
+                full_line_bg: None,
+                border_bottom: None,
+                is_rule: false,
+            };
+            map.entry(log_line).or_default().push(span);
+        }
+    }
+    map
+}
+
+// ---------------------------------------------------------------------------
 // build_decoration_map
 // ---------------------------------------------------------------------------
 
@@ -210,11 +250,15 @@ pub type DecorationMap = HashMap<usize, Vec<StyledSpan>>;
 /// Returns `(DecorationMap, word_count)` so callers avoid a second parser pass.
 /// Pure function — no terminal or UI side effects. This is the v1.5 migration seam:
 /// when moving to a background thread, only the call site changes.
+///
+/// `highlight_cache` is optional: pass `Some(&cache)` to enable syntect syntax
+/// highlighting for fenced code blocks, or `None` to disable it (fenced_bg-only).
 #[mutants::skip]
 pub fn build_decoration_map(
     text: &str,
     theme: &Theme,
     italic_support: bool,
+    highlight_cache: Option<&HighlightCache>,
 ) -> (DecorationMap, usize) {
     let line_starts = line_start_bytes(text);
     let mut map: DecorationMap = HashMap::new();
@@ -230,6 +274,8 @@ pub fn build_decoration_map(
     // Bold+italic nesting detection: set on Start, cleared on End.
     let mut in_strong: Option<std::ops::Range<usize>> = None;
     let mut in_emphasis: Option<std::ops::Range<usize>> = None;
+    // TableHead: capture the byte range on Start so End can emit gaps-only spans.
+    let mut in_table_head: Option<std::ops::Range<usize>> = None;
 
     for (event, range) in parser {
         match event {
@@ -538,8 +584,6 @@ pub fn build_decoration_map(
             }
 
             // ---- e. Fenced code blocks ----
-            // DEFERRED(v1.5): pass block content and language tag to syntect for
-            // syntax highlighting.
             Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(lang))) => {
                 let (start_line, _) = byte_to_line_char(&line_starts, text, range.start);
                 let (end_line, _) = byte_to_line_char(
@@ -603,20 +647,79 @@ pub fn build_decoration_map(
                     }
                 }
 
-                // Content lines: fenced_bg background only.
-                for line in (start_line + 1)..end_line {
+                // Content lines: try syntect highlighting, fall back to fenced_bg-only.
+                //
+                // Extract the raw content (with newlines) between the fence delimiters
+                // so syntect sees exactly what the user typed.
+                let lang_str = lang.as_ref();
+                let block_content: String = ((start_line + 1)..end_line)
+                    .map(|l| {
+                        let ls = line_starts[l];
+                        let le = if l + 1 < line_starts.len() {
+                            line_starts[l + 1]
+                        } else {
+                            text.len()
+                        };
+                        &text[ls..le]
+                    })
+                    .collect();
+
+                let hl_result: Option<crate::highlighting::BlockHighlights> = highlight_cache
+                    .and_then(|cache| cache.highlight_block(lang_str, &block_content));
+
+                for (block_row, line) in ((start_line + 1)..end_line).enumerate() {
                     let line_len = line_char_len(&line_starts, text, line).max(1);
-                    push_span(
-                        &mut map,
-                        line,
-                        StyledSpan {
-                            char_start: 0,
-                            char_end: line_len,
-                            style: fence_bg_style,
-                            full_line_bg: Some(theme.fenced_bg),
-                            ..Default::default()
-                        },
-                    );
+
+                    match hl_result.as_ref().and_then(|hl| hl.get(block_row)) {
+                        Some(hl_spans) if !hl_spans.is_empty() => {
+                            // Emit syntect fg spans directly — NO separate full-line background
+                            // span.  split_into_spans clips any span whose char_start falls
+                            // before the current char_pos, so a wide 0..N background span
+                            // would consume the entire line and cause all subsequent fg spans
+                            // to be skipped.  Instead we put full_line_bg on the first syntect
+                            // span; since syntect always produces contiguous spans starting at
+                            // col 0, this is always the span covering char 0.
+                            for (i, hl_span) in hl_spans.iter().enumerate() {
+                                let cs = hl_span.char_start.min(line_len);
+                                let ce = hl_span.char_end.min(line_len);
+                                if cs < ce {
+                                    push_span(
+                                        &mut map,
+                                        line,
+                                        StyledSpan {
+                                            char_start: cs,
+                                            char_end: ce,
+                                            style: Style::default()
+                                                .fg(hl_span.fg)
+                                                .bg(theme.fenced_bg),
+                                            // Only the first span signals full_line_bg so the
+                                            // background fills the column beyond the last char.
+                                            full_line_bg: if i == 0 {
+                                                Some(theme.fenced_bg)
+                                            } else {
+                                                None
+                                            },
+                                            ..Default::default()
+                                        },
+                                    );
+                                }
+                            }
+                        }
+                        _ => {
+                            // No highlights (disabled / unknown lang / empty line) — fenced_bg.
+                            push_span(
+                                &mut map,
+                                line,
+                                StyledSpan {
+                                    char_start: 0,
+                                    char_end: line_len,
+                                    style: fence_bg_style,
+                                    full_line_bg: Some(theme.fenced_bg),
+                                    ..Default::default()
+                                },
+                            );
+                        }
+                    }
                 }
 
                 // Closing fence line.
@@ -900,21 +1003,30 @@ pub fn build_decoration_map(
                 }
             }
             Event::Start(Tag::TableHead) => {
-                let style = Style::default()
-                    .fg(theme.accent)
-                    .add_modifier(Modifier::BOLD);
-                add_byte_range_span(
-                    &mut map,
-                    &line_starts,
-                    text,
-                    range.start,
-                    range.end,
-                    SpanParams {
-                        style,
-                        full_line_bg: None,
-                        is_blockquote: false,
-                    },
-                );
+                // Capture the byte range; defer span emission to End(TableHead) so
+                // that inline formatting spans (bold, italic, code) are already in
+                // the map and `emit_content_around_existing` can skip over them.
+                in_table_head = Some(range.clone());
+            }
+
+            Event::End(TagEnd::TableHead) => {
+                if let Some(head_range) = in_table_head.take() {
+                    let style = Style::default()
+                        .fg(theme.accent)
+                        .add_modifier(Modifier::BOLD);
+
+                    let (start_line, _) = byte_to_line_char(&line_starts, text, head_range.start);
+                    let (end_line, _) = byte_to_line_char(
+                        &line_starts,
+                        text,
+                        head_range.end.saturating_sub(1).max(head_range.start),
+                    );
+
+                    for line in start_line..=end_line {
+                        let line_len = line_char_len(&line_starts, text, line);
+                        emit_content_around_existing(&mut map, line, 0, line_len, style);
+                    }
+                }
             }
 
             // ---- k. Strikethrough ----
@@ -1006,7 +1118,7 @@ mod tests {
 
     /// Convenience wrapper: run build_decoration_map and discard the word count.
     fn build_map(text: &str, theme: &Theme, italic_support: bool) -> DecorationMap {
-        build_decoration_map(text, theme, italic_support).0
+        build_decoration_map(text, theme, italic_support, None).0
     }
 
     // ---- Byte mapping tests ----
@@ -1480,6 +1592,28 @@ mod tests {
         );
     }
 
+    /// Regression test for #133: blank lines inside a fenced code block must
+    /// have `full_line_bg = Some(fenced_bg)` in the decoration map.  Before
+    /// the renderer fix they had the span but the renderer's row_spans filter
+    /// dropped it (char_end == 0 fails `char_start < char_end`).
+    #[test]
+    fn fenced_code_blank_content_line_has_fenced_bg() {
+        // Line 0: before, 1: ```, 2: code, 3: <blank>, 4: more code, 5: ```, 6: after
+        let text = "before\n```\ncode\n\nmore code\n```\nafter";
+        let theme = make_theme();
+        let map = build_map(text, &theme, true);
+        let blank_line = map
+            .get(&3)
+            .expect("blank content line (line 3) must have spans");
+        assert!(
+            blank_line
+                .iter()
+                .any(|s| s.full_line_bg == Some(theme.fenced_bg)),
+            "blank line inside fenced block must carry full_line_bg = fenced_bg; \
+             got: {blank_line:?}"
+        );
+    }
+
     #[test]
     fn fenced_code_language_tag_is_dimmed_accent() {
         let text = "before\n```rust\nlet x = 1;\n```\nafter";
@@ -1678,6 +1812,47 @@ mod tests {
             .flatten()
             .any(|s| s.style.add_modifier.contains(Modifier::BOLD));
         assert!(has_bold, "table header must have bold");
+    }
+
+    /// Regression test for FEEDBACK-2 §1.1:
+    /// Inline bold inside a table header must not be swallowed by the wide
+    /// header span.  Before the fix, `Start(TableHead)` emitted a single
+    /// `add_byte_range_span` which — being sorted first by char_start=0 in
+    /// `split_into_spans` — consumed the entire row and clipped all inner spans.
+    ///
+    /// After the fix, the wide span is emitted on `End(TableHead)` via
+    /// `emit_content_around_existing`, so bold/italic spans placed by earlier
+    /// inner events survive unchanged.
+    #[test]
+    fn table_header_inline_bold_not_swallowed() {
+        let theme = make_theme();
+        // Header has an explicit **Bold** cell — the bold content span must
+        // appear in the decoration map with the bold_color (not just accent).
+        let text = "| **Bold** | Plain |\n| --- | --- |\n| a | b |";
+        let map = build_map(text, &theme, true);
+        let line0 = map.get(&0).expect("line 0 should have spans");
+        // The bold content span uses theme.bold_color with BOLD modifier.
+        let has_bold_span = line0.iter().any(|s| {
+            s.style.fg == Some(theme.bold_color) && s.style.add_modifier.contains(Modifier::BOLD)
+        });
+        assert!(
+            has_bold_span,
+            "bold inside table header must produce a bold_color span, not be swallowed"
+        );
+    }
+
+    /// Italic inside a table header must also survive.
+    #[test]
+    fn table_header_inline_italic_not_swallowed() {
+        let theme = make_theme();
+        let text = "| *Italic* | Plain |\n| --- | --- |\n| a | b |";
+        let map = build_map(text, &theme, true);
+        let line0 = map.get(&0).expect("line 0 should have spans");
+        let has_italic_span = line0.iter().any(|s| s.style.fg == Some(theme.italic_color));
+        assert!(
+            has_italic_span,
+            "italic inside table header must produce an italic_color span, not be swallowed"
+        );
     }
 
     // ---- Word count ----
@@ -2638,6 +2813,130 @@ mod tests {
             spans.iter().any(|s| s.full_line_bg == Some(Color::Red)),
             "full_line_bg must propagate from SpanParams to StyledSpan; got: {:?}",
             spans
+        );
+    }
+
+    // ── block_highlights_to_decoration_map ───────────────────────────────────
+
+    use crate::highlighting::HlSpan;
+
+    #[test]
+    fn bh_to_deco_empty_highlights_gives_empty_map() {
+        let hl: crate::highlighting::BlockHighlights = vec![];
+        let map = block_highlights_to_decoration_map(&hl, 0);
+        assert!(
+            map.is_empty(),
+            "empty BlockHighlights must produce empty map"
+        );
+    }
+
+    #[test]
+    fn bh_to_deco_single_line_single_span() {
+        let hl = vec![vec![HlSpan {
+            char_start: 0,
+            char_end: 3,
+            fg: Color::Rgb(255, 0, 0),
+        }]];
+        let map = block_highlights_to_decoration_map(&hl, 0);
+        let spans = map.get(&0).expect("line 0 must be present");
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].char_start, 0);
+        assert_eq!(spans[0].char_end, 3);
+    }
+
+    #[test]
+    fn bh_to_deco_fg_colour_preserved() {
+        let fg = Color::Rgb(100, 200, 50);
+        let hl = vec![vec![HlSpan {
+            char_start: 0,
+            char_end: 5,
+            fg,
+        }]];
+        let map = block_highlights_to_decoration_map(&hl, 0);
+        let spans = map.get(&0).unwrap();
+        assert_eq!(
+            spans[0].style.fg,
+            Some(fg),
+            "fg colour must be preserved in StyledSpan"
+        );
+    }
+
+    #[test]
+    fn bh_to_deco_multiline_maps_correct_line_indices() {
+        let hl = vec![
+            vec![HlSpan {
+                char_start: 0,
+                char_end: 2,
+                fg: Color::Rgb(1, 2, 3),
+            }],
+            vec![HlSpan {
+                char_start: 0,
+                char_end: 4,
+                fg: Color::Rgb(4, 5, 6),
+            }],
+        ];
+        let map = block_highlights_to_decoration_map(&hl, 0);
+        assert!(map.contains_key(&0), "line 0 must be present");
+        assert!(map.contains_key(&1), "line 1 must be present");
+        assert_eq!(map.get(&0).unwrap()[0].char_end, 2);
+        assert_eq!(map.get(&1).unwrap()[0].char_end, 4);
+    }
+
+    #[test]
+    fn bh_to_deco_line_offset_applied() {
+        // With line_offset=5, the first hl line maps to DecorationMap key 5.
+        let hl = vec![vec![HlSpan {
+            char_start: 0,
+            char_end: 1,
+            fg: Color::Rgb(0, 0, 0),
+        }]];
+        let map = block_highlights_to_decoration_map(&hl, 5);
+        assert!(
+            map.contains_key(&5),
+            "line_offset must shift line index to 5"
+        );
+        assert!(
+            !map.contains_key(&0),
+            "line 0 must not be present when offset=5"
+        );
+    }
+
+    #[test]
+    fn bh_to_deco_markdown_fields_are_zero() {
+        // Markdown-specific fields must all be at their zero/false defaults.
+        let hl = vec![vec![HlSpan {
+            char_start: 0,
+            char_end: 3,
+            fg: Color::Rgb(1, 1, 1),
+        }]];
+        let map = block_highlights_to_decoration_map(&hl, 0);
+        let span = &map.get(&0).unwrap()[0];
+        assert!(!span.is_blockquote, "is_blockquote must be false");
+        assert_eq!(span.continuation_indent, 0, "continuation_indent must be 0");
+        assert!(span.full_line_bg.is_none(), "full_line_bg must be None");
+        assert!(span.border_bottom.is_none(), "border_bottom must be None");
+        assert!(!span.is_rule, "is_rule must be false");
+    }
+
+    #[test]
+    fn bh_to_deco_empty_inner_lines_not_inserted() {
+        // Lines with no spans should not create entries in the map.
+        let hl = vec![
+            vec![],
+            vec![HlSpan {
+                char_start: 0,
+                char_end: 2,
+                fg: Color::Rgb(0, 0, 0),
+            }],
+        ];
+        let map = block_highlights_to_decoration_map(&hl, 0);
+        assert!(
+            !map.contains_key(&0),
+            "empty span list must not create a map entry"
+        );
+        assert!(
+            map.contains_key(&1),
+            "non-empty span list must create a map entry"
         );
     }
 }

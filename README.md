@@ -2,9 +2,11 @@
 
 **Yet Another Markdown Editor** — a lightweight terminal editor for Markdown files.
 
-The goal is something meaningfully lighter than VS Code for editing READMEs, notes, and CLAUDE.mds, while being more capable than nano for Markdown specifically. It can also be used as a distraction-free text editor!
+The goal is something meaningfully lighter than VS Code for editing READMEs, notes, and CLAUDE.mds, while being more capable than nano for Markdown specifically. 
 
-> **Alpha.** Core editing, decoration, and theming are solid. Config keys and keybindings are stable.
+It can also be used as a distraction-free text editor!
+
+> **Alpha.** Core editing, decoration, and theming are solid. Keybindings are stable; config keys may be added to.
 
 <!-- screenshot or demo GIF goes here -->
 
@@ -13,6 +15,7 @@ The goal is something meaningfully lighter than VS Code for editing READMEs, not
 ## What it does
 
 - Opens and saves Markdown files with live inline decoration: headings, bold, italic, inline code, fenced blocks, blockquotes, links, lists, todo checkboxes, tables, strikethrough, horizontal rules
+- Syntax highlighting in fenced code blocks for over 150 languages
 - Centered editing column with soft word wrap (wide/CJK character aware)
 - Catppuccin Mocha theme by default, fully configurable via `~/.config/yame/config.toml`
 - System clipboard (`Ctrl+C` / `Ctrl+V`)
@@ -23,7 +26,6 @@ The goal is something meaningfully lighter than VS Code for editing READMEs, not
 
 ## What it doesn't do yet
 
-- No syntax highlighting inside fenced code blocks (planned v1.5)
 - No search / find-replace (planned v2)
 - No line numbers (planned v2)
 - No tab completion, file browser, or split panes
@@ -46,7 +48,7 @@ cargo install --path .
 
 ### Platform support
 
-Tested on macOS. Should work on Linux; untested. Windows is not supported yet.
+Tested on macOS. Should work on Linux and Windows; untested. Issues and pull requests welcome.
 
 ---
 

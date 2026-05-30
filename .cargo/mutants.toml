@@ -58,11 +58,11 @@ exclude_re = [
     # No test can distinguish these two expressions with the current GUTTER value.
     "commands\\.rs:66:.*replace \\* with /",
 
-    # `cursor_row < app.scroll_top` scroll-up guard (commands.rs:70).
+    # `cursor_row < app.scroll_top` scroll-up guard (commands.rs, col 19).
     # `replace < with <=`: when cursor_row == scroll_top the mutation executes
     # `app.scroll_top = cursor_row`, which is a no-op (same value). No test can
-    # observe the difference.
-    "commands\\.rs:70:.*replace < with <=",
+    # observe the difference.  Column-anchored to survive line-number drift.
+    "commands\\.rs:\\d+:19:.*replace < with <= in clamp_scroll",
 
     # `i + 1 == char_ranges.len()` last-segment fallback in the sub-row loop
     # (commands.rs:89).  `replace + with *` changes this to `i == len`, which
@@ -82,22 +82,20 @@ exclude_re = [
     # All logic mutants in this function are caught by the words.rs test suite.
     "decoration/words\\.rs:29:.*replace \\+= with \\*= in link_split_char_idx",
 
-    # `if block_end > pos { pos = block_end; }` in emit_content_around_existing
-    # (decoration/mod.rs:82).  `>→>=` is equivalent: when block_end == pos the
-    # assignment `pos = block_end` is a no-op (sets pos to itself).  No test can
-    # observe any difference.
-    "decoration/mod\\.rs:82:.*replace > with >= in emit_content_around_existing",
+    # `if block_end > pos { pos = block_end; }` in emit_content_around_existing.
+    # `>→>=` is equivalent: when block_end == pos the assignment `pos = block_end`
+    # is a no-op (sets pos to itself).  Column-anchored to survive line drift.
+    "decoration/mod\\.rs:\\d+:22:.*replace > with >= in emit_content_around_existing",
 
     # `.filter(|s| s.char_end > range_start && s.char_start < range_end)` overlap
-    # guard in emit_content_around_existing (decoration/mod.rs:69).
+    # guard in emit_content_around_existing.
     #   · `>→>=` (col 40): admits spans where char_end == range_start (adjacent, not
-    #     overlapping).  The map-to-intersection on line 70 clamps this to a zero-width
-    #     block (range_start, range_start), which the subsequent gap-filling loop ignores
-    #     (`pos < block_start` is false; `block_end > pos` is false).  No cell changes.
+    #     overlapping).  The map-to-intersection clamps this to a zero-width block
+    #     (range_start, range_start), which the gap-filling loop ignores.  Unkillable.
     #   · `<→<=` (col 70): admits spans where char_start == range_end (adjacent on the
     #     right).  Same zero-width outcome: (range_end, range_end).  Unkillable.
-    "decoration/mod\\.rs:69:40:.*replace > with >=",
-    "decoration/mod\\.rs:69:70:.*replace < with <=",
+    "decoration/mod\\.rs:\\d+:40:.*replace > with >= in emit_content_around_existing",
+    "decoration/mod\\.rs:\\d+:70:.*replace < with <= in emit_content_around_existing",
 
     # Note: `delete field` mutations in spans.rs:91-92 (is_blockquote, full_line_bg) are
     # killed by add_byte_range_span_propagates_span_params_fields in decoration/mod.rs.
@@ -118,22 +116,35 @@ exclude_re = [
     # `for x in x_start..x_end` range is always empty — no cells are coloured.
     "renderer/mod\\.rs:\\d+:34: replace < with <= in apply_selection_overlay",
 
-    # emit_bold_italic_spans early-return guard (decoration/mod.rs:127) and
-    # push-span guards (lines 147, 155, 163).  All are structurally unkillable
-    # for well-formed Markdown input:
-    #  · content_start > content_end: impossible — inner delimiters never invert the
-    #    content window for real `***` / `**_` syntax.
-    #  · content_start >= end_char_excl: impossible — content always precedes the
-    #    outer range end.
+    # `k.modifiers.intersects(CONTROL | ALT | SUPER)` guard in handle_key_event (input.rs:218).
+    # The two `| → ^` mutations (cols 57 and 77) are equivalent: CONTROL, ALT, and SUPER
+    # each occupy distinct, non-overlapping bits in the KeyModifiers bitmask.  For any pair
+    # A, B of non-overlapping bit-flags, `A ^ B == A | B`, so replacing either `|` with `^`
+    # produces the exact same bitmask and the exact same `intersects` result.  No test can
+    # distinguish the mutated from the original form.
+    "input\\.rs:\\d+:57:.*replace \\| with \\^ in handle_key_event",
+    "input\\.rs:\\d+:77:.*replace \\| with \\^ in handle_key_event",
+
+    # `(prev, prev_total - 1)` in handle_visual_move (input.rs:440, col 31).
+    # `- → +`: prev_total + 1 exceeds the last valid subrow index; clamped to last_idx
+    #   by `char_col_at_visual` (`target_subrow.min(last_idx)`).
+    # `- → /`: prev_total / 1 == prev_total; same clamping applies.
+    # Both mutations leave the cursor on the same visual row as `prev_total - 1`.
+    "input\\.rs:\\d+:31:.*replace - with \\+ in handle_visual_move",
+    "input\\.rs:\\d+:31:.*replace - with / in handle_visual_move",
+
+    # emit_bold_italic_spans early-return guard and push-span guards.
+    # All are structurally unkillable for well-formed Markdown input:
+    #  · content_start > content_end: impossible — inner delimiters never invert
+    #    the content window for real `***` / `**_` syntax.
+    #  · content_start >= end_char_excl: impossible — content always precedes
+    #    the outer range end.
     #  · `||→&&` on the combined guard: only observable if both conditions are
     #    simultaneously true, which is also impossible.
-    #  · `>→>=` on the three push guards (lines 147/155/163): the equality cases
-    #    (content_start == start_char, content_end == content_start,
-    #    end_char_excl == content_end) require zero-width content or zero-width
-    #    delimiters — unreachable for any syntactically valid bold+italic span.
-    "decoration/mod\\.rs:127:.*replace \\|\\| with \\&\\& in emit_bold_italic_spans",
-    "decoration/mod\\.rs:127:22:.*replace > with .* in emit_bold_italic_spans",
-    "decoration/mod\\.rs:147:22:.*replace > with >= in emit_bold_italic_spans",
-    "decoration/mod\\.rs:155:20:.*replace > with >= in emit_bold_italic_spans",
-    "decoration/mod\\.rs:163:22:.*replace > with >= in emit_bold_italic_spans",
+    #  · `>→>=` on the three push guards: the equality cases require zero-width
+    #    content or zero-width delimiters — unreachable for valid bold+italic.
+    # Column anchors throughout to survive future line-number drift.
+    "decoration/mod\\.rs:\\d+:36:.*replace \\|\\| with \\&\\& in emit_bold_italic_spans",
+    "decoration/mod\\.rs:\\d+:22:.*replace > with .* in emit_bold_italic_spans",
+    "decoration/mod\\.rs:\\d+:20:.*replace > with >= in emit_bold_italic_spans",
 ]

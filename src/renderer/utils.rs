@@ -99,3 +99,102 @@ pub fn split_into_spans(
 
     result
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use ratatui::style::{Color, Style};
+
+    use crate::decoration::StyledSpan;
+
+    use super::{format_thousands, split_into_spans};
+
+    // ── format_thousands ─────────────────────────────────────────────────────
+    //
+    // Kills renderer/utils.rs:24:26 `replace - with + in format_thousands`.
+    //
+    // The condition `(len - i).is_multiple_of(3)` places a comma every three
+    // digits from the right.  With `+` it becomes `(len + i)`, which puts
+    // commas at wrong positions (e.g. "1234" → "12,34" instead of "1,234").
+
+    #[test]
+    fn format_thousands_no_separator_below_1000() {
+        assert_eq!(format_thousands(0), "0");
+        assert_eq!(format_thousands(999), "999");
+    }
+
+    #[test]
+    fn format_thousands_one_separator_at_1000() {
+        // "1000": len=4, comma at i=1 (4-1=3, multiple of 3).
+        // Mutation (len+i): 4+1=5, not multiple of 3 → no comma → "1000" ≠ "1,000".
+        assert_eq!(format_thousands(1000), "1,000");
+        assert_eq!(format_thousands(1234), "1,234");
+    }
+
+    #[test]
+    fn format_thousands_two_separators() {
+        assert_eq!(format_thousands(1_234_567), "1,234,567");
+    }
+
+    // ── split_into_spans ─────────────────────────────────────────────────────
+    //
+    // Kills renderer/utils.rs:61:20 `replace >= with < in split_into_spans`.
+    //
+    // `if s_start >= s_end { continue }` skips zero-width or reversed spans.
+    // With `<`, the condition is true for every *valid* (s_start < s_end) span,
+    // causing all of them to be skipped and the whole line to be returned unstyled.
+
+    fn styled_span(char_start: usize, char_end: usize, color: Color) -> StyledSpan {
+        StyledSpan {
+            char_start,
+            char_end,
+            style: Style::default().fg(color),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn split_into_spans_applies_single_span() {
+        // "hello" with a Red span on chars 1..4 ("ell").
+        // Mutation would skip the span → only one unstyled "hello" span returned.
+        let spans = vec![styled_span(1, 4, Color::Red)];
+        let result = split_into_spans("hello", &spans, Style::default());
+
+        // Expect: "h" (default), "ell" (red), "o" (default) = 3 spans.
+        assert_eq!(
+            result.len(),
+            3,
+            "must produce 3 segments: prefix, styled, suffix"
+        );
+        assert_eq!(
+            result[1].style.fg,
+            Some(Color::Red),
+            "middle span must be Red"
+        );
+        assert_eq!(result[0].content, "h");
+        assert_eq!(result[1].content, "ell");
+        assert_eq!(result[2].content, "o");
+    }
+
+    #[test]
+    fn split_into_spans_no_spans_returns_whole_line() {
+        // Fast path: empty spans slice → single span with default style.
+        let result = split_into_spans("hello", &[], Style::default());
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].content, "hello");
+    }
+
+    #[test]
+    fn split_into_spans_zero_width_span_skipped() {
+        // A span where char_start == char_end is zero-width and must be skipped.
+        // This verifies the `s_start >= s_end` guard fires correctly.
+        let spans = vec![styled_span(2, 2, Color::Green)]; // zero-width at char 2
+        let result = split_into_spans("hello", &spans, Style::default());
+        // Zero-width span is skipped → whole line returned as one unstyled span.
+        assert_eq!(result.len(), 1, "zero-width span must be skipped");
+        assert_eq!(result[0].content, "hello");
+    }
+}

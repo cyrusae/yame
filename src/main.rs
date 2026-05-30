@@ -8,7 +8,7 @@ use crossterm::{
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
 
-use yame::app::App;
+use yame::app::{App, is_likely_binary, resolve_file_mode};
 use yame::config::{Theme, load_config, supports_italic};
 
 mod commands;
@@ -216,6 +216,29 @@ fn run(file_path: PathBuf) -> io::Result<()> {
 
     let tab_width = config.layout.tab_width.unwrap_or(4) as usize;
     let powerline_glyphs = config.layout.powerline_glyphs.unwrap_or(true);
+    let highlight_cache = config.highlighting.enabled.then(|| {
+        let palette_theme = config
+            .highlighting
+            .use_palette_colors
+            .then(|| yame::highlighting::build_palette_theme(&theme));
+        yame::highlighting::HighlightCache::new(
+            true,
+            config.highlighting.syntect_theme.clone(),
+            palette_theme,
+        )
+    });
+    let file_mode = resolve_file_mode(&file_path, &config.filetype);
+
+    // Refuse to open binary files — null bytes would corrupt the editor buffer.
+    if is_likely_binary(&file_path) {
+        eprintln!(
+            "error: '{}' appears to be a binary file.",
+            file_path.display()
+        );
+        eprintln!("yame can only open text files.");
+        std::process::exit(1);
+    }
+
     let mut app = App::new(
         file_path,
         theme,
@@ -223,6 +246,8 @@ fn run(file_path: PathBuf) -> io::Result<()> {
         powerline_glyphs,
         warnings,
         tab_width,
+        highlight_cache,
+        file_mode,
     )?;
 
     if !italic_support {
@@ -298,7 +323,8 @@ mod tests {
     use yame::status::{StatusLine, StatusMode};
 
     use super::commands::{clamp_scroll, handle_exit};
-    use super::input::{get_selection_text, handle_pair_wrap};
+    use super::input::handle_pair_wrap;
+    use yame::app::get_selection_text;
 
     fn make_app() -> App {
         App {
@@ -319,8 +345,11 @@ mod tests {
             free_scroll: false,
             sticky_col: None,
             content_width: 0,
-            clipboard: None,
-            initial_file_empty: false,
+            clipboard: yame::app::ClipboardState::Uninitialized,
+            shortened_path: "test.md".to_string(),
+            tab_width: 4,
+            highlight_cache: None,
+            file_mode: yame::app::FileMode::Markdown,
         }
     }
 

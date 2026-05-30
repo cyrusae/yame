@@ -9,6 +9,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [0.1.0-alpha.1] - 2026-05-25
 
 ### Added
+- Binary file detection on startup (#143)
+- Plain-mode: syntect whole-file highlighting for non-markdown extensions (#129)
+- feat: Windows support (Git Bash / Windows Terminal) (#125)
+- feat: pull in two-face for extended syntax coverage (TOML, TypeScript, etc) (#135)
+- richer fixture code + operator/punctuation palette colours (#132)
+- Palette-derived highlight theme with per-token config overrides (#130)
+- v1.5: CJK / wide character support (unicode-width) (#41)
+- v1.5: syntect fenced code block syntax highlighting (#44)
 - config: default to Nerd Font Powerline glyphs, add opt-out (#122)
 - feat: yame write-config — write commented default config to XDG path (#117)
 - feat: yame init — output shell wrapper function (eval-style) (#116)
@@ -27,6 +35,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - v1 polish: italic startup warning, `delimiter_blend` config token, parent-dir creation on save (#35)
 
 ### Fixed
+- FEEDBACK-2 2.3: cap highlight cache to prevent unbounded memory growth (#142)
+- FEEDBACK-2 1.1: table header decoration swallows inline formatting (#141)
+- FEEDBACK-2 batch 2: deduplicate selection, clipboard enum, path cache, mutants skip (#140)
+- FEEDBACK-2 batch: exit-prompt modifier guard, tab-key spaces, empty-file save, centering fix, nav dirty-skip, highlight cache on reload (#139)
+- fix: click-to-cursor off-by-one in wrapped list items (#137)
+- fix: blank lines inside fenced code blocks lose fenced_bg (#133)
+- Bug: syntect fg spans invisible — overlapping background span consumes char_pos (#131)
+- Fix selection highlight clipping on wrapped indented list items (#128)
 - fix cargo upgrade breakage: crossterm/ratatui API changes (#127)
 - bug: bold/italic inside blockquote bleeds to full line (#120)
 - fix flaky italic env-var tests (#119)
@@ -55,6 +71,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Italic default color now matches text color (not accent blend) (#60)
 
 ### Changed
+- cargo-deny unmaintained annotation (#151)
+- close completed mutant issues (#150)
+- fix remaining mutant survivors post-session-110 (#149)
+- mutants: skip timeout-only functions (screen_to_doc, apply_selection_overlay, spans helpers) (#148)
+- mutants: kill spans.rs add_byte_range_span style + renderer/utils pure-fn mutants (#147)
+- mutants: kill decorate() FileMode dispatch missed mutants (input.rs:55) (#146)
+- mutants: kill handle_key_event missed + timeout key arms via unit tests (input.rs) (#145)
+- mutants: kill clamp_scroll arithmetic missed mutants (commands.rs) (#144)
+- kill surviving mutants: screen_to_doc, decoration, highlighting, renderer (#138)
+- Integration test planning: catalogue scenarios from FEEDBACK-1 (#89)
+- perf: lazy-init SyntaxSet/ThemeSet in HighlightCache (defer cost to first code block) (#136)
+- test: assert default-syntaxes coverage (toml, ts, bash, etc) (#134)
 - feat: visual-line Up/Down navigation (wrap-aware cursor movement) (#126)
 - docs: update README for recent feature changes (#123)
 - test: kill surviving mutants in supports_italic, wrap_line_indented, apply_selection_overlay (#124)

@@ -4,14 +4,124 @@ use std::time::Instant;
 
 use tui_textarea::TextArea;
 
-use crate::config::Theme;
+use crate::config::{FiletypeConfig, Theme};
 use crate::decoration::DecorationMap;
+use crate::highlighting::HighlightCache;
+use crate::renderer::shorten_path;
 use crate::status::StatusLine;
+
+// ---------------------------------------------------------------------------
+// FileMode
+// ---------------------------------------------------------------------------
+
+/// Determines how the file content is presented.
+///
+/// Resolved from the file's extension and the `[filetype]` config section at
+/// startup and on config reload.  Stored in `App` and consulted by the event
+/// loop when deciding whether to run the markdown decoration pass or apply
+/// whole-file syntect highlighting.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FileMode {
+    /// Full markdown decoration pass + fenced-block highlighting.
+    Markdown,
+    /// Skip markdown decoration; apply syntect syntax highlighting for `lang`
+    /// to the entire file.  `lang` is the syntect language tag (typically the
+    /// lower-cased file extension).
+    PlainHighlight(String),
+    /// Skip all decoration and highlighting; render the file as unstyled text.
+    PlainText,
+}
+
+/// Built-in file extensions treated as Markdown.
+const MARKDOWN_EXTS: &[&str] = &["md", "markdown", "mdx", "mkd", "mkdn", "mdown"];
+
+/// Determine the editing mode for a file from its path and `[filetype]` config.
+///
+/// Resolution order:
+/// 1. Extension in the built-in or configured markdown list → `Markdown`.
+/// 2. Extension present and non-empty → `PlainHighlight(ext)`.
+/// 3. No extension → use `unknown_as` from config (`"markdown"` / `"plain"`).
+pub fn resolve_file_mode(path: &Path, config: &FiletypeConfig) -> FileMode {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase());
+
+    match ext.as_deref() {
+        Some(e)
+            if MARKDOWN_EXTS.contains(&e)
+                || config
+                    .extra_markdown_extensions
+                    .iter()
+                    .any(|ex| ex.eq_ignore_ascii_case(e)) =>
+        {
+            FileMode::Markdown
+        }
+        Some(e) => FileMode::PlainHighlight(e.to_string()),
+        None => {
+            if config.unknown_as.eq_ignore_ascii_case("plain") {
+                FileMode::PlainText
+            } else {
+                FileMode::Markdown
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Binary detection
+// ---------------------------------------------------------------------------
+
+/// Returns `true` if `buf` contains at least one null byte — the most reliable
+/// heuristic for detecting binary data without a magic-number database.
+///
+/// Pure function; separated from the I/O layer so it can be fully unit-tested.
+pub fn contains_binary_bytes(buf: &[u8]) -> bool {
+    buf.contains(&0u8)
+}
+
+/// Detect whether `path` is likely a binary file by scanning its first 4 096
+/// bytes for null bytes.
+///
+/// Returns `false` for paths that do not yet exist (new files are always text)
+/// and for any path that cannot be opened (the downstream `load_file` call will
+/// produce the proper error).
+#[mutants::skip] // Filesystem I/O — mutations are masked by OS state.
+pub fn is_likely_binary(path: &Path) -> bool {
+    use std::io::Read;
+    if !path.exists() {
+        return false;
+    }
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut buf = [0u8; 4096];
+    let n = f.read(&mut buf).unwrap_or(0);
+    contains_binary_bytes(&buf[..n])
+}
+
+/// Three-state clipboard handle.
+///
+/// Avoids repeated blocking connection attempts on headless systems:
+/// once an `arboard::Clipboard` connection fails we record it as
+/// `Unavailable` and stop retrying for the rest of the session.
+pub enum ClipboardState {
+    /// Not yet tried — initialised lazily on the first copy/paste.
+    Uninitialized,
+    /// Connected and ready to use.
+    Ready(arboard::Clipboard),
+    /// A previous connection attempt failed; skip all further attempts.
+    Unavailable,
+}
 
 /// All mutable application state.
 pub struct App {
     pub textarea: TextArea<'static>,
     pub file_path: PathBuf,
+    /// Pre-computed display string for the file path (shortened to 3 trailing
+    /// components).  Cached here so the render hot-path does not re-allocate on
+    /// every frame.  Updated whenever `file_path` changes.
+    pub shortened_path: String,
     pub is_dirty: bool,
     /// Snapshot of lines at last save, for dirty-flag recomputation after undo/redo.
     pub saved_content: Option<Vec<String>>,
@@ -47,19 +157,26 @@ pub struct App {
     /// last render frame.  Written by the event loop before dispatching each key
     /// event so `handle_visual_move` can use the same wrapping the renderer used.
     pub content_width: usize,
-    /// Lazily-initialised system clipboard handle. `None` until the first copy/paste,
-    /// then reused for the session to avoid reconnecting on every operation (expensive
-    /// on Wayland where arboard opens a new display-server connection each time).
-    pub clipboard: Option<arboard::Clipboard>,
-    /// True when the file was 0 bytes (or did not exist) at load time.
-    /// Prevents handle_save from growing a 0-byte file to a 1-byte bare newline
-    /// when the buffer is still empty.  Reset to false after any non-empty save.
-    pub initial_file_empty: bool,
+    /// Clipboard state: uninitialized, ready, or permanently unavailable.
+    /// See [`ClipboardState`] for the three-state semantics.
+    pub clipboard: ClipboardState,
+    /// Number of spaces per Tab key press (and per tab-stop on load).
+    /// Mirrors `[layout] tab_width` from config; stored here so `handle_key_event`
+    /// can expand Tab keypresses without needing access to the full config.
+    pub tab_width: usize,
+    /// Syntect highlight cache. `None` when highlighting is disabled in config.
+    /// Populated at startup from `[highlighting] enabled` + `syntect_theme`.
+    pub highlight_cache: Option<HighlightCache>,
+    /// Editing mode: Markdown decoration, plain syntect highlighting, or plain text.
+    /// Resolved from the file extension and `[filetype]` config at startup and
+    /// updated on config reload (Ctrl+R).
+    pub file_mode: FileMode,
 }
 
 impl App {
     /// Create a new App, loading file content if it exists.
     #[mutants::skip] // Calls load_file (fs I/O) and returns a struct — mutations masked by I/O.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         file_path: PathBuf,
         theme: Theme,
@@ -67,17 +184,17 @@ impl App {
         powerline_glyphs: bool,
         config_warnings: Vec<String>,
         tab_width: usize,
+        highlight_cache: Option<HighlightCache>,
+        file_mode: FileMode,
     ) -> io::Result<Self> {
-        // Detect whether the file is empty/new before loading, so handle_save can
-        // preserve the 0-byte state instead of growing the file to a bare newline.
-        let initial_file_empty =
-            !file_path.exists() || std::fs::metadata(&file_path).is_ok_and(|m| m.len() == 0);
         let textarea = load_file(&file_path, tab_width)?;
         // Snapshot the initial content so recompute_dirty() has a baseline for both
         // existing files (undo back to load state → clean) and new files (empty baseline).
         let saved_content = Some(textarea.lines().to_vec());
+        let shortened_path = shorten_path(&file_path, 3);
         Ok(Self {
             textarea,
+            shortened_path,
             file_path,
             is_dirty: false,
             saved_content,
@@ -94,8 +211,10 @@ impl App {
             free_scroll: false,
             sticky_col: None,
             content_width: 0,
-            clipboard: None,
-            initial_file_empty,
+            clipboard: ClipboardState::Uninitialized,
+            tab_width: tab_width.max(1),
+            highlight_cache,
+            file_mode,
         })
     }
 
@@ -114,6 +233,39 @@ impl App {
             Some(saved) => self.textarea.lines() != saved.as_slice(),
             None => !self.textarea.lines().is_empty(),
         };
+    }
+}
+
+/// Extract the currently-selected text from the textarea, or `None` if there
+/// is no active selection.  Does not fall back to the current line.
+///
+/// Shared between the pair-wrap handler (`input.rs`) and the copy handler
+/// (`clipboard.rs`), both of which need identical selection extraction logic.
+pub fn get_selection_text(app: &App) -> Option<String> {
+    let ((row_start, col_start), (row_end, col_end)) = app.textarea.selection_range()?;
+    let lines = app.textarea.lines();
+    if row_start == row_end {
+        let chars: Vec<char> = lines[row_start].chars().collect();
+        Some(chars[col_start..col_end.min(chars.len())].iter().collect())
+    } else {
+        let mut result = String::new();
+        for row in row_start..=row_end {
+            if row >= lines.len() {
+                break;
+            }
+            let chars: Vec<char> = lines[row].chars().collect();
+            let start = if row == row_start { col_start } else { 0 };
+            let end = if row == row_end {
+                col_end.min(chars.len())
+            } else {
+                chars.len()
+            };
+            result.extend(&chars[start..end]);
+            if row < row_end {
+                result.push('\n');
+            }
+        }
+        Some(result)
     }
 }
 
@@ -226,6 +378,7 @@ mod tests {
         App {
             textarea: TextArea::default(),
             file_path: PathBuf::from("test.md"),
+            shortened_path: "test.md".to_string(),
             is_dirty: false,
             saved_content: None,
             theme: Theme::default_theme(),
@@ -241,8 +394,10 @@ mod tests {
             free_scroll: false,
             sticky_col: None,
             content_width: 0,
-            clipboard: None,
-            initial_file_empty: false,
+            clipboard: ClipboardState::Uninitialized,
+            tab_width: 4,
+            highlight_cache: None,
+            file_mode: FileMode::Markdown,
         }
     }
 
@@ -315,5 +470,123 @@ mod tests {
         // TextArea::new(vec![]) may return [""] — test only that recompute_dirty runs
         // without panic and produces a consistent result.
         app.recompute_dirty(); // must not panic
+    }
+
+    // ── contains_binary_bytes ────────────────────────────────────────────────
+
+    #[test]
+    fn binary_bytes_null_detected() {
+        assert!(contains_binary_bytes(&[b'h', b'i', 0u8, b'!']));
+    }
+
+    #[test]
+    fn binary_bytes_no_null_is_clean() {
+        assert!(!contains_binary_bytes(b"hello world\n"));
+    }
+
+    #[test]
+    fn binary_bytes_empty_slice_is_clean() {
+        assert!(!contains_binary_bytes(&[]));
+    }
+
+    #[test]
+    fn binary_bytes_null_only_slice_detected() {
+        assert!(contains_binary_bytes(&[0u8]));
+    }
+
+    #[test]
+    fn binary_bytes_null_at_start_detected() {
+        assert!(contains_binary_bytes(&[0u8, b'a', b'b']));
+    }
+
+    // ── resolve_file_mode ────────────────────────────────────────────────────
+
+    use crate::config::FiletypeConfig;
+
+    fn default_ft() -> FiletypeConfig {
+        FiletypeConfig::default()
+    }
+
+    #[test]
+    fn resolve_md_extension_is_markdown() {
+        let p = PathBuf::from("notes.md");
+        assert_eq!(resolve_file_mode(&p, &default_ft()), FileMode::Markdown);
+    }
+
+    #[test]
+    fn resolve_markdown_extension_is_markdown() {
+        let p = PathBuf::from("README.markdown");
+        assert_eq!(resolve_file_mode(&p, &default_ft()), FileMode::Markdown);
+    }
+
+    #[test]
+    fn resolve_mdx_extension_is_markdown() {
+        let p = PathBuf::from("page.mdx");
+        assert_eq!(resolve_file_mode(&p, &default_ft()), FileMode::Markdown);
+    }
+
+    #[test]
+    fn resolve_rs_extension_is_plain_highlight() {
+        let p = PathBuf::from("main.rs");
+        assert_eq!(
+            resolve_file_mode(&p, &default_ft()),
+            FileMode::PlainHighlight("rs".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_toml_extension_is_plain_highlight() {
+        let p = PathBuf::from("Cargo.toml");
+        assert_eq!(
+            resolve_file_mode(&p, &default_ft()),
+            FileMode::PlainHighlight("toml".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_extension_normalised_to_lowercase() {
+        // Extensions are lowercased so "RS" and "rs" map to the same lang tag.
+        let p = PathBuf::from("main.RS");
+        assert_eq!(
+            resolve_file_mode(&p, &default_ft()),
+            FileMode::PlainHighlight("rs".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_no_extension_defaults_to_markdown() {
+        // Files like CONTRIBUTING, LICENSE, Makefile → Markdown by default.
+        let p = PathBuf::from("CONTRIBUTING");
+        assert_eq!(resolve_file_mode(&p, &default_ft()), FileMode::Markdown);
+    }
+
+    #[test]
+    fn resolve_no_extension_plain_when_configured() {
+        let ft = FiletypeConfig {
+            unknown_as: "plain".into(),
+            ..Default::default()
+        };
+        let p = PathBuf::from("Makefile");
+        assert_eq!(resolve_file_mode(&p, &ft), FileMode::PlainText);
+    }
+
+    #[test]
+    fn resolve_extra_markdown_extension_honoured() {
+        let ft = FiletypeConfig {
+            extra_markdown_extensions: vec!["txt".into()],
+            ..Default::default()
+        };
+        let p = PathBuf::from("notes.txt");
+        assert_eq!(resolve_file_mode(&p, &ft), FileMode::Markdown);
+    }
+
+    #[test]
+    fn resolve_extra_markdown_extension_case_insensitive() {
+        let ft = FiletypeConfig {
+            extra_markdown_extensions: vec!["TXT".into()],
+            ..Default::default()
+        };
+        let p = PathBuf::from("notes.txt");
+        assert_eq!(resolve_file_mode(&p, &ft), FileMode::Markdown);
     }
 }
