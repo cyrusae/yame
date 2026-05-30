@@ -502,6 +502,32 @@ fn shell_init_str_bash_and_zsh_produce_same_output() {
     );
 }
 
+// ── version_string tests ──────────────────────────────────────────────────
+
+#[test]
+fn version_string_starts_with_yame() {
+    let v = super::cli::version_string();
+    assert!(v.starts_with("yame "), "version string must start with 'yame '");
+}
+
+#[test]
+fn version_string_contains_semver() {
+    let v = super::cli::version_string();
+    // Must contain at least one dot (e.g. "0.1.0") after the "yame " prefix.
+    let ver = v.strip_prefix("yame ").expect("must start with 'yame '");
+    assert!(
+        ver.contains('.'),
+        "version portion must be a semver string, got: {ver:?}"
+    );
+}
+
+#[test]
+fn version_string_matches_cargo_pkg_version() {
+    let v = super::cli::version_string();
+    let expected = format!("yame {}", env!("CARGO_PKG_VERSION"));
+    assert_eq!(v, expected, "version_string() must equal 'yame {{CARGO_PKG_VERSION}}'");
+}
+
 // ── handle_pair_wrap: one test per pair character ────────────────────────
 
 fn select_all(app: &mut App, len: usize) {

@@ -105,7 +105,8 @@ pub(super) fn print_help() {
     println!("  yame <file>           Open <file> for editing (created if it doesn't exist)");
     println!("  yame init             Print shell integration function (eval in .bashrc/.zshrc)");
     println!("  yame write-config     Write default config to ~/.config/yame/config.toml");
-    println!("  yame --help           Show this help");
+    println!("  yame --version        Print version
+  yame --help           Show this help");
     println!();
     println!("KEYBINDINGS");
     println!("  Ctrl+S  Save          Ctrl+Z  Undo        Ctrl+C  Copy selection");
@@ -125,12 +126,24 @@ pub(super) fn print_help() {
 // Argument parsing
 // ---------------------------------------------------------------------------
 
+/// Returns the version string printed by `--version` / `-V`.
+///
+/// Separate from `parse_args` so it can be unit-tested without spawning a process.
+pub(super) fn version_string() -> String {
+    format!("yame {}", env!("CARGO_PKG_VERSION"))
+}
+
 #[cfg_attr(feature = "mutants-skip", mutants::skip)] // Reads std::env::args() — side-effectful, not unit-testable.
 pub(super) fn parse_args() -> Result<Command, ()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     if args.iter().any(|a| a == "-h" || a == "--help") {
         print_help();
+        std::process::exit(0);
+    }
+
+    if args.iter().any(|a| a == "-V" || a == "--version") {
+        println!("{}", version_string());
         std::process::exit(0);
     }
 
