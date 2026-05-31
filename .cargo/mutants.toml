@@ -7,11 +7,19 @@
 timeout_multiplier = 2.0
 
 # Hard floor so a cold cache doesn't time out on fast machines.
-minimum_test_timeout = 20
+# Raised from 20 → 60: the 537-test suite takes ~10 s baseline so 2× = ~20 s
+# was right at the floor; any mutation that didn't fail immediately timed out.
+minimum_test_timeout = 60
 
-# I/O-only functions are annotated with #[cfg_attr(feature = "mutants-skip", mutants::skip)]
-# directly in source (see src/main.rs, src/app.rs, src/clipboard.rs, src/config.rs,
-# src/renderer.rs, src/input.rs).  Invoke as: `cargo mutants --features mutants-skip`.
+# I/O-only functions are annotated with #[mutants::skip] directly in source
+# (see src/main.rs, src/app.rs, src/clipboard.rs, src/config.rs,
+# src/renderer/*.rs, src/input.rs).
+#
+# Note: the annotations are UNCONDITIONAL (no cfg_attr wrapper).  The `mutants`
+# crate is a non-optional dependency; its source scanner sees #[mutants::skip]
+# directly.  cfg_attr(feature = "mutants-skip", mutants::skip) was removed after
+# confirming that cargo-mutants v27 does NOT expand cfg_attr in its source scan.
+#
 # No file-level exclusions needed — per-item annotations are more precise.
 #
 # Mutants that cannot be killed by any test are excluded here with an explanation.

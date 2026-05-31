@@ -337,7 +337,7 @@ pub struct MarkdownView<'a> {
 }
 
 impl Widget for MarkdownView<'_> {
-    #[cfg_attr(feature = "mutants-skip", mutants::skip)] // Writes into ratatui Buffer — void, not testable via return value.
+    #[mutants::skip] // Writes into ratatui Buffer — void, not testable via return value.
     fn render(self, area: Rect, buf: &mut Buffer) {
         let left_gutter = left_gutter_width(self.lines.len(), self.show_line_numbers);
         let content_width =
@@ -607,7 +607,7 @@ impl Widget for MarkdownView<'_> {
 // `<→>` would simply paint no overlay (observable only through rendered pixels,
 // not through a pure-Rust unit assertion).  Suite timeouts caused by parallel
 // slow integration tests prevent cargo-mutants from confirming the skip empirically.
-#[cfg_attr(feature = "mutants-skip", mutants::skip)]
+#[mutants::skip]
 fn apply_selection_overlay(
     area: Rect,
     buf: &mut Buffer,
@@ -721,7 +721,7 @@ fn apply_selection_overlay(
 /// Dim background for all non-current matches; brighter background for the
 /// current one.  Applied before the selection and cursor overlays so those
 /// always win when they overlap a match cell.
-#[cfg_attr(feature = "mutants-skip", mutants::skip)] // Writes into ratatui Buffer — no return value to assert.
+#[mutants::skip] // Writes into ratatui Buffer — no return value to assert.
 fn apply_search_overlay(area: Rect, buf: &mut Buffer, view: &MarkdownView<'_>) {
     let left_gutter = left_gutter_width(view.lines.len(), view.show_line_numbers);
     let content_width =
@@ -860,7 +860,7 @@ pub fn focus_paragraph_bounds(lines: &[String], cursor_row: usize) -> (usize, us
 /// `theme.muted`, making out-of-focus content recede visually.
 ///
 /// Applied before search and selection overlays so those always render on top.
-#[cfg_attr(feature = "mutants-skip", mutants::skip)] // Writes into ratatui Buffer — void, not testable via return value.
+#[mutants::skip] // Writes into ratatui Buffer — void, not testable via return value.
 fn apply_focus_overlay(
     area: Rect,
     buf: &mut Buffer,
@@ -924,7 +924,8 @@ mod tests {
     use crate::decoration::{DecorationMap, StyledSpan};
     use crate::status::StatusLine;
 
-    use super::status::{build_normal_status_bar, build_timed_message_bar};
+    use super::search_bar::search_bar_height;
+    use super::status::{build_goto_line_bar, build_normal_status_bar, build_timed_message_bar};
     use super::*;
 
     fn make_app() -> App {
@@ -2463,6 +2464,173 @@ mod tests {
     // With correct `&&`: `while 2 < 5 && 2 < 2` = false → clean exit. ✓
     // With `&&→||`:      `2 < 5 || 2 < 2` = true → view.lines[2] → panic. ✓
     // With `<→<=` (log): `2 < 5 && 2 <= 2` = true → view.lines[2] → panic. ✓
+    // ── search_bar_height ────────────────────────────────────────────────────
+
+    #[test]
+    fn search_bar_height_none_returns_zero() {
+        let mut app = make_app();
+        app.search = None;
+        assert_eq!(search_bar_height(&app), 0);
+    }
+
+    #[test]
+    fn search_bar_height_search_only_returns_one() {
+        let mut app = make_app();
+        app.search = Some(crate::search::SearchState::new(false));
+        assert_eq!(search_bar_height(&app), 1);
+    }
+
+    #[test]
+    fn search_bar_height_with_replace_returns_two() {
+        let mut app = make_app();
+        app.search = Some(crate::search::SearchState::new(true));
+        assert_eq!(search_bar_height(&app), 2);
+    }
+
+    // ── status bar builders ──────────────────────────────────────────────────
+
+    #[test]
+    fn build_normal_status_bar_has_four_spans() {
+        let app = make_app();
+        let line = build_normal_status_bar(&app);
+        assert_eq!(
+            line.spans.len(),
+            4,
+            "normal bar: pill | sep | hints | trailing-sep"
+        );
+    }
+
+    #[test]
+    fn build_normal_status_bar_hints_span_contains_save_shortcut() {
+        let app = make_app();
+        let line = build_normal_status_bar(&app);
+        let hints = &line.spans[2];
+        assert!(
+            hints.content.contains("^S Save"),
+            "hints span must contain the Save shortcut"
+        );
+    }
+
+    #[test]
+    fn build_normal_status_bar_pill_shows_filename() {
+        let app = make_app();
+        let line = build_normal_status_bar(&app);
+        let pill = &line.spans[0];
+        assert!(
+            pill.content.contains("foo.md"),
+            "pill must show the shortened path"
+        );
+    }
+
+    #[test]
+    fn build_normal_status_bar_clean_pill_bg_is_text_colour() {
+        let app = make_app();
+        let theme = app.theme.clone();
+        let line = build_normal_status_bar(&app);
+        let pill = &line.spans[0];
+        assert_eq!(
+            pill.style.bg,
+            Some(theme.text),
+            "clean file pill background must be theme.text"
+        );
+    }
+
+    #[test]
+    fn build_normal_status_bar_dirty_pill_bg_is_accent_colour() {
+        let mut app = make_app();
+        app.is_dirty = true;
+        let theme = app.theme.clone();
+        let line = build_normal_status_bar(&app);
+        let pill = &line.spans[0];
+        assert_eq!(
+            pill.style.bg,
+            Some(theme.accent),
+            "dirty file pill background must be theme.accent"
+        );
+    }
+
+    #[test]
+    fn build_normal_status_bar_dirty_pill_shows_dirty_marker() {
+        let mut app = make_app();
+        app.is_dirty = true;
+        let line = build_normal_status_bar(&app);
+        let pill = &line.spans[0];
+        assert!(
+            pill.content.contains("[*]"),
+            "dirty pill must contain the [*] marker"
+        );
+    }
+
+    #[test]
+    fn build_timed_message_bar_has_three_spans() {
+        let app = make_app();
+        let line = build_timed_message_bar(&app, "Saved.");
+        assert_eq!(
+            line.spans.len(),
+            3,
+            "timed bar: pill | sep | message"
+        );
+    }
+
+    #[test]
+    fn build_timed_message_bar_last_span_contains_message() {
+        let app = make_app();
+        let line = build_timed_message_bar(&app, "File saved.");
+        let msg = &line.spans[2];
+        assert!(
+            msg.content.contains("File saved."),
+            "last span must contain the message text"
+        );
+    }
+
+    #[test]
+    fn build_timed_message_bar_pill_still_shows_path() {
+        let app = make_app();
+        let line = build_timed_message_bar(&app, "Saved.");
+        let pill = &line.spans[0];
+        assert!(
+            pill.content.contains("foo.md"),
+            "pill must still show the path during a timed message"
+        );
+    }
+
+    #[test]
+    fn build_goto_line_bar_has_one_span() {
+        let app = make_app();
+        let line = build_goto_line_bar(&app, "42");
+        assert_eq!(line.spans.len(), 1, "goto-line bar is a single span");
+    }
+
+    #[test]
+    fn build_goto_line_bar_span_contains_prompt_and_input() {
+        let app = make_app();
+        let line = build_goto_line_bar(&app, "99");
+        let span = &line.spans[0];
+        assert!(
+            span.content.contains("Go to line:"),
+            "span must contain the 'Go to line:' prompt"
+        );
+        assert!(
+            span.content.contains("99"),
+            "span must contain the user's input"
+        );
+    }
+
+    #[test]
+    fn build_goto_line_bar_empty_input_shows_cursor_only() {
+        let app = make_app();
+        let line = build_goto_line_bar(&app, "");
+        let span = &line.spans[0];
+        assert!(
+            span.content.contains("Go to line:"),
+            "prompt present even with empty input"
+        );
+        assert!(
+            span.content.contains('_'),
+            "cursor indicator must be present"
+        );
+    }
+
     #[test]
     fn selection_overlay_loop_stops_at_document_end() {
         use ratatui::buffer::Buffer;

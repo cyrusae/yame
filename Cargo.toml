@@ -28,18 +28,11 @@ two-face = { version = "0.5.1", default-features = false, features = ["syntect-f
 # Already pulled in transitively by syntect's regex-fancy feature — zero extra cost.
 fancy-regex = { version = "0.16", default-features = false }
 
-[features]
-# Activate during mutation testing: `cargo mutants --features mutants-skip`
-# Excluded from normal builds — the proc macro adds zero runtime cost but
-# is still removed from the default dependency graph to avoid confusing contributors.
-mutants-skip = ["dep:mutants"]
-
 [dependencies.mutants]
-# Provides the #[cfg_attr(feature = "mutants-skip", mutants::skip)] attribute.
-# Optional: only compiled when --features mutants-skip is passed (i.e. during
-# mutation testing runs). Not present in normal cargo build / cargo test output.
+# Zero-cost proc-macro that provides #[mutants::skip].  Always compiled so that
+# cargo-mutants' source scanner reliably sees the attribute — cfg_attr wrappers
+# are NOT expanded by the scanner and would be silently ignored.
 version = "0.0.4"
-optional = true
 
 [profile.release]
 strip = true

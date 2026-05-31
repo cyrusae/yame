@@ -101,7 +101,7 @@ fn run_decorate(req: &DecorateRequest) -> (DecorationMap, usize) {
 // a mutation-specific unit test would fail immediately.  The function is already
 // covered by 10+ targeted unit tests (lines 930–1164) with inline mutation notes;
 // mutation verification here adds no safety signal beyond those tests.
-#[cfg_attr(feature = "mutants-skip", mutants::skip)]
+#[mutants::skip]
 pub(super) fn screen_to_doc(
     screen_row: u16,
     screen_col: u16,
@@ -789,7 +789,7 @@ fn handle_visual_move(app: &mut App, go_down: bool, selecting: bool) -> KeyOutco
 // Event loop
 // ---------------------------------------------------------------------------
 
-#[cfg_attr(feature = "mutants-skip", mutants::skip)] // Terminal I/O loop — requires a real terminal backend + live event stream; not unit-testable.
+#[mutants::skip] // Terminal I/O loop — requires a real terminal backend + live event stream; not unit-testable.
 pub(super) fn event_loop<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,

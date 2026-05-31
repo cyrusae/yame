@@ -19,7 +19,7 @@ pub fn line_start_bytes(text: &str) -> Vec<usize> {
 // Mutation-tested implicitly by the decoration integration tests (fixture_decoration_roundtrip
 // and friends) and by block_highlights_to_decoration_map unit tests.  The timeout entries in
 // cargo-mutants are a suite-throughput artefact (slow parallel tests), not missing coverage.
-#[cfg_attr(feature = "mutants-skip", mutants::skip)]
+#[mutants::skip]
 pub fn byte_to_line_char(line_starts: &[usize], text: &str, byte: usize) -> (usize, usize) {
     // Clamp and snap to a valid char boundary so multi-byte chars never panic.
     let byte = text.floor_char_boundary(byte.min(text.len()));
@@ -32,7 +32,7 @@ pub fn byte_to_line_char(line_starts: &[usize], text: &str, byte: usize) -> (usi
 }
 
 /// Number of displayable chars on a line (excludes the trailing `\n`).
-#[cfg_attr(feature = "mutants-skip", mutants::skip)] // Tested implicitly; suite-throughput timeouts prevent empirical confirmation.
+#[mutants::skip] // Tested implicitly; suite-throughput timeouts prevent empirical confirmation.
 pub(super) fn line_char_len(line_starts: &[usize], text: &str, line_idx: usize) -> usize {
     let ls = line_starts[line_idx];
     let le = if line_idx + 1 < line_starts.len() {
@@ -43,12 +43,12 @@ pub(super) fn line_char_len(line_starts: &[usize], text: &str, line_idx: usize) 
     text[ls..le].chars().count()
 }
 
-#[cfg_attr(feature = "mutants-skip", mutants::skip)] // Trivial wrapper; tested implicitly through add_byte_range_span.
+#[mutants::skip] // Trivial wrapper; tested implicitly through add_byte_range_span.
 pub(super) fn push_span(map: &mut DecorationMap, line: usize, span: StyledSpan) {
     map.entry(line).or_default().push(span);
 }
 
-#[cfg_attr(feature = "mutants-skip", mutants::skip)] // Struct constructor; tested implicitly through callers in decoration/mod.rs.
+#[mutants::skip] // Struct constructor; tested implicitly through callers in decoration/mod.rs.
 pub(super) fn make_span(char_start: usize, char_end: usize, style: Style) -> StyledSpan {
     StyledSpan {
         char_start,

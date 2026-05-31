@@ -18,6 +18,7 @@ pub fn search_bar_height(app: &App) -> u16 {
 ///
 /// `area` should be exactly `search_bar_height` rows tall and span the full
 /// terminal width (same as `info_line` / `status_bar`).
+#[mutants::skip] // Writes into ratatui Frame — void, not testable via return value.
 pub fn render_search_bar(f: &mut Frame, area: Rect, app: &App) {
     let Some(search) = &app.search else { return };
     let theme = &app.theme;
@@ -153,6 +154,7 @@ const BOX_H: u16 = HELP.len() as u16 + 2;
 /// The box is centered horizontally and anchored at the top of the editor
 /// area.  It is only shown while `search.show_help` is `true` — the first
 /// keypress inside search mode clears that flag, making the overlay ephemeral.
+#[mutants::skip] // Writes into ratatui Frame — void, not testable via return value.
 pub fn render_search_help_modal(f: &mut Frame, editor_area: Rect, app: &App) {
     let Some(search) = &app.search else { return };
     if !search.show_help {

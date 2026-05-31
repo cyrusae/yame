@@ -253,7 +253,6 @@ pub fn block_highlights_to_decoration_map(
 ///
 /// `highlight_cache` is optional: pass `Some(&cache)` to enable syntect syntax
 /// highlighting for fenced code blocks, or `None` to disable it (fenced_bg-only).
-#[cfg_attr(feature = "mutants-skip", mutants::skip)]
 pub fn build_decoration_map(
     text: &str,
     theme: &Theme,
@@ -3039,6 +3038,694 @@ mod tests {
         assert!(
             map.contains_key(&1),
             "non-empty span list must create a map entry"
+        );
+    }
+
+    // ── Precision span-boundary tests ────────────────────────────────────────
+    //
+    // These tests pin exact `char_start`/`char_end` values so that off-by-one
+    // mutations in `build_decoration_map`'s position arithmetic are caught.
+    // Each test documents *which* expression it kills.
+
+    // ---- Plain bold delimiter boundaries ----
+    //
+    // Kills the arithmetic in End(TagEnd::Strong):
+    //   · `start_char + 2`  → opening delim end / content start
+    //   · `end_char_excl - 2` → content end / closing delim start
+    //   · `span_len >= 4`   → the minimum-span guard
+
+    #[test]
+    fn bold_plain_opening_delimiter_is_at_zero_to_two() {
+        // "**hi**" — opening ** must be at chars 0..2.
+        let text = "**hi**";
+        let map = build_map(text, &make_theme(), false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        assert!(
+            spans.iter().any(|s| s.char_start == 0 && s.char_end == 2),
+            "plain bold opening ** delimiter must be at chars 0..2; got: {spans:?}"
+        );
+    }
+
+    #[test]
+    fn bold_plain_content_is_at_two_to_four() {
+        // "**hi**" — content "hi" must be at chars 2..4 with bold_color + BOLD.
+        let text = "**hi**";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        let content = spans
+            .iter()
+            .find(|s| s.char_start == 2 && s.char_end == 4)
+            .expect("plain bold content must be at chars 2..4");
+        assert!(
+            content.style.add_modifier.contains(Modifier::BOLD),
+            "plain bold content at 2..4 must carry BOLD modifier"
+        );
+        assert_eq!(
+            content.style.fg,
+            Some(theme.bold_color),
+            "plain bold content at 2..4 must use bold_color"
+        );
+    }
+
+    #[test]
+    fn bold_plain_closing_delimiter_is_at_four_to_six() {
+        // "**hi**" — closing ** must be at chars 4..6.
+        let text = "**hi**";
+        let map = build_map(text, &make_theme(), false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        assert!(
+            spans.iter().any(|s| s.char_start == 4 && s.char_end == 6),
+            "plain bold closing ** delimiter must be at chars 4..6; got: {spans:?}"
+        );
+    }
+
+    #[test]
+    fn bold_min_span_guard_four_chars_produces_spans() {
+        // A bold span of exactly 4 chars ("**x**" = 5 chars total is wrong — the
+        // minimum guard is `span_len >= 4` where span_len is end - start in chars.
+        // "**x**" is 5 chars, span_len = 5 >= 4 → allowed.
+        // "**x*" (1 asterisk) = 4 chars but not parsed as bold.
+        // The smallest real bold is "**x**" (5 chars); span_len = 5 >= 4 ✓.
+        // This tests that the `>= 4` guard passes for a minimal one-char-content bold.
+        let text = "**x**";
+        let map = build_map(text, &make_theme(), false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        assert!(
+            spans.iter().any(|s| s.style.add_modifier.contains(Modifier::BOLD)),
+            "minimal 1-char bold **x** must still produce BOLD span (span_len=5 >= 4)"
+        );
+    }
+
+    // ---- Plain italic delimiter boundaries ----
+    //
+    // Kills:
+    //   · `start_char + 1`  → opening delim end / content start
+    //   · `end_char_excl - 1` → content end / closing delim start
+    //   · `span_len >= 2`   → the minimum-span guard
+
+    #[test]
+    fn italic_plain_opening_delimiter_is_at_zero_to_one() {
+        // "*hi*" — opening * must be at chars 0..1.
+        let text = "*hi*";
+        let map = build_map(text, &make_theme(), false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        assert!(
+            spans.iter().any(|s| s.char_start == 0 && s.char_end == 1),
+            "plain italic opening * delimiter must be at chars 0..1; got: {spans:?}"
+        );
+    }
+
+    #[test]
+    fn italic_plain_content_is_at_one_to_three() {
+        // "*hi*" — content "hi" must be at chars 1..3 with italic_color.
+        let text = "*hi*";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        let content = spans
+            .iter()
+            .find(|s| s.char_start == 1 && s.char_end == 3)
+            .expect("plain italic content must be at chars 1..3");
+        assert_eq!(
+            content.style.fg,
+            Some(theme.italic_color),
+            "plain italic content at 1..3 must use italic_color"
+        );
+    }
+
+    #[test]
+    fn italic_plain_closing_delimiter_is_at_three_to_four() {
+        // "*hi*" — closing * must be at chars 3..4.
+        let text = "*hi*";
+        let map = build_map(text, &make_theme(), false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        assert!(
+            spans.iter().any(|s| s.char_start == 3 && s.char_end == 4),
+            "plain italic closing * delimiter must be at chars 3..4; got: {spans:?}"
+        );
+    }
+
+    // ---- Table pipe exact character positions ----
+    //
+    // "| A | B |" has pipes at chars 0, 4, 8.
+    // Kills the `char_idx` loop in Event::Start(Tag::Table(..)):
+    //   · any mutation that shifts the `char_idx` counter or uses byte count
+    //     instead of char count would misplace at least one pipe span.
+
+    #[test]
+    fn table_header_pipes_at_exact_char_positions() {
+        // "| A | B |" — pipes at 0, 4, 8 each styled with theme.muted.
+        let text = "| A | B |\n| - | - |\n| 1 | 2 |";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let spans = map.get(&0).expect("header line must have spans");
+        for &pos in &[0usize, 4, 8] {
+            assert!(
+                spans.iter().any(|s| {
+                    s.char_start == pos
+                        && s.char_end == pos + 1
+                        && s.style.fg == Some(theme.muted)
+                }),
+                "pipe at char {pos} must produce a muted span at {pos}..{}; got: {spans:?}",
+                pos + 1
+            );
+        }
+    }
+
+    #[test]
+    fn table_separator_pipes_at_exact_char_positions() {
+        // "| - | - |" — pipes at 0, 4, 8.
+        let text = "| A | B |\n| - | - |\n| 1 | 2 |";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let spans = map.get(&1).expect("separator line must have spans");
+        for &pos in &[0usize, 4, 8] {
+            assert!(
+                spans.iter().any(|s| {
+                    s.char_start == pos
+                        && s.char_end == pos + 1
+                        && s.style.fg == Some(theme.muted)
+                }),
+                "separator pipe at char {pos} must produce a muted span at {pos}..{}; got: {spans:?}",
+                pos + 1
+            );
+        }
+    }
+
+    #[test]
+    fn table_body_pipes_at_exact_char_positions() {
+        // "| 1 | 2 |" — pipes at 0, 4, 8.
+        let text = "| A | B |\n| - | - |\n| 1 | 2 |";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let spans = map.get(&2).expect("body line must have spans");
+        for &pos in &[0usize, 4, 8] {
+            assert!(
+                spans.iter().any(|s| {
+                    s.char_start == pos
+                        && s.char_end == pos + 1
+                        && s.style.fg == Some(theme.muted)
+                }),
+                "body row pipe at char {pos} must produce a muted span at {pos}..{}; got: {spans:?}",
+                pos + 1
+            );
+        }
+    }
+
+    // ---- Fenced code block fence delimiter char bounds ----
+    //
+    // Kills the `fence_count` / `close_fence` path in Event::Start(Tag::CodeBlock):
+    //   · a mutation that changes 0 → 1 (char_start) would break the opening/closing span.
+    //   · a mutation that changes the length calculation would mis-size the delimiter span.
+
+    #[test]
+    fn fenced_code_opening_fence_span_is_at_zero_to_three() {
+        // Opening ``` on line 0 must have a span at chars 0..3.
+        let text = "```\ncode\n```\n";
+        let map = build_map(text, &make_theme(), false);
+        let opening = map.get(&0).expect("opening fence line must have spans");
+        assert!(
+            opening.iter().any(|s| s.char_start == 0 && s.char_end == 3),
+            "opening ``` fence delimiter must be at chars 0..3; got: {opening:?}"
+        );
+    }
+
+    #[test]
+    fn fenced_code_closing_fence_span_is_at_zero_to_three() {
+        // Closing ``` on line 2 must have a span at chars 0..3.
+        let text = "```\ncode\n```\n";
+        let map = build_map(text, &make_theme(), false);
+        let closing = map.get(&2).expect("closing fence line must have spans");
+        assert!(
+            closing.iter().any(|s| s.char_start == 0 && s.char_end == 3),
+            "closing ``` fence delimiter must be at chars 0..3; got: {closing:?}"
+        );
+    }
+
+    #[test]
+    fn fenced_code_four_backtick_fence_span_is_at_zero_to_four() {
+        // A ````-fenced block uses 4-char delimiters.
+        let text = "````\ncode\n````\n";
+        let map = build_map(text, &make_theme(), false);
+        let opening = map.get(&0).expect("opening fence line must have spans");
+        assert!(
+            opening.iter().any(|s| s.char_start == 0 && s.char_end == 4),
+            "opening ```` fence delimiter must be at chars 0..4; got: {opening:?}"
+        );
+    }
+
+    #[test]
+    fn fenced_code_lang_tag_span_immediately_follows_fence() {
+        // "```rust" — language tag "rust" starts at char 3 (right after ```).
+        let text = "```rust\nlet x = 1;\n```\n";
+        let map = build_map(text, &make_theme(), false);
+        let opening = map.get(&0).expect("opening fence line must have spans");
+        assert!(
+            opening.iter().any(|s| s.char_start == 3 && s.char_end == 7),
+            "language tag 'rust' must be at chars 3..7 (right after ``` at 0..3); got: {opening:?}"
+        );
+    }
+
+    // ---- Link ASCII exact span positions ----
+    //
+    // Kills the arithmetic in Event::Start(Tag::Link{..}):
+    //   · `start_char + 1`         → text start (after [)
+    //   · `start_char + split_idx` → ]( start
+    //   · `+ 2` in url_start       → url start (after ])
+    //   · `end_char_excl - 1`      → closing ) start
+
+    #[test]
+    fn link_ascii_opening_bracket_is_at_zero_to_one() {
+        // "[hi](url)" — opening [ at chars 0..1.
+        let text = "[hi](url)";
+        let map = build_map(text, &make_theme(), false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        assert!(
+            spans.iter().any(|s| s.char_start == 0 && s.char_end == 1),
+            "opening [ must be at chars 0..1; got: {spans:?}"
+        );
+    }
+
+    #[test]
+    fn link_ascii_text_span_is_underlined_at_one_to_three() {
+        // "[hi](url)" — link text "hi" at chars 1..3 with UNDERLINED.
+        let text = "[hi](url)";
+        let map = build_map(text, &make_theme(), false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        let text_span = spans
+            .iter()
+            .find(|s| s.char_start == 1 && s.char_end == 3)
+            .expect("link text 'hi' must be at chars 1..3");
+        assert!(
+            text_span.style.add_modifier.contains(Modifier::UNDERLINED),
+            "link text at 1..3 must be UNDERLINED; got: {text_span:?}"
+        );
+    }
+
+    #[test]
+    fn link_ascii_bracket_paren_delimiter_is_at_three_to_five() {
+        // "[hi](url)" — ]( delimiter at chars 3..5.
+        let text = "[hi](url)";
+        let map = build_map(text, &make_theme(), false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        assert!(
+            spans.iter().any(|s| s.char_start == 3 && s.char_end == 5),
+            "]( delimiter must be at chars 3..5; got: {spans:?}"
+        );
+    }
+
+    #[test]
+    fn link_ascii_url_span_is_at_five_to_eight() {
+        // "[hi](url)" — URL "url" at chars 5..8.
+        let text = "[hi](url)";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        let url_span = spans
+            .iter()
+            .find(|s| s.char_start == 5 && s.char_end == 8)
+            .expect("url 'url' must be at chars 5..8");
+        assert_eq!(
+            url_span.style.fg,
+            Some(theme.link_url),
+            "url span must use link_url color; got: {url_span:?}"
+        );
+    }
+
+    #[test]
+    fn link_ascii_closing_paren_is_at_eight_to_nine() {
+        // "[hi](url)" — closing ) at chars 8..9.
+        let text = "[hi](url)";
+        let map = build_map(text, &make_theme(), false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        assert!(
+            spans.iter().any(|s| s.char_start == 8 && s.char_end == 9),
+            "closing ) must be at chars 8..9; got: {spans:?}"
+        );
+    }
+
+    // ---- Ordered list bullet char_end ----
+    //
+    // "1. item" — bullet spans chars 0..2 covering "1."
+    // Kills: `find(['.', ')'])` offset calculation, `count_chars_in` call,
+    //        `item_char + 2` fallback.
+
+    #[test]
+    fn ordered_list_one_digit_bullet_span_is_at_zero_to_two() {
+        // "1. item text" — bullet "1." must produce a span at chars 0..2.
+        let text = "1. item text";
+        let map = build_map(text, &make_theme(), false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        assert!(
+            spans.iter().any(|s| s.char_start == 0 && s.char_end == 2),
+            "ordered '1.' bullet span must be at chars 0..2; got: {spans:?}"
+        );
+    }
+
+    #[test]
+    fn ordered_list_two_digit_bullet_span_is_at_zero_to_three() {
+        // A list starting at item 10 would have "10. item" — bullet at 0..3.
+        // We can't force pulldown_cmark to start at 10 without a preceding list,
+        // so we use "9." (2 chars + dot = 3 chars).  Note: pulldown_cmark counts
+        // the number character, not the sequence, so "9." gives a 2-char marker.
+        // Actually `9.` is char '9' + '.' = 2 chars → bullet_end = 2.
+        // We need to check the code path for `find(['.', ')'])` returning the right offset.
+        // Use "10." but preceded by earlier items to get past the 1-digit case.
+        // Simplest: directly give "10. item" as the only item.
+        let text = "10. item text";
+        let map = build_map(text, &make_theme(), false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        // pulldown_cmark parses "10. item text" as an ordered list item starting at 10.
+        // The bullet prefix is "10." = 3 chars, so span should be at 0..3.
+        assert!(
+            spans.iter().any(|s| s.char_start == 0 && s.char_end == 3),
+            "ordered '10.' bullet span must be at chars 0..3; got: {spans:?}"
+        );
+    }
+
+    // ---- Strikethrough color ----
+    //
+    // The content span must use theme.strikethrough_color (kills fg mutation).
+
+    #[test]
+    fn strikethrough_content_has_strikethrough_color() {
+        let text = "~~hi~~";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        let content = spans
+            .iter()
+            .find(|s| s.char_start == 2 && s.char_end == 4)
+            .expect("strikethrough content must be at chars 2..4");
+        assert_eq!(
+            content.style.fg,
+            Some(theme.strikethrough_color),
+            "strikethrough content must use strikethrough_color; got: {content:?}"
+        );
+    }
+
+    // ---- Horizontal rule color and flags ----
+    //
+    // Kills `is_rule = true → false` mutation and `fg = rule_color` deletion.
+
+    #[test]
+    fn horizontal_rule_is_rule_and_has_rule_color_on_exact_line() {
+        // The rule is on line 2 ("---" with blank lines around it).
+        let text = "above\n\n---\n\nbelow";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let rule_line = map
+            .values()
+            .find(|spans| spans.iter().any(|s| s.is_rule))
+            .expect("a rule line must exist");
+        let rule_span = rule_line
+            .iter()
+            .find(|s| s.is_rule)
+            .expect("rule span must exist");
+        assert_eq!(
+            rule_span.style.fg,
+            Some(theme.rule_color),
+            "rule span must use theme.rule_color"
+        );
+        assert_eq!(rule_span.char_start, 0, "rule span char_start must be 0");
+        assert!(
+            rule_span.char_end > 0,
+            "rule span char_end must be non-zero (covers the '---' chars)"
+        );
+    }
+
+    // ---- Blockquote continuation indent ----
+    //
+    // Kills `continuation_indent: 2` → `continuation_indent: 0` mutation
+    // (the `2` literal in the StyledSpan initialiser).
+
+    #[test]
+    fn blockquote_indicator_continuation_indent_is_exactly_two() {
+        let text = "> quoted";
+        let map = build_map(text, &make_theme(), false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        let indicator = spans
+            .iter()
+            .find(|s| s.is_blockquote && s.char_start == 0)
+            .expect("blockquote indicator span must exist");
+        assert_eq!(
+            indicator.continuation_indent, 2,
+            "blockquote continuation_indent must be exactly 2; got: {indicator:?}"
+        );
+    }
+
+    // ---- Word count ----
+    //
+    // Kills `+=` → `-=` / `= 0` in the word count accumulation.
+
+    #[test]
+    fn word_count_plain_paragraph() {
+        let text = "one two three";
+        let theme = make_theme();
+        let (_, wc) = build_decoration_map(text, &theme, false, None);
+        assert_eq!(wc, 3, "plain paragraph must count 3 words");
+    }
+
+    #[test]
+    fn word_count_heading_plus_paragraph() {
+        let text = "# Title\n\nHello world.";
+        let theme = make_theme();
+        let (_, wc) = build_decoration_map(text, &theme, false, None);
+        assert_eq!(wc, 3, "heading (1) + paragraph (2) must total 3 words");
+    }
+
+    #[test]
+    fn word_count_inline_code_counted() {
+        // Event::Code is counted separately from Event::Text.
+        let text = "See `foo bar` please.";
+        let theme = make_theme();
+        let (_, wc) = build_decoration_map(text, &theme, false, None);
+        // "See" (1) + "foo bar" via Code (2) + "please." (1) = 4
+        assert_eq!(wc, 4, "inline code words must be counted");
+    }
+
+    #[test]
+    fn word_count_empty_doc_is_zero() {
+        let theme = make_theme();
+        let (_, wc) = build_decoration_map("", &theme, false, None);
+        assert_eq!(wc, 0, "empty document must have word count 0");
+    }
+
+    // ---- Heading color propagation ----
+    //
+    // Kills mutations that swap heading level colors (e.g. h1 ↔ h2 in the match).
+
+    #[test]
+    fn heading_h1_content_uses_h1_color() {
+        let text = "# Hello";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        let content = spans
+            .iter()
+            .find(|s| s.char_start == 2)
+            .expect("H1 content span must start at char 2");
+        assert_eq!(
+            content.style.fg,
+            Some(theme.headings.h1),
+            "H1 content must use headings.h1 color"
+        );
+    }
+
+    #[test]
+    fn heading_h2_content_uses_h2_color() {
+        let text = "## Hello";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        let content = spans
+            .iter()
+            .find(|s| s.char_start == 3)
+            .expect("H2 content span must start at char 3");
+        assert_eq!(
+            content.style.fg,
+            Some(theme.headings.h2),
+            "H2 content must use headings.h2 color"
+        );
+    }
+
+    #[test]
+    fn heading_h3_content_uses_h3_color() {
+        let text = "### Hello";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        let content = spans
+            .iter()
+            .find(|s| s.char_start == 4)
+            .expect("H3 content span must start at char 4");
+        assert_eq!(
+            content.style.fg,
+            Some(theme.headings.h3),
+            "H3 content must use headings.h3 color"
+        );
+    }
+
+    // ---- Heading delimiter counts (delim_chars = level + 1) ----
+    //
+    // Kills `level_num + 1` → `level_num * 1` and `level_num - 1` mutations
+    // that would miscalculate the delimiter width.
+
+    #[test]
+    fn heading_h4_delimiter_span_is_at_zero_to_five() {
+        // "#### Hello" — H4 delimiter "#### " = 5 chars (4 hashes + space).
+        let text = "#### Hello";
+        let map = build_map(text, &make_theme(), false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        assert!(
+            spans.iter().any(|s| s.char_start == 0 && s.char_end == 5),
+            "H4 delimiter span (#### + space) must be at chars 0..5; got: {spans:?}"
+        );
+    }
+
+    #[test]
+    fn heading_h6_delimiter_span_is_at_zero_to_seven() {
+        // "###### Hello" — H6 delimiter "###### " = 7 chars.
+        let text = "###### Hello";
+        let map = build_map(text, &make_theme(), false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        assert!(
+            spans.iter().any(|s| s.char_start == 0 && s.char_end == 7),
+            "H6 delimiter span (6 hashes + space) must be at chars 0..7; got: {spans:?}"
+        );
+    }
+
+    // ---- Bold in non-zero column (offset test) ----
+    //
+    // "text **hi**" — bold spans must be offset by the leading text width.
+    // Kills off-by-one in `byte_to_line_char` usage for `strong_range.start`.
+
+    #[test]
+    fn bold_mid_line_opening_delimiter_is_at_five_to_seven() {
+        // "text **hi**" — "text " = 5 chars, then ** at 5..7.
+        let text = "text **hi**";
+        let map = build_map(text, &make_theme(), false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        assert!(
+            spans.iter().any(|s| s.char_start == 5 && s.char_end == 7),
+            "mid-line bold opening ** must be at chars 5..7; got: {spans:?}"
+        );
+    }
+
+    #[test]
+    fn bold_mid_line_content_is_at_seven_to_nine() {
+        // "text **hi**" — "hi" content at chars 7..9 with BOLD.
+        let text = "text **hi**";
+        let map = build_map(text, &make_theme(), false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        let content = spans
+            .iter()
+            .find(|s| s.char_start == 7 && s.char_end == 9)
+            .expect("mid-line bold content must be at chars 7..9");
+        assert!(
+            content.style.add_modifier.contains(Modifier::BOLD),
+            "mid-line bold content at 7..9 must carry BOLD modifier"
+        );
+    }
+
+    #[test]
+    fn bold_mid_line_closing_delimiter_is_at_nine_to_eleven() {
+        // "text **hi**" — closing ** at chars 9..11.
+        let text = "text **hi**";
+        let map = build_map(text, &make_theme(), false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        assert!(
+            spans.iter().any(|s| s.char_start == 9 && s.char_end == 11),
+            "mid-line bold closing ** must be at chars 9..11; got: {spans:?}"
+        );
+    }
+
+    // ---- Italic in non-zero column ----
+
+    #[test]
+    fn italic_mid_line_opening_delimiter_is_at_five_to_six() {
+        // "text *hi*" — opening * at char 5..6.
+        let text = "text *hi*";
+        let map = build_map(text, &make_theme(), false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        assert!(
+            spans.iter().any(|s| s.char_start == 5 && s.char_end == 6),
+            "mid-line italic opening * must be at chars 5..6; got: {spans:?}"
+        );
+    }
+
+    #[test]
+    fn italic_mid_line_content_is_at_six_to_eight() {
+        // "text *hi*" — content "hi" at chars 6..8 with italic_color.
+        let text = "text *hi*";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        let content = spans
+            .iter()
+            .find(|s| s.char_start == 6 && s.char_end == 8)
+            .expect("mid-line italic content must be at chars 6..8");
+        assert_eq!(
+            content.style.fg,
+            Some(theme.italic_color),
+            "mid-line italic content at 6..8 must use italic_color"
+        );
+    }
+
+    #[test]
+    fn italic_mid_line_closing_delimiter_is_at_eight_to_nine() {
+        // "text *hi*" — closing * at char 8..9.
+        let text = "text *hi*";
+        let map = build_map(text, &make_theme(), false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        assert!(
+            spans.iter().any(|s| s.char_start == 8 && s.char_end == 9),
+            "mid-line italic closing * must be at chars 8..9; got: {spans:?}"
+        );
+    }
+
+    // ---- Inline code with multiple backticks ----
+
+    #[test]
+    fn inline_code_double_backtick_delimiter_is_at_zero_to_two() {
+        // "``hi``" — opening `` at chars 0..2.
+        let text = "``hi``";
+        let map = build_map(text, &make_theme(), false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        assert!(
+            spans.iter().any(|s| s.char_start == 0 && s.char_end == 2),
+            "double-backtick opening `` must be at chars 0..2; got: {spans:?}"
+        );
+    }
+
+    #[test]
+    fn inline_code_double_backtick_content_is_at_two_to_four() {
+        // "``hi``" — content at chars 2..4 with code_color.
+        let text = "``hi``";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        let content = spans
+            .iter()
+            .find(|s| s.char_start == 2 && s.char_end == 4)
+            .expect("double-backtick content must be at chars 2..4");
+        assert_eq!(
+            content.style.fg,
+            Some(theme.code_color),
+            "inline code content at 2..4 must use code_color"
+        );
+    }
+
+    #[test]
+    fn inline_code_double_backtick_closing_is_at_four_to_six() {
+        // "``hi``" — closing `` at chars 4..6.
+        let text = "``hi``";
+        let map = build_map(text, &make_theme(), false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        assert!(
+            spans.iter().any(|s| s.char_start == 4 && s.char_end == 6),
+            "double-backtick closing `` must be at chars 4..6; got: {spans:?}"
         );
     }
 }

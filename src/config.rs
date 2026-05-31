@@ -540,7 +540,7 @@ pub fn config_path() -> PathBuf {
 
 /// Load config from disk; fall back to defaults on any error.
 /// Returns `(Config, warnings)`.
-#[cfg_attr(feature = "mutants-skip", mutants::skip)] // fs::read_to_string + toml::from_str I/O path — mutations masked by filesystem state.
+#[mutants::skip] // fs::read_to_string + toml::from_str I/O path — mutations masked by filesystem state.
 pub fn load_config() -> (Config, Vec<String>) {
     let path = config_path();
     let mut warnings = Vec::new();
@@ -620,7 +620,7 @@ pub fn term_supports_italic(term: &str) -> bool {
 ///
 /// This is a thin shim; the `$TERM`-matching logic lives in
 /// [`term_supports_italic`], which is fully tested.
-#[cfg_attr(feature = "mutants-skip", mutants::skip)]
+#[mutants::skip]
 pub fn supports_italic() -> bool {
     // Windows Terminal always supports italics.
     #[cfg(windows)]
