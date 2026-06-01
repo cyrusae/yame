@@ -537,4 +537,36 @@ mod tests {
             cells
         );
     }
+
+    // ---- T-21: is_separator_row — body rows must not be detected as separators ----
+
+    #[test]
+    fn separator_not_detected_for_row_with_letters_and_dash() {
+        // Kills: line 103:46 `replace && with || in is_separator_row`
+        // With `||`, any non-empty cell is a separator because `contains('-')` or
+        // `contains(':')` is often true.  "a-b" contains '-' but is not a separator.
+        assert!(!is_separator_row(&s(&["a-b"])), "cell 'a-b' must not be a separator");
+        assert!(!is_separator_row(&s(&["a:b"])), "cell 'a:b' must not be a separator");
+        assert!(!is_separator_row(&s(&["hello"])), "cell 'hello' must not be a separator");
+        // True separators still work.
+        assert!(is_separator_row(&s(&["---"])), "'---' must be a separator");
+        assert!(is_separator_row(&s(&[":--:"])), "':--:' must be a separator");
+    }
+
+    // ---- T-22: format_table with single-row input (no separator row) ----
+
+    #[test]
+    fn format_table_single_row_does_not_panic() {
+        // Kills: lines 197:30 (`>→>=`) and 197:44 (`&&→||`).
+        // With `>→>=`: `rows.len() >= 1` → tries rows[sep_row_idx=1] on a 1-row input → OOB.
+        // With `&&→||`: same OOB path triggered when len==1.
+        let lines = s(&["| A | B |"]);
+        let result = format_table(&lines);
+        assert_eq!(result.len(), 1, "single-row input must produce single-row output");
+        assert!(
+            result[0].contains('|'),
+            "output must still be a pipe-table row: {:?}",
+            result
+        );
+    }
 }

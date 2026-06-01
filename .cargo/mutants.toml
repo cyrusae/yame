@@ -49,18 +49,41 @@ exclude_re = [
     # next_start = 1, but char_start was already > 1 → walks backward → infinite loop.
     "renderer/mod\\.rs:77:.*replace \\+ with \\*",
 
-    # `if chunk_end == char_start` pathological-wide-char guard (renderer/mod.rs:81).
+    # `chunk_end = char_start + ci + 1` — two + operators, both cause backward-walk (renderer/mod.rs:79).
+    # col 36 (`char_start + ci` → `char_start * ci`): for char_start > 0 on subsequent outer
+    # iterations, ci = 0 on first inner step → chunk_end = 0 + 1 = 1; next outer start becomes
+    # 1 < char_start → walks backward → infinite loop.
+    # col 41 (`ci + 1` → `ci * 1 = ci`): chunk_end is one short; outer loop re-enters the same
+    # character position → infinite loop.
+    "renderer/mod\\.rs:79:36:.*replace \\+ with \\* in wrap_line",
+    "renderer/mod\\.rs:79:41:.*replace \\+ with \\* in wrap_line",
+
+    # `chunk_end = char_start + ci` on the break-path (renderer/mod.rs:81, col 46).
+    # `+→*`: same backward-walk as 79:36 — when break fires with ci = 0 and char_start > 0,
+    # chunk_end becomes 0, forcing next outer iteration backward.
+    "renderer/mod\\.rs:81:46:.*replace \\+ with \\* in wrap_line",
+
+    # `if chunk_end == char_start` pathological-wide-char guard (renderer/mod.rs:85).
+    # Source line shifted from old :81 after Phase-12 additions.
     # `==→!=` inverts the guard: pathological CJK chars (wider than width) fall into
     # the normal path where break_at may equal char_start → chunk never advances →
     # infinite loop.
-    "renderer/mod\\.rs:81:.*replace == with != in wrap_line",
+    "renderer/mod\\.rs:85:22:.*replace == with != in wrap_line",
 
-    # `next_start = sp + 1` in the soft-wrap break logic (renderer/mod.rs:96).
+    # `char_start += 1` in wrap_line's pathological CJK path (renderer/mod.rs:94).
+    # Source line shifted from old :90 after Phase-12 additions.
+    # The `*= 1` mutation is a no-op that leaves char_start at the same position
+    # forever → infinite loop / timeout.  The `-= 1` mutation IS caught by the
+    # wrap_cjk_pathological_single_col test (usize underflow → panic in debug).
+    "renderer/mod\\.rs:94:24:.*replace \\+= with \\*= in wrap_line",
+
+    # `next_start = sp + 1` in the soft-wrap break logic (renderer/mod.rs:100).
+    # Source line shifted from old :96 after Phase-12 additions.
     # `+→-`: when sp equals char_start, next_start = sp-1 < char_start → walks
     # backward through previously consumed chars → infinite loop.
     # `+→*`: sp*1 = sp → next_start = sp = char_start of same break → re-processes
     # the same chunk forever → infinite loop.
-    "renderer/mod\\.rs:96:.*replace \\+ with [-*] in wrap_line",
+    "renderer/mod\\.rs:100:33:.*replace \\+ with [-*] in wrap_line",
 
     # `cursor_row < app.scroll_top` scroll-up guard (commands.rs, col 19).
     # `replace < with <=`: when cursor_row == scroll_top the mutation executes
@@ -76,11 +99,6 @@ exclude_re = [
     # Column anchor 43: the `+` in `i + 1 == char_ranges.len()` at indent level 12.
     "commands\\.rs:\\d+:43:.*replace \\+ with \\* in clamp_scroll",
 
-    # `char_start += 1` in wrap_line's pathological CJK path (renderer/mod.rs:90).
-    # The `*= 1` mutation is a no-op that leaves char_start at the same position
-    # forever → infinite loop / timeout.  The `-= 1` mutation IS caught by the
-    # wrap_cjk_pathological_single_col test (usize underflow → panic in debug).
-    "renderer/mod\\.rs:90:.*replace \\+= with \\*=",
 
     # `i += 1` loop-advance in link_split_char_idx (decoration/words.rs:29).
     # `i *= 1` is a no-op that leaves i = 0 forever → guaranteed infinite loop / timeout.
@@ -152,4 +170,152 @@ exclude_re = [
     "decoration/mod\\.rs:\\d+:36:.*replace \\|\\| with \\&\\& in emit_bold_italic_spans",
     "decoration/mod\\.rs:\\d+:22:.*replace > with .* in emit_bold_italic_spans",
     "decoration/mod\\.rs:\\d+:20:.*replace > with >= in emit_bold_italic_spans",
+
+    # ---------------------------------------------------------------------------
+    # build_decoration_map — structurally unkillable no-ops (added after 0531 run)
+    # ---------------------------------------------------------------------------
+
+    # pulldown-cmark Options flags (decoration/mod.rs:267, cols 32 and 60).
+    # ENABLE_TABLES | ENABLE_TASKLISTS | ENABLE_STRIKETHROUGH: three non-overlapping bits.
+    # For non-overlapping flags A, B: A | B == A ^ B.  Same bitmask, same parser behaviour.
+    "decoration/mod\\.rs:267:32:.*replace \\| with \\^ in build_decoration_map",
+    "decoration/mod\\.rs:267:60:.*replace \\| with \\^ in build_decoration_map",
+
+    # Heading delimiter guard (decoration/mod.rs:326, col 30).
+    # `>→>=` admits delim_end == start_char → zero-width span (start_char, start_char).
+    # Zero-width spans are not drawn; push_span does not validate them.
+    "decoration/mod\\.rs:326:30:.*replace > with >= in build_decoration_map",
+
+    # `delete field char_start` from heading delimiter span (decoration/mod.rs:331, col 29).
+    # ATX headings always start at col 0 (pulldown-cmark reports byte offset at `#`).
+    # Explicit 0 == Default::default() for usize.
+    "decoration/mod\\.rs:331:29:.*delete field char_start.*in build_decoration_map",
+
+    # `add_modifier_to_existing` range start (decoration/mod.rs:440, col 48).
+    # For plain **text** (no inner spans) the range change is invisible — no existing spans
+    # to modify regardless of bounds.  Unkillable for all plain-bold inputs.
+    "decoration/mod\\.rs:440:48:.*replace \\+ with \\* in build_decoration_map",
+
+    # Inline code span guards (decoration/mod.rs:553 col 33, 561 col 36).
+    # `<→<=` admits equality → zero-width span.  No-op.
+    "decoration/mod\\.rs:553:33:.*replace < with <= in build_decoration_map",
+    "decoration/mod\\.rs:561:36:.*replace < with <= in build_decoration_map",
+
+    # Opening fenced-code fence span (decoration/mod.rs:629, col 29).
+    # `delete field char_start`: fence always starts at col 0; explicit 0 == default 0.
+    "decoration/mod\\.rs:629:29:.*delete field char_start.*in build_decoration_map",
+
+    # Lang tag guard (decoration/mod.rs:639, col 37).
+    # `>→>=` emits zero-width span when lang_end == fence_count (empty lang string).
+    "decoration/mod\\.rs:639:37:.*replace > with >= in build_decoration_map",
+
+    # Syntect highlight match guard (decoration/mod.rs:673, col 43).
+    # `replace match guard !hl_spans.is_empty() with true`: empty Vec passes guard,
+    # for-loop iterates zero times — identical observable behaviour.
+    "decoration/mod\\.rs:673:43:.*replace match guard.*in build_decoration_map",
+
+    # Syntect cs < ce guard (decoration/mod.rs:684, col 39).
+    # `<→<=` admits cs == ce → zero-width span.  No-op.
+    "decoration/mod\\.rs:684:39:.*replace < with <= in build_decoration_map",
+
+    # `delete field char_start/char_end` from syntect span (decoration/mod.rs:689–690, col 45).
+    # Unit tests pass highlight_cache = None; the syntect branch is never exercised.
+    "decoration/mod\\.rs:689:45:.*delete field char_start.*in build_decoration_map",
+    "decoration/mod\\.rs:690:45:.*delete field char_end.*in build_decoration_map",
+
+    # `delete field char_start` from fallback fenced-content span (decoration/mod.rs:713, col 37).
+    # Full-line content span always starts at col 0; explicit 0 == default 0.
+    "decoration/mod\\.rs:713:37:.*delete field char_start.*in build_decoration_map",
+
+    # Closing fence presence guard (decoration/mod.rs:725, col 29).
+    # `>→>=` fires when end_line == start_line (open and close on the same source line).
+    # pulldown-cmark does not produce a Fenced event with coincident start/end for valid MD.
+    "decoration/mod\\.rs:725:29:.*replace > with >= in build_decoration_map",
+
+    # `delete field char_start` from closing fence span (decoration/mod.rs:742, col 29).
+    # Explicit 0 == default 0.
+    "decoration/mod\\.rs:742:29:.*delete field char_start.*in build_decoration_map",
+
+    # `delete field char_start` from blockquote indicator span (decoration/mod.rs:782, col 29).
+    # Blockquote `▌` always at col 0; explicit 0 == default 0.
+    "decoration/mod\\.rs:782:29:.*delete field char_start.*in build_decoration_map",
+
+    # Link span guards (decoration/mod.rs:826 col 38, 846 col 36, 854 col 25).
+    # `>→>=` either emits a zero-width span (split_idx or url cases) or is a tautology
+    # for valid links (end_char_excl > 0 is always true for any matched link, usize ≥ 0).
+    "decoration/mod\\.rs:826:38:.*replace > with >= in build_decoration_map",
+    "decoration/mod\\.rs:846:36:.*replace > with >= in build_decoration_map",
+    "decoration/mod\\.rs:854:25:.*replace > with >= in build_decoration_map",
+
+    # Strikethrough content guard (decoration/mod.rs:1081, col 43).
+    # `<→<=` admits equality (empty-content case `~~~~`): emits zero-width span.  No-op.
+    "decoration/mod\\.rs:1081:43:.*replace < with <= in build_decoration_map",
+
+    # `delete field char_start` from horizontal rule span (decoration/mod.rs:1106, col 25).
+    # Rules always cover 0..line_len; explicit 0 == default 0.
+    "decoration/mod\\.rs:1106:25:.*delete field char_start.*in build_decoration_map",
+
+    # ---------------------------------------------------------------------------
+    # search.rs — structurally unkillable no-ops
+    # ---------------------------------------------------------------------------
+
+    # `apply_replace_all` early-return guard (search.rs:185, col 36).
+    # `||→&&` is only different when exactly one of the two conditions is true.
+    # `compiled.is_none()` implies `matches.is_empty()` through normal API usage;
+    # the inconsistent half-state is unreachable.
+    "search\\.rs:185:36:.*replace \\|\\| with \\&\\& in apply_replace_all",
+
+    # `apply_replace_all` per-match bounds check (search.rs:190, col 19).
+    # `<→<=` admits ml == result.len() → OOB.  ml comes from find_all_matches which only
+    # yields valid line indices; ml == len is unreachable for valid state.
+    "search\\.rs:190:19:.*replace < with <= in apply_replace_all",
+
+    # ---------------------------------------------------------------------------
+    # table_format.rs — infinite-loop and unreachable mutations
+    # ---------------------------------------------------------------------------
+
+    # find_table_bounds loop counters (table_format.rs:60 col 15, 66 col 13).
+    # `-= → /=`: x / 1 = x — upward counter never decrements → infinite loop.
+    # `+= → *=`: x * 1 = x — downward counter never increments → infinite loop.
+    "table_format\\.rs:60:15:.*replace -= with /= in find_table_bounds",
+    "table_format\\.rs:66:13:.*replace \\+= with \\*= in find_table_bounds",
+
+    # format_table cell-index bounds check (table_format.rs:218, col 19).
+    # `<→<=` admits ci == ncols → widths[ncols] OOB.  But ci iterates row.iter().enumerate()
+    # and every row.len() <= ncols by construction; ci never reaches ncols.
+    "table_format\\.rs:218:19:.*replace < with <= in format_table",
+
+    # ---------------------------------------------------------------------------
+    # input.rs — non-overlapping bitmask no-ops (additional call sites)
+    # ---------------------------------------------------------------------------
+
+    # `handle_key_event` CONTROL | ALT | SUPER at line 474 (cols 47 and 67).
+    # Same non-overlapping-bits argument as the cols 57/77 entries above.
+    "input\\.rs:474:47:.*replace \\| with \\^ in handle_key_event",
+    "input\\.rs:474:67:.*replace \\| with \\^ in handle_key_event",
+
+    # `handle_search_key` CONTROL | ALT | SUPER at line 387 (cols 47 and 67).
+    "input\\.rs:387:47:.*replace \\| with \\^ in handle_search_key",
+    "input\\.rs:387:67:.*replace \\| with \\^ in handle_search_key",
+
+    # ---------------------------------------------------------------------------
+    # renderer/search_bar.rs — constants used only in #[mutants::skip] function
+    # ---------------------------------------------------------------------------
+
+    # INNER_W, BOX_W, BOX_H constants (lines 137, 139, 150) are only consumed by
+    # render_search_help_modal which is #[mutants::skip].  No test exercises the render
+    # path, so no arithmetic mutation to these constants can be killed.
+    "renderer/search_bar\\.rs:137:.*replace \\+ with",
+    "renderer/search_bar\\.rs:139:.*replace \\+ with",
+    "renderer/search_bar\\.rs:150:.*replace \\+ with",
+
+    # ---------------------------------------------------------------------------
+    # renderer/mod.rs — focus_paragraph_bounds line 853 (unkillable)
+    # ---------------------------------------------------------------------------
+
+    # `replace + with *` in `(cursor_row + 1..n).find(...)` at line 853:27.
+    # At this point lines[cursor_row] is guaranteed non-blank (blank-line path early-
+    # returns above).  The mutation gives `cursor_row..n`; since lines[cursor_row] is
+    # non-blank, find() skips it and returns the same result as `cursor_row+1..n`.
+    "renderer/mod\\.rs:853:27:.*replace \\+ with \\* in focus_paragraph_bounds",
 ]

@@ -232,6 +232,7 @@ pub fn render_search_help_modal(f: &mut Frame, editor_area: Rect, app: &App) {
 
 /// Write `s` left-aligned into a `width`-cell field at `(x, y)`, padding
 /// unused cells with spaces.  Returns `x + width`.
+#[mutants::skip] // Only called from #[mutants::skip] render_search_help_modal.
 fn put_padded(
     buf: &mut Buffer,
     x: u16,

@@ -444,4 +444,102 @@ mod tests {
         s.prev_match();
         assert_eq!(s.current, 0);
     }
+
+    // ---- T-16: update_matches clamps current to last valid index ----
+
+    #[test]
+    fn update_matches_clamps_current_to_len_minus_one() {
+        // Kills: line 102:64 `replace - with +` and `replace - with /`
+        // in `self.current = self.current.min(self.matches.len() - 1)`.
+        // With `+1`: current = min(99, 4) = 4 (out of bounds index when len=3).
+        // With `/1 = len`: same OOB. Test asserts current_match() is Some with correct index.
+        let mut s = SearchState::new(false);
+        let d = doc("aaa");
+        s.query = "a".to_string();
+        s.update_matches(&d); // 3 matches
+        assert_eq!(s.matches.len(), 3);
+        s.current = 99; // manually set OOB
+        s.update_matches(&d); // must clamp
+        assert_eq!(s.current, 2, "current must be clamped to len-1 = 2");
+        assert!(
+            s.current_match().is_some(),
+            "current_match() must return Some after clamp"
+        );
+    }
+
+    // ---- T-17: prev_match decrements current correctly ----
+
+    #[test]
+    fn prev_match_decrements_current_exact_value() {
+        // Kills: line 140:30 `replace -= with +=` and `replace -= with /=`
+        // `+=1` would go forward; `/=1` would stay. Assert exact values.
+        let mut s = SearchState::new(false);
+        let d = doc("aaa");
+        s.query = "a".to_string();
+        s.update_matches(&d); // 3 matches at indices 0,1,2
+        s.current = 1;
+        s.prev_match();
+        assert_eq!(s.current, 0, "prev from index 1 must give index 0");
+        s.prev_match(); // wraps from 0 to last
+        assert_eq!(s.current, 2, "prev from index 0 must wrap to index 2");
+    }
+
+    // ---- T-18: current_match returns correct (line, char_start, char_end) ----
+
+    #[test]
+    fn current_match_returns_specific_field_values() {
+        // Kills: line 147:9 `replace -> Option<Match> with None` and
+        //        `replace -> Option<Match> with Some(Default::default())`
+        // Default::default() for Match=(usize,usize,usize) is (0,0,0).
+        // Assert on non-default char_start and char_end.
+        let mut s = SearchState::new(false);
+        let d = doc("abcd");
+        s.query = "bc".to_string();
+        s.update_matches(&d); // match at (0, 1, 3)
+        let m = s.current_match().expect("must return Some match");
+        assert_eq!(m.0, 0, "match must be on line 0");
+        assert_eq!(m.1, 1, "char_start must be 1 (not 0 from Default)");
+        assert_eq!(m.2, 3, "char_end must be 3 (not 0 from Default)");
+    }
+
+    // ---- T-19: snap_to_cursor selects first match at-or-after cursor ----
+
+    #[test]
+    fn snap_to_cursor_selects_match_at_or_after_cursor_col() {
+        // Kills: line 161:20 `replace > with < in snap_to_cursor`
+        // With `<`, cursor "after" means behind → selects match BEFORE cursor.
+        // "x foo x bar x" — matches at cols 0, 6, 12.
+        let mut s = SearchState::new(false);
+        let d = doc("x foo x bar x");
+        s.query = "x".to_string();
+        s.update_matches(&d); // 3 matches: (0,0,1), (0,6,7), (0,12,13)
+        assert_eq!(s.matches.len(), 3);
+
+        s.snap_to_cursor(0, 4); // cursor between first and second match
+        let m = s.current_match().expect("must have a match");
+        assert_eq!(m.1, 6, "first match at-or-after col 4 must be at col 6");
+
+        s.snap_to_cursor(0, 0); // cursor at exact match position
+        let m = s.current_match().expect("must have a match");
+        assert_eq!(m.1, 0, "match exactly at cursor col 0 must be selected");
+    }
+
+    // ---- T-20: find_all_matches char_end arithmetic ----
+
+    #[test]
+    fn find_all_matches_char_end_is_start_plus_match_len() {
+        // Kills: line 227:46 `replace + with -` and `replace + with *`
+        // char_end = char_start + match_char_count.
+        // For "barfoo", "foo" starts at char 3, ends at char 6.
+        // With `+→-`: 3 - 3 = 0 (underflow).  With `+→*`: 3 * 3 = 9 (wrong).
+        let mut s = SearchState::new(false);
+        let d = doc("barfoo");
+        s.query = "foo".to_string();
+        s.update_matches(&d);
+        assert_eq!(s.matches.len(), 1);
+        let (ln, cs, ce) = s.matches[0];
+        assert_eq!(ln, 0, "match on line 0");
+        assert_eq!(cs, 3, "char_start = 3");
+        assert_eq!(ce, 6, "char_end = 6 (3 + 3 chars of 'foo')");
+    }
 }

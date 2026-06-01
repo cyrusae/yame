@@ -1996,4 +1996,234 @@ mod tests {
             "Shift+Up must step back one visual row (col 6 → col 0 on wrapped line)"
         );
     }
+
+    // ---------------------------------------------------------------------------
+    // Search / replace integration tests
+    // ---------------------------------------------------------------------------
+
+    /// Create an App with a single line of text, an active search for `query`,
+    /// and a replacement string `replace`. The first match is pre-selected.
+    fn make_search_app(content: &str, query: &str, replace: &str) -> App {
+        let mut app = make_app();
+        app.textarea = TextArea::new(vec![content.to_string()]);
+        let lines: Vec<String> = app.textarea.lines().iter().map(|s| s.to_string()).collect();
+        let mut s = yame::search::SearchState::new(true);
+        s.query = query.to_string();
+        s.replace = replace.to_string();
+        s.update_matches(&lines);
+        app.search = Some(s);
+        app
+    }
+
+    // ---- T-24: do_replace_current replaces the active match ----
+
+    #[test]
+    fn do_replace_current_replaces_first_match() {
+        // Kills: lines 222:5 (`replace do_replace_current with ()`),
+        //        230:24 (`replace - with +` and `replace - with /` in `me - ms`).
+        // With `()`: textarea unchanged.
+        // With `-→+` in `me - ms`: match_len = me + ms (wildly large) → over-deletes.
+        let mut app = make_search_app("hello world", "world", "rust");
+        do_replace_current(&mut app);
+        assert_eq!(
+            app.textarea.lines()[0],
+            "hello rust",
+            "do_replace_current must replace 'world' with 'rust'"
+        );
+    }
+
+    // ---- T-25: do_replace_all replaces every match ----
+
+    #[test]
+    fn do_replace_all_replaces_every_occurrence() {
+        // Kills: lines 252:5 (`replace do_replace_all with ()`),
+        //        262:25 (`replace - with +` and `replace - with /` in `me - ms`).
+        let mut app = make_search_app("aa aa aa", "aa", "b");
+        do_replace_all(&mut app);
+        assert_eq!(
+            app.textarea.lines()[0],
+            "b b b",
+            "do_replace_all must replace all 'aa' with 'b'"
+        );
+    }
+
+    // ---- T-26: handle_search_key — one assertion per key binding ----
+
+    #[test]
+    fn search_key_esc_closes_search() {
+        // Kills: line 296:9 `delete match arm (KeyModifiers::NONE, KeyCode::Esc)`
+        let mut app = make_search_app("hello", "hello", "");
+        handle_search_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(app.search.is_none(), "Esc must close search (search = None)");
+    }
+
+    #[test]
+    fn search_key_ctrl_f_advances_to_next_match() {
+        // Kills: line 308:9 `delete match arm Ctrl+F / Enter`
+        // Three matches; after Ctrl+F from current=0 → current=1.
+        let mut app = make_app();
+        app.textarea = TextArea::new(vec!["aaa".to_string()]);
+        let lines: Vec<String> = app.textarea.lines().iter().map(|s| s.to_string()).collect();
+        let mut s = yame::search::SearchState::new(false);
+        s.query = "a".to_string();
+        s.update_matches(&lines); // 3 matches, current=0
+        app.search = Some(s);
+        handle_search_key(&mut app, KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL));
+        let current = app.search.as_ref().unwrap().current;
+        assert_eq!(current, 1, "Ctrl+F must advance current from 0 to 1");
+    }
+
+    #[test]
+    fn search_key_shift_enter_retreats_to_prev_match() {
+        // Kills: line 330:9 `delete match arm Shift+Enter`
+        let mut app = make_app();
+        app.textarea = TextArea::new(vec!["aaa".to_string()]);
+        let lines: Vec<String> = app.textarea.lines().iter().map(|s| s.to_string()).collect();
+        let mut s = yame::search::SearchState::new(false);
+        s.query = "a".to_string();
+        s.update_matches(&lines); // current = 0
+        s.current = 2;
+        app.search = Some(s);
+        handle_search_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
+        let current = app.search.as_ref().unwrap().current;
+        assert_eq!(current, 1, "Shift+Enter must retreat current from 2 to 1");
+    }
+
+    #[test]
+    fn search_key_backspace_pops_last_char_of_query() {
+        // Kills: line 342:9 `delete match arm Backspace`
+        let mut app = make_search_app("hello", "hell", "");
+        handle_search_key(&mut app, KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        let query = &app.search.as_ref().unwrap().query;
+        assert_eq!(query, "hel", "Backspace must remove last char of query");
+    }
+
+    #[test]
+    fn search_key_alt_r_toggles_regex_mode() {
+        // Kills: line 351:9 `delete match arm Alt+R` and line 355:32 `delete !`
+        let mut app = make_search_app("hello", "hello", "");
+        let before = app.search.as_ref().unwrap().regex_mode;
+        handle_search_key(&mut app, KeyEvent::new(KeyCode::Char('r'), KeyModifiers::ALT));
+        let after = app.search.as_ref().unwrap().regex_mode;
+        assert_ne!(before, after, "Alt+R must toggle regex_mode");
+    }
+
+    #[test]
+    fn search_key_ctrl_h_opens_replace_row() {
+        // Kills: line 361:9 `delete match arm Ctrl+H` and line 363:34 `delete !`
+        let mut app = make_search_app("hello", "hello", "");
+        app.search.as_mut().unwrap().show_replace = false;
+        handle_search_key(&mut app, KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL));
+        let show = app.search.as_ref().unwrap().show_replace;
+        assert!(show, "Ctrl+H must enable show_replace");
+        // Toggle again: from true → false.
+        handle_search_key(&mut app, KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL));
+        let show2 = app.search.as_ref().unwrap().show_replace;
+        assert!(!show2, "second Ctrl+H must disable show_replace");
+    }
+
+    #[test]
+    fn search_key_tab_swaps_focus_field() {
+        // Kills: line 369:9 `delete match arm Tab` and line 373:34 `delete !`
+        let mut app = make_search_app("hello", "hello", "");
+        app.search.as_mut().unwrap().show_replace = true;
+        app.search.as_mut().unwrap().focus_search = true;
+        handle_search_key(&mut app, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        let focus = app.search.as_ref().unwrap().focus_search;
+        assert!(!focus, "Tab must switch focus from search to replace");
+        handle_search_key(&mut app, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        let focus2 = app.search.as_ref().unwrap().focus_search;
+        assert!(focus2, "second Tab must switch focus back to search");
+    }
+
+    #[test]
+    fn search_key_char_appends_to_active_field() {
+        // Kills: lines 385:14 `delete !`, 388:13 `&&→||`, and 385:14 match guard mutations.
+        let mut app = make_search_app("hello", "he", "");
+        handle_search_key(&mut app, KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
+        let query = &app.search.as_ref().unwrap().query;
+        assert_eq!(query, "hel", "printable char must append to query field");
+    }
+
+    #[test]
+    fn search_key_ctrl_a_replaces_all_when_replace_visible() {
+        // Kills: line 379:16 match guard mutations (`with true` / `with false`)
+        let mut app = make_search_app("aa aa", "aa", "b");
+        app.search.as_mut().unwrap().show_replace = true;
+        handle_search_key(&mut app, KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL));
+        assert_eq!(
+            app.textarea.lines()[0],
+            "b b",
+            "Ctrl+A must replace all matches when replace row is visible"
+        );
+    }
+
+    #[test]
+    fn search_key_ctrl_a_does_nothing_when_replace_hidden() {
+        // Kills: line 379:16 `replace match guard with true` — guard must be false here.
+        let mut app = make_search_app("aa aa", "aa", "b");
+        app.search.as_mut().unwrap().show_replace = false;
+        handle_search_key(&mut app, KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL));
+        assert_eq!(
+            app.textarea.lines()[0],
+            "aa aa",
+            "Ctrl+A must do nothing when replace row is hidden"
+        );
+    }
+
+    // ---- T-27: Normal-mode keys open search / replace ----
+
+    #[test]
+    fn ctrl_f_opens_search_mode() {
+        // Kills: line 511:9 `delete match arm (CONTROL, Char('f'))`
+        let mut app = make_app();
+        handle_key_event(&mut app, KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL));
+        assert!(app.search.is_some(), "Ctrl+F must open search (search = Some)");
+        assert!(
+            !app.search.as_ref().unwrap().show_replace,
+            "Ctrl+F must not open replace row"
+        );
+    }
+
+    #[test]
+    fn ctrl_h_opens_search_and_replace_mode() {
+        // Kills: line 523:9 `delete match arm (CONTROL, Char('h'))`
+        let mut app = make_app();
+        handle_key_event(&mut app, KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL));
+        assert!(app.search.is_some(), "Ctrl+H must open search (search = Some)");
+        assert!(
+            app.search.as_ref().unwrap().show_replace,
+            "Ctrl+H must open replace row (show_replace = true)"
+        );
+    }
+
+    // ---- T-23: handle_format_table reformats a misaligned table in-place ----
+
+    #[test]
+    fn handle_format_table_reformats_table_in_place() {
+        // Kills: lines 243:5 (`replace handle_format_table with ()`),
+        //        258:25 (`replace + with -` and `replace + with *` in `start + i`).
+        // With `()`: textarea unchanged.
+        // With `+→-` in `start + i`: rows written at wrong lines (before start).
+        // With `+→*` in `start + i`: rows written at wrong lines.
+        let mut app = make_app();
+        app.textarea = TextArea::new(vec![
+            "| A | Bbb |".to_string(),
+            "| - | --- |".to_string(),
+            "| x | y   |".to_string(),
+        ]);
+        app.textarea.move_cursor(CursorMove::Jump(0, 0));
+        yame::table_format::handle_format_table(&mut app);
+        let out: Vec<String> = app.textarea.lines().iter().map(|s| s.to_string()).collect();
+        assert_eq!(out.len(), 3, "row count must be unchanged after format");
+        // All rows must have the same total length after alignment.
+        assert_eq!(
+            out[0].len(),
+            out[2].len(),
+            "header and body row must have equal length after format; rows: {out:?}"
+        );
+        // Content must still be present (not wiped by no-op mutation).
+        assert!(out[0].contains('A'), "header row must still contain 'A'");
+        assert!(out[2].contains('x'), "body row must still contain 'x'");
+    }
 }

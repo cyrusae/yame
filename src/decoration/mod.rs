@@ -3728,4 +3728,403 @@ mod tests {
             "double-backtick closing `` must be at chars 4..6; got: {spans:?}"
         );
     }
+
+    // ---- T-1: Heading content span carries full_line_bg ----
+
+    #[test]
+    fn heading_content_span_has_full_line_bg() {
+        // Kills: line 350 `delete field full_line_bg from struct StyledSpan`
+        // The content span after the `# ` prefix must carry heading_bg so the
+        // rest of the line gets the heading background in the renderer.
+        let text = "# Hello";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        // The content span starts at char 2 (after "# ").
+        let content = spans
+            .iter()
+            .find(|s| s.char_start == 2)
+            .expect("heading content span must start at char 2");
+        assert!(
+            content.full_line_bg.is_some(),
+            "heading content span must carry full_line_bg; got: {content:?}"
+        );
+        assert_eq!(
+            content.full_line_bg,
+            Some(theme.heading_bg),
+            "heading content full_line_bg must equal theme.heading_bg"
+        );
+    }
+
+    // ---- T-3: Fenced code block — no trailing newline ----
+
+    #[test]
+    fn fenced_code_no_trailing_newline_opening_fence_span() {
+        // Kills: lines 615:48 (`+→*` in `start_line + 1 < line_starts.len()`)
+        //        and 728:50 (`<→==`, `<→>`, `<→<=`, `+→-`, `+→*`).
+        // When the closing ``` is the very last byte (no trailing \n), the
+        // `end_line + 1 == line_starts.len()` boundary is exercised.
+        let text = "```\ncode\n```"; // no trailing newline
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+
+        let opening = map.get(&0).expect("opening fence line must have spans");
+        assert!(
+            opening.iter().any(|s| s.char_start == 0 && s.char_end == 3),
+            "opening ``` (no trailing \\n) must be at chars 0..3; got: {opening:?}"
+        );
+
+        let closing = map.get(&2).expect("closing fence line must have spans");
+        assert!(
+            closing.iter().any(|s| s.char_start == 0 && s.char_end == 3),
+            "closing ``` (no trailing \\n) must be at chars 0..3; got: {closing:?}"
+        );
+    }
+
+    // ---- T-4: Tilde fence — close fence char matching ----
+
+    #[test]
+    fn tilde_fenced_code_closing_fence_span() {
+        // Kills: line 735:56 `replace == with != in build_decoration_map`
+        // The take_while closure uses `c == '`' || c == '~'`.  Mutating
+        // `c == '~'` → `c != '~'` silently breaks tilde detection.
+        let text = "~~~\ncode\n~~~";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+
+        let closing = map.get(&2).expect("closing tilde fence line must have spans");
+        assert!(
+            closing.iter().any(|s| s.char_start == 0 && s.char_end == 3),
+            "closing ~~~ fence must span chars 0..3; got: {closing:?}"
+        );
+    }
+
+    // ---- T-5: Fenced code content line — char_end and style ----
+
+    #[test]
+    fn fenced_code_content_span_char_end_and_style() {
+        // Kills: lines 714:37 (`delete field char_end`) and 715:37 (`delete field style`).
+        // The fallback content span (no syntect) must cover exactly the line's chars
+        // and must carry fenced_bg.
+        let text = "```\nhello\n```\n";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+
+        let content_line = map.get(&1).expect("content line 1 must have spans");
+        let content = content_line
+            .iter()
+            .find(|s| s.char_start == 0)
+            .expect("content span must start at char 0");
+        assert_eq!(
+            content.char_end, 5,
+            "content span must cover 'hello' (5 chars); got: {content:?}"
+        );
+        assert!(
+            content.full_line_bg.is_some(),
+            "content span must have full_line_bg set (fenced_bg)"
+        );
+        assert_eq!(
+            content.full_line_bg,
+            Some(theme.fenced_bg),
+            "content span full_line_bg must equal theme.fenced_bg"
+        );
+    }
+
+    // ---- T-6: Blockquote indicator style ----
+
+    #[test]
+    fn blockquote_indicator_style_is_muted() {
+        // Kills: line 784:29 `delete field style from struct StyledSpan`
+        // The blockquote indicator `▌` span must carry the muted fg color.
+        let text = "> quote";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        let indicator = spans
+            .iter()
+            .find(|s| s.is_blockquote)
+            .expect("blockquote must have an is_blockquote span");
+        assert_eq!(
+            indicator.style.fg,
+            Some(theme.muted),
+            "blockquote indicator must use theme.muted fg; got: {indicator:?}"
+        );
+    }
+
+    // ---- T-7: Two consecutive lists — in_ordered_list resets ----
+
+    #[test]
+    fn ordered_then_unordered_list_bullet_end_resets() {
+        // Kills: line 869:13 `delete match arm Event::End(TagEnd::List(_))`
+        // After End(List), in_ordered_list must be cleared.  Without the reset,
+        // the second unordered list's bullet span gets bullet_end = item_char + 2
+        // (ordered) instead of item_char + 1 (unordered).
+        let text = "1. first\n\n- second";
+        let map = build_map(text, &make_theme(), false);
+        let spans_2 = map.get(&2).expect("line 2 must have spans");
+        // Unordered bullet for "- second": the bullet span must end at char 1 (the `-`).
+        let bullet = spans_2
+            .iter()
+            .find(|s| s.char_start == 0 && s.continuation_indent > 0)
+            .expect("unordered bullet span must exist at char 0");
+        assert_eq!(
+            bullet.char_end, 1,
+            "unordered bullet must end at char 1 (not 2+ from ordered); got: {bullet:?}"
+        );
+    }
+
+    // ---- T-8: Nested list bullet at non-zero item_char ----
+
+    #[test]
+    fn nested_list_bullet_starts_at_item_char() {
+        // Kills: line 896:25 `delete field char_start from struct StyledSpan`
+        // For "  - nested", item_char = 2; the bullet span must start at 2, not 0 (default).
+        let text = "- outer\n  - nested";
+        let map = build_map(text, &make_theme(), false);
+        let spans_1 = map.get(&1).expect("line 1 (nested item) must have spans");
+        let bullet = spans_1
+            .iter()
+            .find(|s| s.continuation_indent > 0)
+            .expect("nested bullet span must exist");
+        assert_eq!(
+            bullet.char_start, 2,
+            "nested bullet must start at char 2 (after 2-space indent); got: {bullet:?}"
+        );
+        assert_eq!(
+            bullet.char_end, 3,
+            "nested bullet must end at char 3 (the `-`); got: {bullet:?}"
+        );
+    }
+
+    // ---- T-9: Checked todo item — inline spans keep continuation_indent = 0 ----
+
+    #[test]
+    fn todo_checked_inline_spans_keep_zero_continuation_indent() {
+        // Kills: line 916:53 `replace > with >= in build_decoration_map`
+        // The guard `if span.continuation_indent > 0` ensures only the bullet span
+        // gets its ci upgraded to task_ci.  With `>= 0`, ALL spans (including bold
+        // delimiter ci=0) would be overwritten.
+        let text = "- [x] **bold**";
+        let map = build_map(text, &make_theme(), false);
+        let spans_0 = map.get(&0).expect("line 0 must have spans");
+        // Bold opening delimiter `**` is at char 6..8 and must have ci=0.
+        let bold_delim = spans_0
+            .iter()
+            .find(|s| s.char_start == 6 && s.char_end == 8)
+            .expect("bold opening ** at (6,8) must exist");
+        assert_eq!(
+            bold_delim.continuation_indent, 0,
+            "bold delimiter must NOT inherit todo continuation_indent; got: {bold_delim:?}"
+        );
+    }
+
+    // ---- T-10: Checked todo item sub-span boundaries (marker_char = 2) ----
+
+    #[test]
+    fn todo_checked_bracket_spans_at_correct_positions() {
+        // Kills: lines 925:52, 932:61, 935:40, 935:36, 939:51, 939:69,
+        //        943:40, 943:36, 947:51, 951:36.
+        // "- [x] done": marker_char=2, bracket_end=5.
+        // Sub-spans: `[` at (2,3), `x` at (3,4), `]` at (4,5).
+        let text = "- [x] done";
+        let map = build_map(text, &make_theme(), false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        assert!(
+            spans.iter().any(|s| s.char_start == 2 && s.char_end == 3),
+            "[ bracket must be at (2,3); got: {spans:?}"
+        );
+        assert!(
+            spans.iter().any(|s| s.char_start == 3 && s.char_end == 4),
+            "x char must be at (3,4); got: {spans:?}"
+        );
+        assert!(
+            spans.iter().any(|s| s.char_start == 4 && s.char_end == 5),
+            "] bracket must be at (4,5); got: {spans:?}"
+        );
+    }
+
+    // ---- T-10b: Checked todo item with non-zero marker_char (ordered list) ----
+
+    #[test]
+    fn todo_checked_ordered_item_bracket_spans_at_correct_positions() {
+        // Ordered list item: "1. [x] done" → marker_char=3 (after "1. ").
+        // Kills mutations where `+1`/`+2`/`+3` produce different results than `*1`/`*2`/`*3`
+        // for marker_char=2 (but distinct for marker_char=3).
+        let text = "1. [x] done";
+        let map = build_map(text, &make_theme(), false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        // `[` at (3,4), `x` at (4,5), `]` at (5,6).
+        assert!(
+            spans.iter().any(|s| s.char_start == 3 && s.char_end == 4),
+            "[ bracket must be at (3,4) for ordered item; got: {spans:?}"
+        );
+        assert!(
+            spans.iter().any(|s| s.char_start == 4 && s.char_end == 5),
+            "x char must be at (4,5) for ordered item; got: {spans:?}"
+        );
+        assert!(
+            spans.iter().any(|s| s.char_start == 5 && s.char_end == 6),
+            "] bracket must be at (5,6) for ordered item; got: {spans:?}"
+        );
+    }
+
+    // ---- T-11: Unchecked checkbox bracket positions ----
+
+    #[test]
+    fn todo_unchecked_bracket_spans_at_correct_positions() {
+        // Kills: lines 965:60, 970:47, 970:64.
+        // "- [ ] todo": marker_char=2. `[` at (2,3), `]` at (4,5).
+        let text = "- [ ] todo";
+        let map = build_map(text, &make_theme(), false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        assert!(
+            spans.iter().any(|s| s.char_start == 2 && s.char_end == 3),
+            "[ bracket must be at (2,3); got: {spans:?}"
+        );
+        assert!(
+            spans.iter().any(|s| s.char_start == 4 && s.char_end == 5),
+            "] bracket must be at (4,5); got: {spans:?}"
+        );
+    }
+
+    // ---- T-11b: Unchecked checkbox with non-zero marker_char (ordered list) ----
+
+    #[test]
+    fn todo_unchecked_ordered_item_bracket_spans_at_correct_positions() {
+        // "1. [ ] task" → marker_char=3 (after "1. ").
+        // Kills `+2→*2` (3+2=5 ≠ 3*2=6) and `+3→*3` (3+3=6 ≠ 3*3=9) mutations.
+        let text = "1. [ ] task";
+        let map = build_map(text, &make_theme(), false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        // `[` at (3,4), `]` at (5,6).
+        assert!(
+            spans.iter().any(|s| s.char_start == 3 && s.char_end == 4),
+            "[ bracket must be at (3,4) for ordered unchecked; got: {spans:?}"
+        );
+        assert!(
+            spans.iter().any(|s| s.char_start == 5 && s.char_end == 6),
+            "] bracket must be at (5,6) for ordered unchecked; got: {spans:?}"
+        );
+    }
+
+    // ---- T-12: Table is_sep — body row with dash is NOT a separator ----
+
+    #[test]
+    fn table_body_row_with_dash_is_not_separator() {
+        // Kills: line 1000:25 `replace && with || in build_decoration_map`
+        // With `||`, any non-empty cell makes is_sep true because `contains('-')`
+        // is checked; the body row `a-b` would get separator styling.
+        let text = "| head |\n| --- |\n| a-b |";
+        let map = build_map(text, &make_theme(), false);
+        let spans_2 = map.get(&2).expect("line 2 (body row) must have spans");
+        // A separator row would produce individual char spans for `-`.
+        // Check that the `-` inside `a-b` (at char 3) doesn't get a lone span.
+        let has_lone_dash_at_3 = spans_2.iter().any(|s| s.char_start == 3 && s.char_end == 4);
+        assert!(
+            !has_lone_dash_at_3,
+            "body-row '-' at (3,4) must not get sep_dash_style; got: {spans_2:?}"
+        );
+    }
+
+    // ---- T-13: Table match guards — sep-only styling in separator rows ----
+
+    #[test]
+    fn table_body_row_colon_not_styled_as_separator() {
+        // Kills: lines 1013:36 and 1020:36 `replace match guard is_sep with true`
+        // With guard=true, body-row `:` and `-` get sep coloring unconditionally.
+        let text = "| h1 | h2 |\n| -- | -- |\n| :val: | a-b |";
+        let map = build_map(text, &make_theme(), false);
+        let spans_2 = map.get(&2).expect("line 2 (body row) must have spans");
+        // The `:` at char 2 of the body row must not get sep_colon_style span.
+        let has_colon_at_2 = spans_2.iter().any(|s| s.char_start == 2 && s.char_end == 3);
+        assert!(
+            !has_colon_at_2,
+            "body-row ':' at char 2 must not get sep_colon_style; got: {spans_2:?}"
+        );
+    }
+
+    // ---- T-14: Mid-line strikethrough — start_char arithmetic ----
+
+    #[test]
+    fn strikethrough_mid_line_delimiter_positions() {
+        // Kills: line 1081:39 `replace + with * in build_decoration_map`
+        // "ok ~~word~~ rest": start_char=3.
+        // Opening ~~ at (3,5): 3+0..3+2. Closing ~~ at (9,11): end-2..end.
+        // Mutation `+→*` on start_char: 3*2=6 ≠ 5 for opening.
+        let text = "ok ~~word~~ rest";
+        let map = build_map(text, &make_theme(), false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        assert!(
+            spans.iter().any(|s| s.char_start == 3 && s.char_end == 5),
+            "opening ~~ must be at chars (3,5); got: {spans:?}"
+        );
+        assert!(
+            spans.iter().any(|s| s.char_start == 9 && s.char_end == 11),
+            "closing ~~ must be at chars (9,11); got: {spans:?}"
+        );
+    }
+
+    // ---- Bold+italic adjacency check (line 454) ----
+
+    #[test]
+    fn bold_italic_combined_content_has_both_modifiers() {
+        // Kills: lines 454:38 (`==→!=`), 454:42 (`+→*`), 454:80 (`+→-`,`+→*`),
+        //        454:84 (`==→!=`), 454:62 (`&&→||`) in adjacency check.
+        // "***x***": strong wraps emphasis (adjacent).  Content char must have BOLD+ITALIC.
+        let text = "***x***";
+        let map = build_map(text, &make_theme(), true); // italic_support=true
+        let spans = map.get(&0).expect("line 0 must have spans");
+        // Content of `***x***` is `x` at char 3 (after `***`).
+        let content = spans
+            .iter()
+            .find(|s| s.char_start == 3 && s.char_end == 4)
+            .expect("content char 'x' at (3,4) must have a span");
+        assert!(
+            content.style.add_modifier.contains(ratatui::style::Modifier::BOLD),
+            "content of ***x*** must be BOLD; got: {content:?}"
+        );
+        assert!(
+            content.style.add_modifier.contains(ratatui::style::Modifier::ITALIC),
+            "content of ***x*** must be ITALIC; got: {content:?}"
+        );
+    }
+
+    // ---- Italic delimiter position at non-zero start_char (lines 495, 510) ----
+
+    #[test]
+    fn italic_mid_line_content_span_at_correct_position() {
+        // Kills: lines 495:48 (`+→*` in `start_char + 1`) and 510:52.
+        // "a *b* c": start_char=2 (after "a ").  Content span at (3,4), not (2,4).
+        // With `+→*` at 495:48: start_char * 1 = 2 → range starts at 2 (includes delim).
+        let text = "a *b* c";
+        let map = build_map(text, &make_theme(), true); // italic_support=true exercises 510
+        let spans = map.get(&0).expect("line 0 must have spans");
+        // The italic content `b` is at char 3 (start_char + 1 = 2 + 1 = 3).
+        let content = spans
+            .iter()
+            .find(|s| s.char_start == 3 && s.char_end == 4)
+            .expect("italic content 'b' must be at chars (3,4); got no such span");
+        assert!(
+            content.style.add_modifier.contains(ratatui::style::Modifier::ITALIC),
+            "italic content must have ITALIC modifier; got: {content:?}"
+        );
+    }
+
+    // ---- Fenced code language tag arithmetic (line 638) ----
+
+    #[test]
+    fn fenced_code_lang_tag_span_end_position() {
+        // Kills: line 638:53 `replace + with * in build_decoration_map`
+        // "```rust": fence_count=3, lang="rust" (4 chars).
+        // lang_end = fence_count + lang.chars().count() = 3 + 4 = 7.
+        // Mutation `+→*`: 3 * 4 = 12 ≠ 7.
+        let text = "```rust\ncode\n```\n";
+        let map = build_map(text, &make_theme(), false);
+        let opening = map.get(&0).expect("opening fence line must have spans");
+        // Lang tag "rust" spans chars 3..7.
+        assert!(
+            opening.iter().any(|s| s.char_start == 3 && s.char_end == 7),
+            "lang tag 'rust' must end at char 7 (3+4); got: {opening:?}"
+        );
+    }
 }
