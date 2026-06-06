@@ -71,7 +71,17 @@ pub struct HeadingColors {
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct LayoutConfig {
+    /// Minimum editing-column width in terminal columns.  The column expands to
+    /// fill the terminal (up to 50 % of width) but never narrows below this.
+    /// Default 60.
     pub min_cols: Option<u16>,
+    /// Maximum editing-column width in terminal columns.  The column will not
+    /// exceed this value even on wide terminals, keeping line length comfortable
+    /// for prose writing.  Must be ≥ `min_cols`; if smaller, `min_cols` wins.
+    /// Default: unlimited (the column fills up to 50 % of the terminal width).
+    ///
+    /// Example: `max_cols = 88` keeps every line within 88 characters.
+    pub max_cols: Option<u16>,
     /// Number of spaces to substitute for each `\t` on file load. Default 4.
     pub tab_width: Option<u16>,
     /// Use Powerline/Nerd Font filled-arrow glyphs (U+E0B0) in the status bar
@@ -483,6 +493,7 @@ warning = "#f38ba8"   # dirty flag, warnings
 # ── Layout ────────────────────────────────────────────────────────────────────
 [layout]
 # min_cols         = 60     # minimum editing-column width in characters
+# max_cols         = 88     # maximum editing-column width (prose wrap margin); default: unlimited
 # tab_width        = 4      # spaces per tab character expanded on load
 # powerline_glyphs = true   # set false to use the universal │ separator (no Nerd Font required)
 # line_numbers     = false  # set true to show line numbers in the left gutter

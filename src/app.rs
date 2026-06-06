@@ -189,6 +189,9 @@ pub struct App {
     /// When true, lines outside the logical paragraph containing the cursor
     /// are dimmed to `theme.muted`.  Toggled by Ctrl+D.
     pub focus_mode: bool,
+    /// When true the full keybindings reference modal is rendered over the
+    /// editor.  Toggled by F1; dismissed by Esc or F1 while open.
+    pub show_shortcuts: bool,
 }
 
 impl App {
@@ -263,6 +266,7 @@ impl App {
             search: None,
             typewriter_mode: false,
             focus_mode: false,
+            show_shortcuts: false,
         })
     }
 
@@ -450,6 +454,7 @@ mod tests {
             search: None,
             typewriter_mode: false,
             focus_mode: false,
+            show_shortcuts: false,
         }
     }
 

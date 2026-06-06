@@ -42,6 +42,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - v1 polish: italic startup warning, `delimiter_blend` config token, parent-dir creation on save (#35)
 
 ### Fixed
+- Fix style bleed-through in modal overlays (shortcuts + search-help) (#159)
 - startup: eliminate blank-frame flash on file open (#132)
 - renderer: clip fenced/heading bg to content area, dim line-number colors (#131)
 - FEEDBACK-2 2.3: cap highlight cache to prevent unbounded memory growth (#142)
@@ -80,6 +81,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Italic default color now matches text color (not accent blend) (#60)
 
 ### Changed
+- Word-wrap at configurable column width or % of editor width (#145)
+- Focus mode: toggle to dim text outside the current logical paragraph (#142)
+- Shortcut reminder modal: full keybinding reference, simplify bottom bar (#144)
+- Kill missed mutants: skips, tests, exclude_re (2026-05-30 run) (#154)
+- refactor: integration tests — assert specific span positions and styles, not just presence (#148)
+- Document mutants triage plan for 2026-05-30 run (#153)
+- Add features = [mutants-skip] to mutants.toml config (#155)
+- Add exclude_re patterns and mutants::skip from 0531 triage (#158)
+- Triage MUTANTS-0531 run results (#157)
+- Remove mutants::skip from build_decoration_map and add missing precision tests (#156)
 - Typewriter mode: toggle to keep current line vertically centred in viewport (#141)
 - Go-to-line: jump to line number via shortcut (#143)
 - Add --version / -V CLI flag (#140)

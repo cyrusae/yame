@@ -491,6 +491,17 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
         };
     }
 
+    // ── Shortcuts modal — swallow all keys; Esc or F1 closes it ─────────────
+    if app.show_shortcuts {
+        match (k.modifiers, k.code) {
+            (KeyModifiers::NONE, KeyCode::Esc) | (KeyModifiers::NONE, KeyCode::F(1)) => {
+                app.show_shortcuts = false;
+            }
+            _ => {}
+        }
+        return KeyOutcome::Continue;
+    }
+
     // ── Go-to-line mode — intercepts all keys while the prompt is open ────
     if matches!(app.status.mode, StatusMode::GoToLine { .. }) {
         return handle_goto_line_key(app, k);
@@ -584,6 +595,12 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
         // Ctrl+D: toggle focus mode (dim lines outside the current paragraph).
         (KeyModifiers::CONTROL, KeyCode::Char('d')) => {
             app.focus_mode = !app.focus_mode;
+            KeyOutcome::Continue
+        }
+
+        // F1: open the full keybindings reference modal.
+        (KeyModifiers::NONE, KeyCode::F(1)) => {
+            app.show_shortcuts = true;
             KeyOutcome::Continue
         }
 
@@ -804,6 +821,7 @@ where
     const SCROLL_LINES: usize = 3;
 
     let min_cols = layout_config.min_cols.unwrap_or(DEFAULT_MIN_COLS);
+    let max_cols = layout_config.max_cols;
 
     // Spawn a persistent background decoration worker.
     //
@@ -863,7 +881,7 @@ where
         {
             let term_size = terminal.size()?;
             let term_area = Rect::new(0, 0, term_size.width, term_size.height);
-            let pre_layout = compute_layout(term_area, min_cols);
+            let pre_layout = compute_layout(term_area, min_cols, max_cols);
             // Account for warning banner and search bar when computing the
             // editor area so scroll clamping uses the same geometry as the draw.
             let warn_rows = u16::from(
@@ -904,7 +922,7 @@ where
 
         execute!(io::stdout(), BeginSynchronizedUpdate)?;
         terminal.draw(|f| {
-            let layout = compute_layout(f.area(), min_cols);
+            let layout = compute_layout(f.area(), min_cols, max_cols);
 
             let content_bg_area = Rect {
                 x: layout.full.x,
@@ -983,6 +1001,9 @@ where
             f.render_widget(view, editor_area);
             if app.search.as_ref().is_some_and(|s| s.show_help) {
                 renderer::render_search_help_modal(f, editor_area, app);
+            }
+            if app.show_shortcuts {
+                renderer::render_shortcuts_modal(f, editor_area, app);
             }
             renderer::render_status_bar(f, layout.status_bar, app);
             renderer::render_info_line(f, layout.info_line, app);
@@ -1143,6 +1164,7 @@ mod tests {
             search: None,
             typewriter_mode: false,
             focus_mode: false,
+            show_shortcuts: false,
         }
     }
 
@@ -2225,5 +2247,49 @@ mod tests {
         // Content must still be present (not wiped by no-op mutation).
         assert!(out[0].contains('A'), "header row must still contain 'A'");
         assert!(out[2].contains('x'), "body row must still contain 'x'");
+    }
+
+    // ── Shortcuts modal ──────────────────────────────────────────────────────
+
+    // Kills: `replace false with true` on `show_shortcuts: false` in App::new /
+    // make_app — the modal would be open before F1 is ever pressed.
+    #[test]
+    fn f1_opens_shortcuts_modal() {
+        let mut app = make_app();
+        assert!(!app.show_shortcuts, "modal must start closed");
+        handle_key_event(&mut app, key(KeyCode::F(1)));
+        assert!(app.show_shortcuts, "F1 must open the shortcuts modal");
+    }
+
+    // Kills: `replace false with true` / `delete app.show_shortcuts = false` in
+    // the modal-swallow intercept — the modal would never close on Esc.
+    #[test]
+    fn esc_closes_shortcuts_modal() {
+        let mut app = make_app();
+        app.show_shortcuts = true;
+        handle_key_event(&mut app, key(KeyCode::Esc));
+        assert!(!app.show_shortcuts, "Esc must close the shortcuts modal");
+    }
+
+    // Kills: `replace false with true` in the F(1) close arm — pressing F1
+    // while modal is open would re-open it immediately instead of closing.
+    #[test]
+    fn f1_closes_shortcuts_modal_when_open() {
+        let mut app = make_app();
+        app.show_shortcuts = true;
+        handle_key_event(&mut app, key(KeyCode::F(1)));
+        assert!(!app.show_shortcuts, "F1 while open must close the shortcuts modal");
+    }
+
+    // Kills: removing the early-return in the modal-swallow intercept — a
+    // character key pressed while the modal is open would reach the textarea.
+    #[test]
+    fn char_key_while_modal_open_does_not_reach_textarea() {
+        let mut app = make_app();
+        app.show_shortcuts = true;
+        handle_key_event(&mut app, key(KeyCode::Char('x')));
+        // Modal swallows the key — textarea stays empty AND modal stays open.
+        assert_eq!(app.textarea.lines()[0], "", "char must be swallowed by modal");
+        assert!(app.show_shortcuts, "modal must remain open on non-dismiss key");
     }
 }

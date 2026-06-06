@@ -184,6 +184,7 @@ Optional per-element overrides. These take precedence over the derived defaults.
 ```toml
 [layout]
 # min_cols         = 60    # minimum editing column width in characters
+# max_cols         = 88    # maximum editing column width — caps the prose wrap margin on wide terminals
 # tab_width        = 4     # spaces per tab character (tabs are expanded on load)
 # powerline_glyphs = true  # set false to use the universal │ separator instead
 ```

@@ -242,6 +242,154 @@ pub fn block_highlights_to_decoration_map(
 }
 
 // ---------------------------------------------------------------------------
+// Frontmatter detection and styling
+// ---------------------------------------------------------------------------
+
+/// Detect YAML (`---`) or TOML (`+++`) frontmatter at the very start of `text`.
+///
+/// Returns `Some(end_line)` when:
+/// * Line 0 is exactly `"---"` (YAML) or `"+++"` (TOML).
+/// * A matching closing delimiter appears at line ≥ 2, ensuring at least one
+///   content line between the opening and closing delimiters.
+///
+/// Returns `None` otherwise (no frontmatter, empty block, or unclosed block).
+pub fn detect_frontmatter(text: &str) -> Option<usize> {
+    let mut lines = text.lines();
+    let first = lines.next()?;
+    let delim = match first {
+        "---" => "---",
+        "+++" => "+++",
+        _ => return None,
+    };
+    for (i, line) in lines.enumerate() {
+        if line == delim {
+            let end_line = i + 1; // +1 because `first` was consumed before enumerating
+            if end_line >= 2 {
+                return Some(end_line);
+            }
+        }
+    }
+    None
+}
+
+/// Apply frontmatter styling to `map` for lines `0..=end_line`.
+///
+/// Removes any spans the markdown parser already placed on those lines (e.g.
+/// `---` being treated as a horizontal rule) and replaces them with:
+/// * **Delimiter lines** (0 and `end_line`): `theme.muted` fg, `theme.heading_bg` bg.
+/// * **Content lines**: key part before the first `:` / `=` in `theme.accent`; the
+///   separator character in `theme.muted`; the remainder in `theme.text`.  Lines
+///   with no separator use `theme.text` for the whole line.
+///
+/// Every line receives `full_line_bg = Some(theme.heading_bg)` so the tinted
+/// background extends to the right edge of the editor column.
+fn apply_frontmatter_spans(
+    map: &mut DecorationMap,
+    line_starts: &[usize],
+    text: &str,
+    end_line: usize,
+    theme: &Theme,
+) {
+    let bg = theme.heading_bg;
+    let delim_style = Style::default().fg(theme.muted).bg(bg);
+    let key_style = Style::default().fg(theme.accent).bg(bg);
+    let sep_style = Style::default().fg(theme.muted).bg(bg);
+    let val_style = Style::default().fg(theme.text).bg(bg);
+
+    for line in 0..=end_line {
+        // Strip any markdown-parser decorations (e.g. horizontal-rule span on `---`).
+        map.remove(&line);
+
+        let line_len = line_char_len(line_starts, text, line).max(1);
+
+        if line == 0 || line == end_line {
+            // Delimiter line — muted full-width span.
+            push_span(
+                map,
+                line,
+                StyledSpan {
+                    char_start: 0,
+                    char_end: line_len,
+                    style: delim_style,
+                    full_line_bg: Some(bg),
+                    ..Default::default()
+                },
+            );
+        } else {
+            // Content line — try to split on the first `:` or `=`.
+            let ls = line_starts[line];
+            let le = if line + 1 < line_starts.len() {
+                line_starts[line + 1].saturating_sub(1) // trim the \n
+            } else {
+                text.len()
+            };
+            let line_str = &text[ls..le];
+
+            let sep_char_idx = line_str
+                .chars()
+                .enumerate()
+                .find_map(|(i, c)| (c == ':' || c == '=').then_some(i));
+
+            if let Some(sep) = sep_char_idx {
+                // key (may be empty for lines like `: value`)
+                if sep > 0 {
+                    push_span(
+                        map,
+                        line,
+                        StyledSpan {
+                            char_start: 0,
+                            char_end: sep,
+                            style: key_style,
+                            full_line_bg: Some(bg),
+                            ..Default::default()
+                        },
+                    );
+                }
+                // separator character
+                push_span(
+                    map,
+                    line,
+                    StyledSpan {
+                        char_start: sep,
+                        char_end: sep + 1,
+                        style: sep_style,
+                        full_line_bg: Some(bg),
+                        ..Default::default()
+                    },
+                );
+                // value (rest of line after separator)
+                if sep + 1 < line_len {
+                    push_span(
+                        map,
+                        line,
+                        StyledSpan {
+                            char_start: sep + 1,
+                            char_end: line_len,
+                            style: val_style,
+                            full_line_bg: Some(bg),
+                            ..Default::default()
+                        },
+                    );
+                }
+            } else {
+                // No separator found — style the whole line as text.
+                push_span(
+                    map,
+                    line,
+                    StyledSpan {
+                        char_start: 0,
+                        char_end: line_len,
+                        style: val_style,
+                        full_line_bg: Some(bg),
+                        ..Default::default()
+                    },
+                );
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // build_decoration_map
 // ---------------------------------------------------------------------------
 
@@ -1120,6 +1268,13 @@ pub fn build_decoration_map(
 
             _ => {}
         }
+    }
+
+    // Frontmatter post-pass: detect and restyle YAML/TOML frontmatter blocks.
+    // Must run after the markdown parser so its rule-spans on the `---` delimiter
+    // lines can be removed and replaced with frontmatter-specific styling.
+    if let Some(end_line) = detect_frontmatter(text) {
+        apply_frontmatter_spans(&mut map, &line_starts, text, end_line, theme);
     }
 
     (map, word_count)
@@ -4125,6 +4280,186 @@ mod tests {
         assert!(
             opening.iter().any(|s| s.char_start == 3 && s.char_end == 7),
             "lang tag 'rust' must end at char 7 (3+4); got: {opening:?}"
+        );
+    }
+
+    // ---- Frontmatter detection ----
+
+    #[test]
+    fn detect_frontmatter_yaml_returns_end_line() {
+        // "---\nkey: value\n---" → line 0 opens, line 2 closes → end_line = 2.
+        let text = "---\nkey: value\n---\n";
+        assert_eq!(detect_frontmatter(text), Some(2));
+    }
+
+    #[test]
+    fn detect_frontmatter_toml_returns_end_line() {
+        let text = "+++\nkey = \"value\"\n+++\n";
+        assert_eq!(detect_frontmatter(text), Some(2));
+    }
+
+    #[test]
+    fn detect_frontmatter_multiline_body() {
+        // Several content lines between the delimiters.
+        let text = "---\ntitle: Hello\ndate: 2024-01-01\ntags: [rust]\n---\n";
+        assert_eq!(detect_frontmatter(text), Some(4));
+    }
+
+    #[test]
+    fn detect_frontmatter_none_for_regular_doc() {
+        let text = "# Title\n\nSome paragraph.\n";
+        assert_eq!(detect_frontmatter(text), None);
+    }
+
+    #[test]
+    fn detect_frontmatter_none_if_delimiter_not_first_line() {
+        // `---` appearing mid-document should not be detected as frontmatter.
+        let text = "Intro\n---\nkey: value\n---\n";
+        assert_eq!(detect_frontmatter(text), None);
+    }
+
+    #[test]
+    fn detect_frontmatter_none_if_unclosed() {
+        let text = "---\nkey: value\n";
+        assert_eq!(detect_frontmatter(text), None);
+    }
+
+    #[test]
+    fn detect_frontmatter_none_for_empty_block() {
+        // `---` immediately followed by `---` has no content lines → rejected.
+        let text = "---\n---\n";
+        assert_eq!(detect_frontmatter(text), None);
+    }
+
+    #[test]
+    fn detect_frontmatter_none_for_wrong_close_delimiter() {
+        // YAML opened with `---` must close with `---`, not `+++`.
+        let text = "---\nkey: value\n+++\n";
+        assert_eq!(detect_frontmatter(text), None);
+    }
+
+    // ---- Frontmatter span styling ----
+
+    #[test]
+    fn frontmatter_delimiter_lines_have_tinted_bg() {
+        let text = "---\ntitle: Hello\n---\nrest\n";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        // Line 0 (opening `---`) must have full_line_bg = heading_bg.
+        let open = map.get(&0).expect("opening delimiter must have spans");
+        assert!(
+            open.iter().any(|s| s.full_line_bg == Some(theme.heading_bg)),
+            "opening `---` must have full_line_bg = heading_bg; got: {open:?}"
+        );
+        // Line 2 (closing `---`) must also have full_line_bg = heading_bg.
+        let close = map.get(&2).expect("closing delimiter must have spans");
+        assert!(
+            close.iter().any(|s| s.full_line_bg == Some(theme.heading_bg)),
+            "closing `---` must have full_line_bg = heading_bg; got: {close:?}"
+        );
+    }
+
+    #[test]
+    fn frontmatter_delimiter_lines_have_muted_fg() {
+        let text = "---\ntitle: Hello\n---\n";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let open = map.get(&0).expect("opening delimiter must have spans");
+        assert!(
+            open.iter().any(|s| s.style.fg == Some(theme.muted)),
+            "opening `---` delimiter must have muted fg; got: {open:?}"
+        );
+        let close = map.get(&2).expect("closing delimiter must have spans");
+        assert!(
+            close.iter().any(|s| s.style.fg == Some(theme.muted)),
+            "closing `---` delimiter must have muted fg; got: {close:?}"
+        );
+    }
+
+    #[test]
+    fn frontmatter_key_has_accent_color() {
+        // "title: Hello" → key "title" (chars 0..5) must be accent.
+        let text = "---\ntitle: Hello\n---\n";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let content = map.get(&1).expect("content line must have spans");
+        assert!(
+            content
+                .iter()
+                .any(|s| s.char_start == 0 && s.char_end == 5 && s.style.fg == Some(theme.accent)),
+            "key 'title' (chars 0..5) must have accent fg; got: {content:?}"
+        );
+    }
+
+    #[test]
+    fn frontmatter_value_has_text_color() {
+        // "title: Hello" → value " Hello" (chars 6..12) must be theme.text.
+        let text = "---\ntitle: Hello\n---\n";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let content = map.get(&1).expect("content line must have spans");
+        assert!(
+            content
+                .iter()
+                .any(|s| s.char_start == 6 && s.style.fg == Some(theme.text)),
+            "value ' Hello' must have theme.text fg; got: {content:?}"
+        );
+    }
+
+    #[test]
+    fn frontmatter_content_has_tinted_bg() {
+        let text = "---\ntitle: Hello\n---\n";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let content = map.get(&1).expect("content line must have spans");
+        assert!(
+            content.iter().any(|s| s.full_line_bg == Some(theme.heading_bg)),
+            "content line must have full_line_bg = heading_bg; got: {content:?}"
+        );
+    }
+
+    #[test]
+    fn frontmatter_does_not_affect_lines_after_block() {
+        // Line 3 is "rest" — must not have heading_bg.
+        let text = "---\ntitle: Hello\n---\nrest\n";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        if let Some(rest) = map.get(&3) {
+            assert!(
+                !rest.iter().any(|s| s.full_line_bg == Some(theme.heading_bg)),
+                "lines after frontmatter block must not carry heading_bg; got: {rest:?}"
+            );
+        }
+        // (line 3 having no spans at all is also correct — just plain text)
+    }
+
+    #[test]
+    fn frontmatter_rule_span_removed_from_delimiter_line() {
+        // Without frontmatter detection, `---` at line 0 would be styled as a
+        // horizontal rule (is_rule = true).  After frontmatter post-pass those
+        // spans are replaced — no is_rule span must survive on line 0.
+        let text = "---\nkey: v\n---\n";
+        let map = build_map(text, &make_theme(), false);
+        let open = map.get(&0).expect("opening delimiter must have spans");
+        assert!(
+            !open.iter().any(|s| s.is_rule),
+            "is_rule span on `---` delimiter line must be removed by frontmatter pass"
+        );
+    }
+
+    #[test]
+    fn frontmatter_toml_key_has_accent_color() {
+        // TOML uses `=` as separator.  "key = \"value\"" → key "key " (0..4) in accent.
+        let text = "+++\nkey = \"value\"\n+++\n";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let content = map.get(&1).expect("content line must have spans");
+        // "key " is chars 0..3 before the `=` at char 4.
+        assert!(
+            content
+                .iter()
+                .any(|s| s.char_start == 0 && s.style.fg == Some(theme.accent)),
+            "TOML key must have accent fg; got: {content:?}"
         );
     }
 }

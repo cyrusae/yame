@@ -1,6 +1,6 @@
 //! Renders the search / search-and-replace bar at the top of the editor column.
 
-use ratatui::{Frame, buffer::Buffer, layout::Rect, style::Color};
+use ratatui::{Frame, buffer::Buffer, layout::Rect, style::{Color, Modifier, Style}};
 
 use crate::app::App;
 
@@ -176,6 +176,10 @@ pub fn render_search_help_modal(f: &mut Frame, editor_area: Rect, app: &App) {
 
     let buf = f.buffer_mut();
 
+    // Clear any bold/italic/underline from the editor content rendered behind
+    // this overlay before drawing borders and text on top.
+    flood_reset(buf, Rect { x: bx, y: by, width: BOX_W, height: BOX_H }, desc_fg, bg);
+
     // ── Top border with title ─────────────────────────────────────────────────
     const TITLE: &str = " Search shortcuts ";
     let title_chars: Vec<char> = TITLE.chars().collect();
@@ -228,6 +232,191 @@ pub fn render_search_help_modal(f: &mut Frame, editor_area: Rect, app: &App) {
         buf[(bx + 1 + i, bottom_y)].set_char('─').set_fg(border_fg).set_bg(bg);
     }
     buf[(bx + BOX_W - 1, bottom_y)].set_char('╯').set_fg(border_fg).set_bg(bg);
+}
+
+// ── Shared overlay helper ─────────────────────────────────────────────────────
+
+/// Flood-fill `area` in `buf` with a clean style, overwriting any bold/italic/
+/// underline/etc. modifiers that were painted by the editor renderer behind the
+/// overlay.  Every cell is set to `bg` background, `fg` foreground, and all
+/// modifier bits cleared — so subsequent per-cell writes that only call `set_bg`
+/// or `set_char` will never inherit decoration from the underlying document.
+///
+/// This must be called before drawing any border or content in a modal overlay.
+#[mutants::skip] // Writes into ratatui Buffer — void, not testable via return value.
+fn flood_reset(buf: &mut Buffer, area: Rect, fg: Color, bg: Color) {
+    // Style::new() has empty add_modifier; remove_modifier(all) sets sub_modifier
+    // to Modifier::all(), which clears every modifier bit when patched onto the
+    // existing cell style via Cell::set_style → Style::patch.
+    let clean = Style::new().fg(fg).bg(bg).remove_modifier(Modifier::all());
+    buf.set_style(area, clean);
+    // buf.set_style patches the style but doesn't reset the symbol — we need
+    // spaces so the background colour is fully visible between drawn glyphs.
+    for y in area.y..area.y + area.height {
+        for x in area.x..area.x + area.width {
+            buf[(x, y)].set_char(' ');
+        }
+    }
+}
+
+// ── Full shortcuts modal ──────────────────────────────────────────────────────
+
+/// Row types for the shortcuts table.
+enum HelpRow {
+    /// A section divider with a title, rendered as `│ ─ Title ──────── │`.
+    Section(&'static str),
+    /// A two-column entry row: (key1, desc1, key2, desc2).
+    Entry(&'static str, &'static str, &'static str, &'static str),
+}
+
+/// All shortcuts shown in the modal, in display order.
+static SHORTCUTS: &[HelpRow] = &[
+    HelpRow::Section("File"),
+    HelpRow::Entry("Ctrl+S / ⌘S",  "Save",          "Ctrl+X / Esc", "Exit"),
+    HelpRow::Entry("Ctrl+R",        "Reload config",  "",             ""),
+    HelpRow::Section("Edit"),
+    HelpRow::Entry("Ctrl+Z",        "Undo",           "Ctrl+Y",       "Redo"),
+    HelpRow::Entry("Ctrl+C / ⌘C",  "Copy",           "Ctrl+V / ⌘V",  "Paste"),
+    HelpRow::Entry("Tab",           "Indent",         "",             ""),
+    HelpRow::Section("Navigate"),
+    HelpRow::Entry("↑ / ↓",        "Move",           "Shift+↑/↓",    "Select"),
+    HelpRow::Entry("Ctrl+↑/↓",     "Scroll",         "Ctrl+G",       "Go to line"),
+    HelpRow::Section("Search"),
+    HelpRow::Entry("Ctrl+F",        "Search",         "Ctrl+H",       "Find & replace"),
+    HelpRow::Section("View"),
+    HelpRow::Entry("Ctrl+T",        "Typewriter",     "Ctrl+D",       "Focus mode"),
+    HelpRow::Section("Markdown"),
+    HelpRow::Entry("Alt+T",         "Format table",   "()[]{}'\"*_``", "Auto-pair"),
+    HelpRow::Entry("F1 / Esc",      "Close help",     "",             ""),
+];
+
+/// Column widths (terminal cells) for the four fields in each entry row.
+const SC_C1: u16 = 12; // key1
+const SC_C2: u16 = 14; // desc1
+const SC_C3: u16 = 13; // key2
+const SC_C4: u16 = 15; // desc2
+
+/// Inner width: 2-space left-pad + C1 + sep + C2 + sep + C3 + sep + C4 + 1-trailing.
+const SC_INNER_W: u16 = 2 + SC_C1 + 1 + SC_C2 + 1 + SC_C3 + 1 + SC_C4 + 1;
+/// Total box width including left and right border glyphs.
+const SC_BOX_W: u16 = SC_INNER_W + 2;
+/// Total box height: top border + one row per SHORTCUTS entry + bottom border.
+const SC_BOX_H: u16 = SHORTCUTS.len() as u16 + 2;
+
+/// Render the full keybindings reference modal, centred over `editor_area`.
+///
+/// Only shown while `app.show_shortcuts` is `true`.  Dismissed by F1 or Esc
+/// (handled in `handle_key_event`).
+#[mutants::skip] // Writes into ratatui Frame — void, not testable via return value.
+pub fn render_shortcuts_modal(f: &mut Frame, editor_area: Rect, app: &App) {
+    if !app.show_shortcuts {
+        return;
+    }
+    if editor_area.width < SC_BOX_W || editor_area.height < SC_BOX_H {
+        return;
+    }
+
+    let theme = &app.theme;
+    let bg         = theme.ui_bar;
+    let border_fg  = theme.muted;
+    let section_fg = theme.accent;
+    let key_fg     = theme.accent;
+    let desc_fg    = theme.text;
+
+    // Centre both horizontally and vertically.
+    let bx = editor_area.x + (editor_area.width.saturating_sub(SC_BOX_W))  / 2;
+    let by = editor_area.y + (editor_area.height.saturating_sub(SC_BOX_H)) / 2;
+
+    let buf = f.buffer_mut();
+
+    // Clear bold/italic/underline from editor content rendered behind this overlay.
+    flood_reset(buf, Rect { x: bx, y: by, width: SC_BOX_W, height: SC_BOX_H }, desc_fg, bg);
+
+    // ── Top border with title ─────────────────────────────────────────────────
+    const TITLE: &str = " Keybindings ";
+    let title_chars: Vec<char> = TITLE.chars().collect();
+    let title_len   = title_chars.len() as u16;
+    let dash_total  = SC_BOX_W - 2;
+
+    buf[(bx, by)].set_char('╭').set_fg(border_fg).set_bg(bg);
+    for i in 0..dash_total {
+        let cx = bx + 1 + i;
+        if i >= 1 && i < 1 + title_len {
+            let ch  = title_chars[(i - 1) as usize];
+            let fg  = if ch == ' ' { border_fg } else { theme.text };
+            buf[(cx, by)].set_char(ch).set_fg(fg).set_bg(bg);
+        } else {
+            buf[(cx, by)].set_char('─').set_fg(border_fg).set_bg(bg);
+        }
+    }
+    buf[(bx + SC_BOX_W - 1, by)].set_char('╮').set_fg(border_fg).set_bg(bg);
+
+    // ── Content rows ──────────────────────────────────────────────────────────
+    for (row_i, row) in SHORTCUTS.iter().enumerate() {
+        let ry = by + 1 + row_i as u16;
+        match row {
+            HelpRow::Section(name) => {
+                // │ ─ Name ─────────────────────────── │
+                buf[(bx, ry)].set_char('│').set_fg(border_fg).set_bg(bg);
+
+                let inner_end = bx + 1 + SC_INNER_W;
+                let mut ix = bx + 1;
+
+                // " ─ "
+                buf[(ix, ry)].set_char(' ').set_bg(bg); ix += 1;
+                buf[(ix, ry)].set_char('─').set_fg(border_fg).set_bg(bg); ix += 1;
+                buf[(ix, ry)].set_char(' ').set_bg(bg); ix += 1;
+
+                // section name
+                for ch in name.chars() {
+                    if ix >= inner_end { break; }
+                    buf[(ix, ry)].set_char(ch).set_fg(section_fg).set_bg(bg);
+                    ix += 1;
+                }
+
+                // trailing space before the rule
+                if ix < inner_end {
+                    buf[(ix, ry)].set_char(' ').set_bg(bg); ix += 1;
+                }
+
+                // fill with ─
+                while ix < inner_end {
+                    buf[(ix, ry)].set_char('─').set_fg(border_fg).set_bg(bg);
+                    ix += 1;
+                }
+
+                buf[(inner_end, ry)].set_char('│').set_fg(border_fg).set_bg(bg);
+            }
+
+            HelpRow::Entry(k1, d1, k2, d2) => {
+                // │  key1..  desc1..  key2..  desc2.. │
+                let mut cx = bx;
+                buf[(cx, ry)].set_char('│').set_fg(border_fg).set_bg(bg); cx += 1;
+
+                buf[(cx, ry)].set_char(' ').set_bg(bg); cx += 1;
+                buf[(cx, ry)].set_char(' ').set_bg(bg); cx += 1;
+
+                cx = put_padded(buf, cx, ry, k1, SC_C1, key_fg,  bg);
+                buf[(cx, ry)].set_char(' ').set_bg(bg); cx += 1;
+                cx = put_padded(buf, cx, ry, d1, SC_C2, desc_fg, bg);
+                buf[(cx, ry)].set_char(' ').set_bg(bg); cx += 1;
+                cx = put_padded(buf, cx, ry, k2, SC_C3, key_fg,  bg);
+                buf[(cx, ry)].set_char(' ').set_bg(bg); cx += 1;
+                cx = put_padded(buf, cx, ry, d2, SC_C4, desc_fg, bg);
+
+                buf[(cx, ry)].set_char(' ').set_bg(bg); cx += 1;
+                buf[(cx, ry)].set_char('│').set_fg(border_fg).set_bg(bg);
+            }
+        }
+    }
+
+    // ── Bottom border ─────────────────────────────────────────────────────────
+    let bottom_y = by + SC_BOX_H - 1;
+    buf[(bx, bottom_y)].set_char('╰').set_fg(border_fg).set_bg(bg);
+    for i in 0..dash_total {
+        buf[(bx + 1 + i, bottom_y)].set_char('─').set_fg(border_fg).set_bg(bg);
+    }
+    buf[(bx + SC_BOX_W - 1, bottom_y)].set_char('╯').set_fg(border_fg).set_bg(bg);
 }
 
 /// Write `s` left-aligned into a `width`-cell field at `(x, y)`, padding
