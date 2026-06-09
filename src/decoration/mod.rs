@@ -191,6 +191,12 @@ pub struct StyledSpan {
     /// (indent 2, aligning with text after `> `) and list items (indent =
     /// bullet width + 1 space, aligning with item text).
     pub continuation_indent: u8,
+    /// When non-zero, the **first** visual row of the logical line is also
+    /// indented by this many terminal columns.  Distinct from
+    /// `continuation_indent` (which only applies to wrap_idx > 0) so that list
+    /// bullets — which occupy the first row — are not displaced.  Used by
+    /// frontmatter content lines to visually separate them from prose.
+    pub row_indent: u8,
     /// When set, renderer expands this span's background to fill the full column width.
     pub full_line_bg: Option<Color>,
     /// When set, renderer draws a full-width underline in this color after the row.
@@ -232,6 +238,7 @@ pub fn block_highlights_to_decoration_map(
                 style: Style::default().fg(hs.fg),
                 is_blockquote: false,
                 continuation_indent: 0,
+                row_indent: 0,
                 full_line_bg: None,
                 border_bottom: None,
                 is_rule: false,
@@ -293,7 +300,11 @@ fn apply_frontmatter_spans(
 ) {
     let bg = theme.heading_bg;
     let delim_style = Style::default().fg(theme.muted).bg(bg);
-    let key_style = Style::default().fg(theme.accent).bg(bg);
+    // Keys: code color (green) + italic — visually distinct from accent headings.
+    let key_style = Style::default()
+        .fg(theme.frontmatter_key)
+        .bg(bg)
+        .add_modifier(Modifier::ITALIC);
     let sep_style = Style::default().fg(theme.muted).bg(bg);
     let val_style = Style::default().fg(theme.text).bg(bg);
 
@@ -318,6 +329,9 @@ fn apply_frontmatter_spans(
             );
         } else {
             // Content line — try to split on the first `:` or `=`.
+            // All content spans carry row_indent and continuation_indent = 3 so
+            // the line is visually offset from the delimiter `---` / `+++` and
+            // looks distinct from normal prose.
             let ls = line_starts[line];
             let le = if line + 1 < line_starts.len() {
                 line_starts[line + 1].saturating_sub(1) // trim the \n
@@ -342,6 +356,8 @@ fn apply_frontmatter_spans(
                             char_end: sep,
                             style: key_style,
                             full_line_bg: Some(bg),
+                            row_indent: 3,
+                            continuation_indent: 3,
                             ..Default::default()
                         },
                     );
@@ -355,6 +371,8 @@ fn apply_frontmatter_spans(
                         char_end: sep + 1,
                         style: sep_style,
                         full_line_bg: Some(bg),
+                        row_indent: 3,
+                        continuation_indent: 3,
                         ..Default::default()
                     },
                 );
@@ -368,6 +386,8 @@ fn apply_frontmatter_spans(
                             char_end: line_len,
                             style: val_style,
                             full_line_bg: Some(bg),
+                            row_indent: 3,
+                            continuation_indent: 3,
                             ..Default::default()
                         },
                     );
@@ -382,6 +402,8 @@ fn apply_frontmatter_spans(
                         char_end: line_len,
                         style: val_style,
                         full_line_bg: Some(bg),
+                        row_indent: 3,
+                        continuation_indent: 3,
                         ..Default::default()
                     },
                 );
@@ -4537,17 +4559,49 @@ mod tests {
     }
 
     #[test]
-    fn frontmatter_key_has_accent_color() {
-        // "title: Hello" → key "title" (chars 0..5) must be accent.
+    fn frontmatter_key_has_code_color() {
+        // "title: Hello" → key "title" (chars 0..5) must use code_color (green).
         let text = "---\ntitle: Hello\n---\n";
         let theme = make_theme();
         let map = build_map(text, &theme, false);
         let content = map.get(&1).expect("content line must have spans");
         assert!(
-            content
-                .iter()
-                .any(|s| s.char_start == 0 && s.char_end == 5 && s.style.fg == Some(theme.accent)),
-            "key 'title' (chars 0..5) must have accent fg; got: {content:?}"
+            content.iter().any(|s| {
+                s.char_start == 0
+                    && s.char_end == 5
+                    && s.style.fg == Some(theme.frontmatter_key)
+            }),
+            "key 'title' (chars 0..5) must have frontmatter_key fg; got: {content:?}"
+        );
+    }
+
+    #[test]
+    fn frontmatter_key_is_italic() {
+        // Key spans must carry the ITALIC modifier.
+        let text = "---\ntitle: Hello\n---\n";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let content = map.get(&1).expect("content line must have spans");
+        assert!(
+            content.iter().any(|s| {
+                s.char_start == 0
+                    && s.char_end == 5
+                    && s.style.add_modifier.contains(Modifier::ITALIC)
+            }),
+            "key 'title' must carry ITALIC modifier; got: {content:?}"
+        );
+    }
+
+    #[test]
+    fn frontmatter_content_has_row_indent() {
+        // Content lines must carry row_indent = 3 for visual offset.
+        let text = "---\ntitle: Hello\n---\n";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let content = map.get(&1).expect("content line must have spans");
+        assert!(
+            content.iter().any(|s| s.row_indent == 3),
+            "content line spans must have row_indent = 3; got: {content:?}"
         );
     }
 
@@ -4608,18 +4662,17 @@ mod tests {
     }
 
     #[test]
-    fn frontmatter_toml_key_has_accent_color() {
-        // TOML uses `=` as separator.  "key = \"value\"" → key "key " (0..4) in accent.
+    fn frontmatter_toml_key_has_code_color() {
+        // TOML uses `=` as separator.  "key = \"value\"" → key "key " (0..3) in frontmatter_key color.
         let text = "+++\nkey = \"value\"\n+++\n";
         let theme = make_theme();
         let map = build_map(text, &theme, false);
         let content = map.get(&1).expect("content line must have spans");
-        // "key " is chars 0..3 before the `=` at char 4.
         assert!(
             content
                 .iter()
-                .any(|s| s.char_start == 0 && s.style.fg == Some(theme.accent)),
-            "TOML key must have accent fg; got: {content:?}"
+                .any(|s| s.char_start == 0 && s.style.fg == Some(theme.frontmatter_key)),
+            "TOML key must have frontmatter_key fg; got: {content:?}"
         );
     }
 

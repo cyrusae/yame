@@ -167,8 +167,9 @@ Optional per-element overrides. These take precedence over the derived defaults.
 # ui_bar              = "#313244"
 # ui_text             = "#cdd6f4"
 # delimiter_blend     = 0.4         # 0.0 = full muted, 1.0 = full span color
-# highlight_bg        = "#2d273c"   # ==text== background (default: same tint as heading_bg)
+# highlight_bg        = "#524568"   # ==text== background (accent at 35% — try "#816a9f" for bolder)
 # highlight_fg        = "#cdd6f4"   # ==text== foreground
+# frontmatter_key     = "#a6e3a1"   # YAML/TOML frontmatter key color (default: code green)
 ```
 
 ### Per-level heading colors

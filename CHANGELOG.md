@@ -82,6 +82,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Italic default color now matches text color (not accent blend) (#60)
 
 ### Changed
+- highlight: more visible default bg (accent blend 0.35) (#164)
 - Highlight syntax: ==text== inline decoration (#162)
 - Read-only mode: make togglable in-app with Ctrl+E (#161)
 - Add sample fixture files for manual testing (#160)

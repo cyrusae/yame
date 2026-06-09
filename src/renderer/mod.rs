@@ -363,8 +363,10 @@ impl Widget for MarkdownView<'_> {
         while visual_row < visible && log_row < total {
             let line = &self.lines[log_row];
             let line_decs = self.decoration_map.get(&log_row);
-            // Compute the continuation indent before wrapping so continuation
-            // rows are wrapped at the narrower effective width.
+            // Compute indents before wrapping so rows are wrapped at the correct
+            // effective width.
+            // `line_ci` — continuation indent (wrap_idx > 0 only, e.g. list bullets).
+            // `line_ri` — first-row indent (wrap_idx == 0, e.g. frontmatter content).
             let line_ci = line_decs
                 .map(|decs| {
                     decs.iter()
@@ -373,9 +375,17 @@ impl Widget for MarkdownView<'_> {
                         .unwrap_or(0)
                 })
                 .unwrap_or(0) as usize;
+            let line_ri = line_decs
+                .map(|decs| {
+                    decs.iter()
+                        .map(|s| s.row_indent)
+                        .max()
+                        .unwrap_or(0)
+                })
+                .unwrap_or(0) as usize;
             let wrapped = wrap_line_indented(
                 line,
-                content_width.max(1),
+                content_width.saturating_sub(line_ri).max(1),
                 content_width.saturating_sub(line_ci).max(1),
             );
 
@@ -401,6 +411,7 @@ impl Widget for MarkdownView<'_> {
                                 style: s.style,
                                 is_blockquote: s.is_blockquote,
                                 continuation_indent: s.continuation_indent,
+                                row_indent: s.row_indent,
                                 full_line_bg: s.full_line_bg,
                                 border_bottom: s.border_bottom,
                                 is_rule: s.is_rule,
@@ -409,8 +420,10 @@ impl Widget for MarkdownView<'_> {
                     })
                     .unwrap_or_default();
 
-                // Continuation rows (wrap_idx > 0) of blockquote/list lines are
-                // indented to align with the text start after the `> ` / bullet prefix.
+                // Visual left-margin indent for this row.
+                //
+                // • wrap_idx > 0: use `continuation_indent` (blockquote/list alignment).
+                // • wrap_idx == 0: use `row_indent` (e.g. frontmatter content offset).
                 //
                 // IMPORTANT: read from `line_decs` (all logical-line spans), NOT from
                 // `row_spans` (filtered to visual-row char range).  The bullet/indicator
@@ -427,7 +440,7 @@ impl Widget for MarkdownView<'_> {
                         })
                         .unwrap_or(0) as u16
                 } else {
-                    0
+                    line_ri as u16
                 };
 
                 // Cursor tracking
@@ -645,9 +658,19 @@ fn apply_selection_overlay(
                     .unwrap_or(0)
             })
             .unwrap_or(0) as usize;
+        let line_ri = view
+            .decoration_map
+            .get(&log_row)
+            .map(|decs| {
+                decs.iter()
+                    .map(|s| s.row_indent)
+                    .max()
+                    .unwrap_or(0)
+            })
+            .unwrap_or(0) as usize;
         let wrapped = wrap_line_indented(
             line,
-            content_width.max(1),
+            content_width.saturating_sub(line_ri).max(1),
             content_width.saturating_sub(line_ci).max(1),
         );
 
@@ -661,8 +684,8 @@ fn apply_selection_overlay(
 
             let char_end = char_start + char_len;
 
-            // Mirror the continuation_indent logic from render() so selection
-            // highlighting respects the same left-margin indent.
+            // Mirror the indent logic from render() so selection highlighting
+            // respects the same left-margin offset.
             let continuation_indent: u16 = if wrap_idx > 0 {
                 view.decoration_map
                     .get(&log_row)
@@ -674,7 +697,7 @@ fn apply_selection_overlay(
                     })
                     .unwrap_or(0) as u16
             } else {
-                0
+                line_ri as u16
             };
 
             if log_row >= sel_row_start && log_row <= sel_row_end {

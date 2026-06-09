@@ -60,6 +60,9 @@ pub struct ThemeOverrides {
     /// Foreground colour for `==highlighted==` text.
     /// Default: body `text` colour.
     pub highlight_fg: Option<String>,
+    /// Foreground colour for YAML/TOML frontmatter keys.
+    /// Default: `code` colour (green) so keys are visually distinct from accent headings.
+    pub frontmatter_key: Option<String>,
 }
 
 /// Per-level heading color overrides (all optional).
@@ -215,6 +218,8 @@ pub struct Theme {
     // ==highlight== spans
     pub highlight_bg: Color,
     pub highlight_fg: Color,
+    // frontmatter
+    pub frontmatter_key: Color,
     // per-level headings
     pub headings: HeadingTheme,
     pub delimiter_blend: f32,
@@ -359,11 +364,15 @@ impl Theme {
         let search_current_bg_rgb = blend(code_rgb, bg, 0.70);
         // Highlight (==text==): green tint background, normal text foreground.
         // Users can override to e.g. a warm yellow for a traditional marker feel.
-        // Default: same subtle accent tint used for heading backgrounds — keeps
-        // highlights visually consistent with the heading palette rather than
-        // introducing a second unrelated hue.  Override with [theme] highlight_bg.
-        let highlight_bg_rgb = resolve(&overrides.highlight_bg, heading_bg_rgb, warnings);
+        // Default: accent blended 35% toward bg — visibly tinted without reaching
+        // selection-level saturation.  Uses the accent hue so highlights stay
+        // tonally consistent with the rest of the theme.
+        // Override with [theme] highlight_bg.
+        let highlight_bg_rgb = resolve(&overrides.highlight_bg, blend(accent, bg, 0.35), warnings);
         let highlight_fg_rgb = resolve(&overrides.highlight_fg, text, warnings);
+        // Frontmatter key color: code green by default — visually distinct from
+        // accent headings and makes keys easy to scan against plain-text values.
+        let frontmatter_key_rgb = resolve(&overrides.frontmatter_key, code_rgb, warnings);
 
         // Per-level heading colors
         let heading_default = |blend_t: f32| blend(accent, text, blend_t);
@@ -427,6 +436,7 @@ impl Theme {
             search_current_bg: to_color(search_current_bg_rgb),
             highlight_bg: to_color(highlight_bg_rgb),
             highlight_fg: to_color(highlight_fg_rgb),
+            frontmatter_key: to_color(frontmatter_key_rgb),
             headings: HeadingTheme {
                 h1: to_color(h1_rgb),
                 h2: to_color(h2_rgb),
@@ -498,8 +508,9 @@ warning = "#f38ba8"   # dirty flag, warnings
 # ui_bar              = "#11111b"
 # ui_text             = "#cdd6f4"
 # delimiter_blend     = 0.4        # 0.0 = full muted · 1.0 = full span color
-# highlight_bg        = "#2d273c"  # ==text== background (default: same tint as heading_bg)
+# highlight_bg        = "#524568"  # ==text== background (accent at 35% — try "#816a9f" for bolder)
 # highlight_fg        = "#cdd6f4"  # ==text== foreground
+# frontmatter_key     = "#a6e3a1"  # YAML/TOML frontmatter key color (default: code green)
 
 # ── Per-level heading colors ──────────────────────────────────────────────────
 [headings]
