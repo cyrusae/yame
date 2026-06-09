@@ -18,6 +18,12 @@ Mixed: **bold and *nested italic* inside bold** — pulldown-cmark handles this 
 
 What about *italic and **nested bold***?
 
+==Highlighting test.==
+
+==Highlighting test over **bold**, *italic*, and a [link](https://bsky.app)==
+
+Lorem ipsum I don't actually have this memorized but it would ==probably== be somewhat in character for me to do so. I don't know if I'll even ==end up using== the highlight function because of how large the delimiters are but I wanted to have the ==option==. 
+
 ---
 
 ## Inline Elements

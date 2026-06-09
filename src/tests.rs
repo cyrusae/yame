@@ -46,6 +46,7 @@ fn make_app() -> App {
         typewriter_mode: false,
         focus_mode: false,
         show_shortcuts: false,
+        read_only: false,
     }
 }
 

@@ -14,7 +14,7 @@ It can also be used as a distraction-free text editor!
 
 ## What it does
 
-- Opens and saves Markdown files with live inline decoration: headings, bold, italic, inline code, fenced blocks, blockquotes, links, lists, todo checkboxes, tables, strikethrough, horizontal rules
+- Opens and saves Markdown files with live inline decoration: headings, bold, italic, inline code, fenced blocks, blockquotes, links, lists, todo checkboxes, tables, strikethrough, horizontal rules, `==highlights==`
 - Syntax highlighting in fenced code blocks for over 150 languages
 - Centered editing column with soft word wrap (wide/CJK character aware)
 - Catppuccin Mocha theme by default, fully configurable via `~/.config/yame/config.toml`
@@ -56,6 +56,7 @@ Tested on macOS. Should work on Linux and Windows; untested. Issues and pull req
 
 ```
 yame <file>           Open <file> for editing (created if it doesn't exist)
+yame -r <file>        Open <file> in read-only mode (no edits, no save)
 yame init             Print shell integration function for your shell
 yame write-config     Write a commented default config to ~/.config/yame/config.toml
 yame --help           Show help
@@ -109,6 +110,7 @@ Without `fd`, replace `fd --type f --extension md` with `find . -name "*.md"`.
 | `Ctrl+C` | Copy selection |
 | `Ctrl+V` | Paste from system clipboard |
 | `Ctrl+R` | Reload config file |
+| `Ctrl+E` | Toggle read-only mode |
 | Arrow keys | Move cursor |
 | `Shift+Arrow` | Select text |
 | `Home` / `End` | Start / end of line |
@@ -165,6 +167,8 @@ Optional per-element overrides. These take precedence over the derived defaults.
 # ui_bar              = "#313244"
 # ui_text             = "#cdd6f4"
 # delimiter_blend     = 0.4         # 0.0 = full muted, 1.0 = full span color
+# highlight_bg        = "#2d273c"   # ==text== background (default: same tint as heading_bg)
+# highlight_fg        = "#cdd6f4"   # ==text== foreground
 ```
 
 ### Per-level heading colors

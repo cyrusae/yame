@@ -192,6 +192,11 @@ pub struct App {
     /// When true the full keybindings reference modal is rendered over the
     /// editor.  Toggled by F1; dismissed by Esc or F1 while open.
     pub show_shortcuts: bool,
+    /// When true the buffer is opened in read-only mode: all content-modifying
+    /// keys are suppressed and the status bar shows a distinct `[RO]` pill.
+    /// Set at startup via the `-r` / `--read-only` CLI flag; never toggled at
+    /// runtime.
+    pub read_only: bool,
 }
 
 impl App {
@@ -267,6 +272,7 @@ impl App {
             typewriter_mode: false,
             focus_mode: false,
             show_shortcuts: false,
+            read_only: false, // set by caller via app.read_only = read_only after new()
         })
     }
 
@@ -455,6 +461,7 @@ mod tests {
             typewriter_mode: false,
             focus_mode: false,
             show_shortcuts: false,
+            read_only: false,
         }
     }
 

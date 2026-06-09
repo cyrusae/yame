@@ -187,6 +187,46 @@ pub(super) fn is_navigation_key(k: &crossterm::event::KeyEvent) -> bool {
 
 /// If there is an active selection and `k` is a pair-opener, wrap the
 /// selection with the corresponding pair and return `true`.
+/// Returns `true` for key events that are safe to process in read-only mode:
+/// navigation, selection, copy, search, mode toggles, viewport scroll, and exit.
+/// Everything else (character input, backspace, paste, undo/redo, save, …) returns
+/// `false` and will be suppressed with a status-bar reminder.
+pub(super) fn is_ro_allowed(mods: KeyModifiers, code: KeyCode) -> bool {
+    matches!(
+        (mods, code),
+        // ── Navigation & selection ───────────────────────────────────────────
+        (
+            _,
+            KeyCode::Up
+                | KeyCode::Down
+                | KeyCode::Left
+                | KeyCode::Right
+                | KeyCode::Home
+                | KeyCode::End
+                | KeyCode::PageUp
+                | KeyCode::PageDown,
+        )
+        // ── Exit ─────────────────────────────────────────────────────────────
+        | (KeyModifiers::NONE, KeyCode::Esc)
+        | (KeyModifiers::CONTROL, KeyCode::Char('x'))
+        // ── Copy (not paste) ─────────────────────────────────────────────────
+        | (KeyModifiers::CONTROL, KeyCode::Char('c'))
+        | (KeyModifiers::SUPER, KeyCode::Char('c'))
+        // ── Search (read-only — replace is blocked inside handle_search_key) ─
+        | (KeyModifiers::CONTROL, KeyCode::Char('f'))
+        // ── Go-to-line ───────────────────────────────────────────────────────
+        | (KeyModifiers::CONTROL, KeyCode::Char('g'))
+        // ── Config reload ────────────────────────────────────────────────────
+        | (KeyModifiers::CONTROL, KeyCode::Char('r'))
+        // ── Mode toggles (typewriter, focus, read-only) ──────────────────────
+        | (KeyModifiers::CONTROL, KeyCode::Char('t'))
+        | (KeyModifiers::CONTROL, KeyCode::Char('d'))
+        | (KeyModifiers::CONTROL, KeyCode::Char('e'))
+        // ── Shortcuts modal ───────────────────────────────────────────────────
+        | (KeyModifiers::NONE, KeyCode::F(1))
+    )
+}
+
 pub(super) fn handle_pair_wrap(app: &mut App, k: crossterm::event::KeyEvent) -> bool {
     if k.modifiers
         .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
@@ -357,8 +397,8 @@ pub(super) fn handle_search_key(
             }
         }
 
-        // Ctrl+H: toggle the replace row.
-        (KeyModifiers::CONTROL, KeyCode::Char('h')) => {
+        // Ctrl+H: toggle the replace row (blocked in read-only mode).
+        (KeyModifiers::CONTROL, KeyCode::Char('h')) if !app.read_only => {
             if let Some(s) = &mut app.search {
                 s.show_replace = !s.show_replace;
                 s.focus_search = true; // return focus to search field
@@ -512,6 +552,13 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
         return handle_search_key(app, k);
     }
 
+    // ── Read-only guard ─────────────────────────────────────────────────────
+    if app.read_only && !is_ro_allowed(k.modifiers, k.code) {
+        app.status
+            .set_timed("Read-only — ^X to exit", Duration::from_secs(2));
+        return KeyOutcome::Continue;
+    }
+
     // ── Normal editing mode ─────────────────────────────────────────────────
     match (k.modifiers, k.code) {
         (KeyModifiers::CONTROL, KeyCode::Char('s')) | (KeyModifiers::SUPER, KeyCode::Char('s')) => {
@@ -595,6 +642,18 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
         // Ctrl+D: toggle focus mode (dim lines outside the current paragraph).
         (KeyModifiers::CONTROL, KeyCode::Char('d')) => {
             app.focus_mode = !app.focus_mode;
+            KeyOutcome::Continue
+        }
+
+        // Ctrl+E: toggle read-only mode on/off without exiting.
+        (KeyModifiers::CONTROL, KeyCode::Char('e')) => {
+            app.read_only = !app.read_only;
+            let msg = if app.read_only {
+                "Read-only on — editing disabled"
+            } else {
+                "Editing enabled"
+            };
+            app.status.set_timed(msg, Duration::from_secs(2));
             KeyOutcome::Continue
         }
 
@@ -1165,6 +1224,7 @@ mod tests {
             typewriter_mode: false,
             focus_mode: false,
             show_shortcuts: false,
+            read_only: false,
         }
     }
 
@@ -2291,5 +2351,203 @@ mod tests {
         // Modal swallows the key — textarea stays empty AND modal stays open.
         assert_eq!(app.textarea.lines()[0], "", "char must be swallowed by modal");
         assert!(app.show_shortcuts, "modal must remain open on non-dismiss key");
+    }
+
+    // ── Read-only mode ───────────────────────────────────────────────────────
+
+    // Typing a character in read-only mode must be blocked: the textarea stays
+    // empty and a timed status message is set.
+    #[test]
+    fn read_only_blocks_char_input() {
+        let mut app = make_app();
+        app.read_only = true;
+        handle_key_event(&mut app, key(KeyCode::Char('a')));
+        assert_eq!(
+            app.textarea.lines()[0],
+            "",
+            "char input must be blocked in read-only mode"
+        );
+        assert!(
+            matches!(
+                app.status.mode,
+                yame::status::StatusMode::TimedMessage { .. }
+            ),
+            "a timed status message must be shown when blocked"
+        );
+    }
+
+    // Exit key (Ctrl+X) must still work in read-only mode.
+    #[test]
+    fn read_only_allows_exit_key() {
+        let mut app = make_app();
+        app.read_only = true;
+        let outcome = handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(
+            outcome,
+            KeyOutcome::Exit,
+            "Ctrl+X must still exit in read-only mode"
+        );
+    }
+
+    // Navigation (arrow keys) must pass through in read-only mode.
+    #[test]
+    fn read_only_allows_navigation() {
+        let mut app = make_app();
+        app.read_only = true;
+        // Insert two lines so Down has somewhere to go.
+        app.read_only = false;
+        app.textarea
+            .input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        app.read_only = true;
+        let (row_before, _) = app.textarea.cursor();
+        handle_key_event(&mut app, key(KeyCode::Up));
+        let (row_after, _) = app.textarea.cursor();
+        assert!(
+            row_after <= row_before,
+            "Up arrow must move cursor in read-only mode"
+        );
+    }
+
+    // Paste (Ctrl+V) must be blocked in read-only mode.
+    #[test]
+    fn read_only_blocks_paste() {
+        let mut app = make_app();
+        app.read_only = true;
+        handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(
+            app.textarea.lines()[0],
+            "",
+            "paste must be blocked in read-only mode"
+        );
+    }
+
+    // Undo (Ctrl+Z) must be blocked in read-only mode.
+    #[test]
+    fn read_only_blocks_undo() {
+        let mut app = make_app();
+        app.read_only = true;
+        let outcome = handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(outcome, KeyOutcome::Continue);
+        assert!(
+            matches!(
+                app.status.mode,
+                yame::status::StatusMode::TimedMessage { .. }
+            ),
+            "undo must be blocked and trigger a status message in read-only mode"
+        );
+    }
+
+    // is_ro_allowed must return true for every navigation key code.
+    #[test]
+    fn is_ro_allowed_permits_navigation_keys() {
+        use KeyCode::{Down, End, Home, Left, PageDown, PageUp, Right, Up};
+        for code in [Up, Down, Left, Right, Home, End, PageUp, PageDown] {
+            for mods in [KeyModifiers::NONE, KeyModifiers::SHIFT] {
+                assert!(
+                    is_ro_allowed(mods, code),
+                    "{code:?} with {mods:?} must be allowed in read-only mode"
+                );
+            }
+        }
+    }
+
+    // is_ro_allowed must return false for content-modifying keys.
+    #[test]
+    fn is_ro_allowed_blocks_edit_keys() {
+        let blocked = [
+            (KeyModifiers::NONE, KeyCode::Backspace),
+            (KeyModifiers::NONE, KeyCode::Delete),
+            (KeyModifiers::NONE, KeyCode::Enter),
+            (KeyModifiers::NONE, KeyCode::Tab),
+            (KeyModifiers::NONE, KeyCode::Char('a')),
+            (KeyModifiers::CONTROL, KeyCode::Char('s')),
+            (KeyModifiers::CONTROL, KeyCode::Char('v')),
+            (KeyModifiers::CONTROL, KeyCode::Char('z')),
+            (KeyModifiers::CONTROL, KeyCode::Char('y')),
+            (KeyModifiers::ALT, KeyCode::Char('t')),
+            (KeyModifiers::CONTROL, KeyCode::Char('h')),
+        ];
+        for (mods, code) in blocked {
+            assert!(
+                !is_ro_allowed(mods, code),
+                "{code:?} with {mods:?} must be blocked in read-only mode"
+            );
+        }
+    }
+
+    // Ctrl+E must be allowed through the read-only guard (it's the toggle key).
+    #[test]
+    fn is_ro_allowed_permits_ctrl_e() {
+        assert!(
+            is_ro_allowed(KeyModifiers::CONTROL, KeyCode::Char('e')),
+            "Ctrl+E must be allowed in read-only mode so the toggle works"
+        );
+    }
+
+    // Ctrl+E while read-only → disables read-only and shows a timed message.
+    #[test]
+    fn ctrl_e_unlocks_read_only_mode() {
+        let mut app = make_app();
+        app.read_only = true;
+        handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL),
+        );
+        assert!(!app.read_only, "Ctrl+E must disable read-only mode");
+        assert!(
+            matches!(
+                app.status.mode,
+                yame::status::StatusMode::TimedMessage { .. }
+            ),
+            "a timed status message must confirm the mode change"
+        );
+    }
+
+    // Ctrl+E while in edit mode → enables read-only.
+    #[test]
+    fn ctrl_e_locks_into_read_only_mode() {
+        let mut app = make_app();
+        app.read_only = false;
+        handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL),
+        );
+        assert!(app.read_only, "Ctrl+E must enable read-only mode");
+        assert!(
+            matches!(
+                app.status.mode,
+                yame::status::StatusMode::TimedMessage { .. }
+            ),
+            "a timed status message must confirm the mode change"
+        );
+    }
+
+    // After unlocking with Ctrl+E, typing must reach the textarea.
+    #[test]
+    fn after_unlock_typing_reaches_textarea() {
+        let mut app = make_app();
+        app.read_only = true;
+        // Unlock.
+        handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL),
+        );
+        assert!(!app.read_only);
+        // Type a character — must reach the textarea now.
+        handle_key_event(&mut app, key(KeyCode::Char('z')));
+        assert_eq!(
+            app.textarea.lines()[0],
+            "z",
+            "typing must reach textarea after Ctrl+E unlock"
+        );
     }
 }

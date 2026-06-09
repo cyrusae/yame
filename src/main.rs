@@ -26,7 +26,7 @@ fn setup_panic_hook() {
 }
 
 #[mutants::skip] // Full terminal I/O orchestration — not unit-testable.
-fn run(file_path: PathBuf) -> io::Result<()> {
+fn run(file_path: PathBuf, read_only: bool) -> io::Result<()> {
     setup_panic_hook();
 
     let (config, config_warnings) = load_config();
@@ -77,7 +77,13 @@ fn run(file_path: PathBuf) -> io::Result<()> {
         show_line_numbers,
     )?;
 
-    if !italic_support {
+    app.read_only = read_only;
+
+    if read_only {
+        app.status.set_dismissible(
+            "Read-only mode — editing disabled  [any key to dismiss]",
+        );
+    } else if !italic_support {
         app.status.set_dismissible(
             "⚠ Terminal does not support italics — using color fallback  [any key to dismiss]",
         );
@@ -106,8 +112,8 @@ fn run(file_path: PathBuf) -> io::Result<()> {
 fn main() {
     let command = cli::parse_args().unwrap_or_else(|_| std::process::exit(1));
     match command {
-        cli::Command::Edit(path) => {
-            if let Err(e) = run(path) {
+        cli::Command::Edit { path, read_only } => {
+            if let Err(e) = run(path, read_only) {
                 eprintln!("error: {e}");
                 std::process::exit(1);
             }

@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::OnceLock;
 
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use ratatui::style::{Color, Modifier, Style};
@@ -390,6 +391,156 @@ fn apply_frontmatter_spans(
 }
 
 // ---------------------------------------------------------------------------
+// ==highlight== post-pass
+// ---------------------------------------------------------------------------
+
+/// Compiled regex for `==highlighted text==`.
+///
+/// Uses `fancy-regex` (already in the dependency graph via syntect) because the
+/// non-greedy `+?` quantifier requires backtracking — the `regex` crate does not
+/// support it.  Compiled once and reused across all calls.
+fn highlight_re() -> &'static fancy_regex::Regex {
+    static RE: OnceLock<fancy_regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| fancy_regex::Regex::new(r"==.+?==").expect("valid highlight regex"))
+}
+
+/// Scan every non-code, non-frontmatter line for `==...==` spans and push
+/// styled spans into `map`.
+///
+/// Delimiter `==` pairs are styled with `theme.muted` so they recede.  For
+/// the enclosed content region the pass does two things:
+///
+/// 1. **Overlays `highlight_bg`** onto every existing span that falls within
+///    the content region — so bold, italic, link, and other inline decoration
+///    already in the map keeps its fg colour and modifiers while gaining the
+///    highlight background.
+/// 2. **Fills the remaining gaps** (characters not covered by any existing
+///    span) with a plain `(highlight_fg, highlight_bg)` span.
+///
+/// This means `==**bold**==` renders as bold text *with* the highlight
+/// background, rather than the highlight overwriting the bold decoration.
+fn apply_highlight_spans(
+    map: &mut DecorationMap,
+    text: &str,
+    line_starts: &[usize],
+    code_block_lines: &HashSet<usize>,
+    theme: &Theme,
+) {
+    // Fast bail-out: no `==` in the document at all.
+    if !text.contains("==") {
+        return;
+    }
+
+    // Lines that belong to a frontmatter block must also be skipped.
+    let frontmatter_end: Option<usize> = detect_frontmatter(text);
+
+    let delim_style = Style::default().fg(theme.muted);
+    let content_style = Style::default()
+        .fg(theme.highlight_fg)
+        .bg(theme.highlight_bg);
+    let highlight_bg = theme.highlight_bg;
+
+    let re = highlight_re();
+
+    for (line_idx, &line_start_byte) in line_starts.iter().enumerate() {
+        // Skip frontmatter lines.
+        if frontmatter_end.is_some_and(|end| line_idx <= end) {
+            continue;
+        }
+        // Skip lines inside fenced code blocks.
+        if code_block_lines.contains(&line_idx) {
+            continue;
+        }
+
+        let line_end_byte = if line_idx + 1 < line_starts.len() {
+            line_starts[line_idx + 1].saturating_sub(1) // trim trailing \n
+        } else {
+            text.len()
+        };
+
+        if line_end_byte <= line_start_byte {
+            continue;
+        }
+
+        let line_str = &text[line_start_byte..line_end_byte];
+
+        // Per-line fast bail-out.
+        if !line_str.contains("==") {
+            continue;
+        }
+
+        for m in re.find_iter(line_str).flatten() {
+            let byte_start = m.start();
+            let byte_end = m.end();
+
+            // Convert byte offsets (relative to the line) to char offsets.
+            let chars_before = line_str[..byte_start].chars().count();
+            let match_chars = line_str[byte_start..byte_end].chars().count();
+
+            let open_start = chars_before;            // position of first '='
+            let open_end = open_start + 2;            // after opening `==`
+            let close_end = open_start + match_chars; // after closing `==`
+            let close_start = close_end - 2;          // position of closing `==`
+
+            // Guard: require at least one character of content.
+            if open_end >= close_start {
+                continue;
+            }
+
+            // Opening and closing `==` delimiters — pushed first so they are
+            // available in the blocked-range collection below if they somehow
+            // fall inside another match's content zone (extremely unlikely, but
+            // the filter excludes them safely because they are outside
+            // [open_end, close_start)).
+            push_span(map, line_idx, make_span(open_start, open_end, delim_style));
+            push_span(map, line_idx, make_span(close_start, close_end, delim_style));
+
+            // Collect char-ranges of spans that already exist in the content zone
+            // [open_end, close_start).  We clone them out to release the immutable
+            // borrow before the mutable passes below.
+            let blocked: Vec<(usize, usize)> = map
+                .get(&line_idx)
+                .map(|spans| {
+                    spans
+                        .iter()
+                        .filter(|s| s.char_end > open_end && s.char_start < close_start)
+                        .map(|s| (s.char_start.max(open_end), s.char_end.min(close_start)))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            // Pass 1 — overlay highlight_bg onto every existing span that
+            // overlaps the content zone.  This preserves bold/italic/link fg
+            // colours and modifiers while giving them the highlight background.
+            if let Some(spans) = map.get_mut(&line_idx) {
+                for span in spans.iter_mut() {
+                    if span.char_end > open_end && span.char_start < close_start {
+                        span.style = span.style.bg(highlight_bg);
+                    }
+                }
+            }
+
+            // Pass 2 — fill gaps (characters not covered by any existing span)
+            // with the full (highlight_fg, highlight_bg) content style.
+            let mut blocked_sorted = blocked;
+            blocked_sorted.sort_by_key(|&(s, _)| s);
+            let mut pos = open_end;
+            for (block_start, block_end) in blocked_sorted {
+                if pos < block_start {
+                    push_span(map, line_idx, make_span(pos, block_start, content_style));
+                }
+                if block_end > pos {
+                    pos = block_end;
+                }
+            }
+            if pos < close_start {
+                push_span(map, line_idx, make_span(pos, close_start, content_style));
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // build_decoration_map
 // ---------------------------------------------------------------------------
 
@@ -423,6 +574,9 @@ pub fn build_decoration_map(
     let mut in_emphasis: Option<std::ops::Range<usize>> = None;
     // TableHead: capture the byte range on Start so End can emit gaps-only spans.
     let mut in_table_head: Option<std::ops::Range<usize>> = None;
+    // Lines that belong to fenced code blocks — excluded from the ==highlight== post-pass
+    // so raw `==text==` inside a code fence is never decorated.
+    let mut code_block_lines: HashSet<usize> = HashSet::new();
 
     for (event, range) in parser {
         match event {
@@ -738,6 +892,9 @@ pub fn build_decoration_map(
                     text,
                     range.end.saturating_sub(1).max(range.start),
                 );
+                // Record every line in this fenced block so the ==highlight== post-pass
+                // skips them — raw `==text==` inside code must not be decorated.
+                code_block_lines.extend(start_line..=end_line);
                 let fence_bg_style = Style::default().fg(theme.text).bg(theme.fenced_bg);
                 // Fence ``` delimiters blend toward muted, same standard as other delimiters.
                 let fence_delim_style = Style::default()
@@ -1276,6 +1433,9 @@ pub fn build_decoration_map(
     if let Some(end_line) = detect_frontmatter(text) {
         apply_frontmatter_spans(&mut map, &line_starts, text, end_line, theme);
     }
+
+    // ==highlight== post-pass: scan non-code, non-frontmatter lines for ==...==.
+    apply_highlight_spans(&mut map, text, &line_starts, &code_block_lines, theme);
 
     (map, word_count)
 }
@@ -4460,6 +4620,150 @@ mod tests {
                 .iter()
                 .any(|s| s.char_start == 0 && s.style.fg == Some(theme.accent)),
             "TOML key must have accent fg; got: {content:?}"
+        );
+    }
+
+    // ── ==highlight== spans ───────────────────────────────────────────────────
+
+    #[test]
+    fn highlight_content_has_highlight_bg() {
+        let text = "==hello==";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        // Content is chars 2..7 ("hello").
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.char_start == 2 && s.char_end == 7 && s.style.bg == Some(theme.highlight_bg)),
+            "highlight content must carry highlight_bg; got: {spans:?}"
+        );
+    }
+
+    #[test]
+    fn highlight_opening_delimiter_is_muted() {
+        let text = "==hi==";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.char_start == 0 && s.char_end == 2 && s.style.fg == Some(theme.muted)),
+            "opening == must be muted; got: {spans:?}"
+        );
+    }
+
+    #[test]
+    fn highlight_closing_delimiter_is_muted() {
+        let text = "==hi==";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.char_start == 4 && s.char_end == 6 && s.style.fg == Some(theme.muted)),
+            "closing == must be muted; got: {spans:?}"
+        );
+    }
+
+    #[test]
+    fn highlight_two_on_same_line() {
+        // Non-greedy: must produce two separate highlights, not one spanning both.
+        let text = "==a== and ==b==";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        let content_spans: Vec<_> = spans
+            .iter()
+            .filter(|s| s.style.bg == Some(theme.highlight_bg))
+            .collect();
+        assert_eq!(
+            content_spans.len(),
+            2,
+            "two separate ==highlights== must each produce a content span; got: {spans:?}"
+        );
+    }
+
+    #[test]
+    fn highlight_inside_fenced_block_is_not_decorated() {
+        let text = "```\n==text==\n```";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        // Line 1 is the `==text==` line inside the fence.
+        let empty = vec![];
+        let spans = map.get(&1).unwrap_or(&empty);
+        assert!(
+            !spans.iter().any(|s| s.style.bg == Some(theme.highlight_bg)),
+            "==text== inside a fenced block must not be highlighted; got: {spans:?}"
+        );
+    }
+
+    #[test]
+    fn highlight_empty_content_is_not_decorated() {
+        // ==== has no content between the delimiters — must be left undecorated.
+        let text = "====";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let empty = vec![];
+        let spans = map.get(&0).unwrap_or(&empty);
+        assert!(
+            !spans.iter().any(|s| s.style.bg == Some(theme.highlight_bg)),
+            "==== with no content must not produce a highlight span; got: {spans:?}"
+        );
+    }
+
+    #[test]
+    fn highlight_does_not_span_lines() {
+        // The opening `==` is on line 0 and there is no closing `==` on the same line.
+        // No highlight span should appear on either line.
+        let text = "==open\nclosed==";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let empty = vec![];
+        for line in 0..2usize {
+            let spans = map.get(&line).unwrap_or(&empty);
+            assert!(
+                !spans.iter().any(|s| s.style.bg == Some(theme.highlight_bg)),
+                "highlight must not span across lines; got spans on line {line}: {spans:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn highlight_bold_inside_gets_highlight_bg() {
+        // ==**bold**== — the bold content span inside the highlight must gain
+        // highlight_bg while keeping its bold colour and BOLD modifier.
+        let text = "==**bold**==";
+        let theme = make_theme();
+        let map = build_map(text, &theme, true);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        // At least one span in the content zone [2..10) must carry highlight_bg.
+        let covered = spans
+            .iter()
+            .filter(|s| s.char_start >= 2 && s.char_end <= 10 && s.style.bg == Some(theme.highlight_bg))
+            .count();
+        assert!(
+            covered > 0,
+            "bold spans inside ==highlight== must have highlight_bg layered in; got: {spans:?}"
+        );
+    }
+
+    #[test]
+    fn highlight_bold_inside_preserves_bold_modifier() {
+        // ==**bold**== — the bold content span must retain BOLD while also
+        // having highlight_bg.  The overlay must not strip the modifier.
+        let text = "==**bold**==";
+        let theme = make_theme();
+        let map = build_map(text, &theme, true);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        assert!(
+            spans.iter().any(|s| {
+                s.style.add_modifier.contains(Modifier::BOLD)
+                    && s.style.bg == Some(theme.highlight_bg)
+            }),
+            "bold content inside ==highlight== must be BOLD and have highlight_bg; got: {spans:?}"
         );
     }
 }

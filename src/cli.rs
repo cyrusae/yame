@@ -10,7 +10,7 @@ use std::path::PathBuf;
 // ---------------------------------------------------------------------------
 
 pub(super) enum Command {
-    Edit(PathBuf),
+    Edit { path: PathBuf, read_only: bool },
     Init { shell: Option<String> },
     WriteConfig,
 }
@@ -103,6 +103,7 @@ pub(super) fn print_help() {
     println!();
     println!("USAGE");
     println!("  yame <file>           Open <file> for editing (created if it doesn't exist)");
+    println!("  yame -r <file>        Open <file> in read-only mode (no edits, no save)");
     println!("  yame init             Print shell integration function (eval in .bashrc/.zshrc)");
     println!("  yame write-config     Write default config to ~/.config/yame/config.toml");
     println!("  yame --version        Print version
@@ -157,7 +158,22 @@ pub(super) fn parse_args() -> Result<Command, ()> {
             shell: Some(s.clone()),
         }),
         [a] if a == "write-config" => Ok(Command::WriteConfig),
-        [path] => Ok(Command::Edit(PathBuf::from(path))),
+        [path] if !path.starts_with('-') => Ok(Command::Edit {
+            path: PathBuf::from(path),
+            read_only: false,
+        }),
+        [flag, path] if (flag == "-r" || flag == "--read-only") && !path.starts_with('-') => {
+            Ok(Command::Edit {
+                path: PathBuf::from(path),
+                read_only: true,
+            })
+        }
+        [path, flag] if (flag == "-r" || flag == "--read-only") && !path.starts_with('-') => {
+            Ok(Command::Edit {
+                path: PathBuf::from(path),
+                read_only: true,
+            })
+        }
         _ => {
             eprintln!("error: unexpected arguments");
             eprintln!("Run 'yame --help' for usage.");

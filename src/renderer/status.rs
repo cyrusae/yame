@@ -25,14 +25,22 @@ const SEP_POWERLINE: char = '\u{e0b0}';
 /// always show the same pill while only the hints zone changes.
 fn pill1_parts(app: &App) -> (Span<'static>, Color) {
     let theme = &app.theme;
-    let (pill_bg, pill_fg): (Color, Color) = if app.is_dirty {
+    let (pill_bg, pill_fg): (Color, Color) = if app.read_only {
+        (theme.muted, theme.bg)
+    } else if app.is_dirty {
         (theme.accent, theme.bg)
     } else {
         (theme.text, theme.bg)
     };
-    let dirty_marker = if app.is_dirty { " [*]" } else { "" };
+    let marker = if app.read_only {
+        " [RO]"
+    } else if app.is_dirty {
+        " [*]"
+    } else {
+        ""
+    };
     let path_str = &app.shortened_path;
-    let text = format!(" {path_str}{dirty_marker} ");
+    let text = format!(" {path_str}{marker} ");
     (
         Span::styled(text, Style::default().fg(pill_fg).bg(pill_bg)),
         pill_bg,
@@ -133,10 +141,12 @@ pub(super) fn build_normal_status_bar(app: &App) -> Line<'static> {
     let (pill1, pill_bg) = pill1_parts(app);
     let cap1 = Span::styled(sep.clone(), Style::default().fg(pill_bg).bg(hints_bg));
 
-    let hints = Span::styled(
-        " ^S Save  ^X Exit  ^F Search  F1 Keys ",
-        Style::default().fg(muted_fg).bg(hints_bg),
-    );
+    let hints_text = if app.read_only {
+        " ^E Unlock  ^X Exit  ^F Search  F1 Keys "
+    } else {
+        " ^S Save  ^X Exit  ^F Search  F1 Keys "
+    };
+    let hints = Span::styled(hints_text, Style::default().fg(muted_fg).bg(hints_bg));
     let cap2 = Span::styled(sep, Style::default().fg(hints_bg).bg(canvas_bg));
 
     Line::from(vec![pill1, cap1, hints, cap2])

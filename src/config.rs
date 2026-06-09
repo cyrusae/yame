@@ -54,6 +54,12 @@ pub struct ThemeOverrides {
     pub ui_text: Option<String>,
     /// 0.0 = full muted, 1.0 = full span color. Default 0.4.
     pub delimiter_blend: Option<f32>,
+    /// Background colour for `==highlighted==` text.
+    /// Default: 55 % blend of `code` toward `bg` — a visible green tint.
+    pub highlight_bg: Option<String>,
+    /// Foreground colour for `==highlighted==` text.
+    /// Default: body `text` colour.
+    pub highlight_fg: Option<String>,
 }
 
 /// Per-level heading color overrides (all optional).
@@ -206,6 +212,9 @@ pub struct Theme {
     // search match highlights
     pub search_match_bg: Color,   // all non-current matches — dim tint
     pub search_current_bg: Color, // the currently selected match — brighter tint
+    // ==highlight== spans
+    pub highlight_bg: Color,
+    pub highlight_fg: Color,
     // per-level headings
     pub headings: HeadingTheme,
     pub delimiter_blend: f32,
@@ -348,6 +357,13 @@ impl Theme {
         // visually distinct from selections (which use accent/lavender).
         let search_match_bg_rgb = blend(code_rgb, bg, 0.35);
         let search_current_bg_rgb = blend(code_rgb, bg, 0.70);
+        // Highlight (==text==): green tint background, normal text foreground.
+        // Users can override to e.g. a warm yellow for a traditional marker feel.
+        // Default: same subtle accent tint used for heading backgrounds — keeps
+        // highlights visually consistent with the heading palette rather than
+        // introducing a second unrelated hue.  Override with [theme] highlight_bg.
+        let highlight_bg_rgb = resolve(&overrides.highlight_bg, heading_bg_rgb, warnings);
+        let highlight_fg_rgb = resolve(&overrides.highlight_fg, text, warnings);
 
         // Per-level heading colors
         let heading_default = |blend_t: f32| blend(accent, text, blend_t);
@@ -409,6 +425,8 @@ impl Theme {
             line_num_inactive: to_color(line_num_inactive_rgb),
             search_match_bg: to_color(search_match_bg_rgb),
             search_current_bg: to_color(search_current_bg_rgb),
+            highlight_bg: to_color(highlight_bg_rgb),
+            highlight_fg: to_color(highlight_fg_rgb),
             headings: HeadingTheme {
                 h1: to_color(h1_rgb),
                 h2: to_color(h2_rgb),
@@ -480,6 +498,8 @@ warning = "#f38ba8"   # dirty flag, warnings
 # ui_bar              = "#11111b"
 # ui_text             = "#cdd6f4"
 # delimiter_blend     = 0.4        # 0.0 = full muted · 1.0 = full span color
+# highlight_bg        = "#2d273c"  # ==text== background (default: same tint as heading_bg)
+# highlight_fg        = "#cdd6f4"  # ==text== foreground
 
 # ── Per-level heading colors ──────────────────────────────────────────────────
 [headings]

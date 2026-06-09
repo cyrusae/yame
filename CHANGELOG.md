@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- highlight: preserve inner formatting + use heading_bg default (#163)
 - v1.5: CJK / wide character support (unicode-width) (#41)
 - v1.5: syntect fenced code block syntax highlighting (#44)
 - Search help modal — keyboard shortcut cheatsheet on open (#135)
@@ -81,6 +82,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Italic default color now matches text color (not accent blend) (#60)
 
 ### Changed
+- Highlight syntax: ==text== inline decoration (#162)
+- Read-only mode: make togglable in-app with Ctrl+E (#161)
+- Add sample fixture files for manual testing (#160)
+- Read-only mode: -r CLI flag, locked keybindings with status reminder, distinct bar colour (#139)
+- Detect and style YAML/TOML frontmatter (italics or accent-bg tint) (#146)
 - Word-wrap at configurable column width or % of editor width (#145)
 - Focus mode: toggle to dim text outside the current logical paragraph (#142)
 - Shortcut reminder modal: full keybinding reference, simplify bottom bar (#144)
