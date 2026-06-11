@@ -63,6 +63,10 @@ pub struct ThemeOverrides {
     /// Foreground colour for YAML/TOML frontmatter keys.
     /// Default: `code` colour (green) so keys are visually distinct from accent headings.
     pub frontmatter_key: Option<String>,
+    /// Background tint for the entire frontmatter block (delimiters + content).
+    /// Default: `code` blended 15 % toward `bg` — a subtle green panel distinct
+    /// from the accent-tinted heading background.
+    pub frontmatter_bg: Option<String>,
 }
 
 /// Per-level heading color overrides (all optional).
@@ -220,6 +224,7 @@ pub struct Theme {
     pub highlight_fg: Color,
     // frontmatter
     pub frontmatter_key: Color,
+    pub frontmatter_bg: Color,
     // per-level headings
     pub headings: HeadingTheme,
     pub delimiter_blend: f32,
@@ -373,6 +378,11 @@ impl Theme {
         // Frontmatter key color: code green by default — visually distinct from
         // accent headings and makes keys easy to scan against plain-text values.
         let frontmatter_key_rgb = resolve(&overrides.frontmatter_key, code_rgb, warnings);
+        // Frontmatter background: code blended 15% toward bg, same recipe as
+        // heading_bg but using the code hue so the block reads as a distinct
+        // "data" surface rather than a heading.
+        let frontmatter_bg_rgb =
+            resolve(&overrides.frontmatter_bg, blend(code_rgb, bg, 0.15), warnings);
 
         // Per-level heading colors
         let heading_default = |blend_t: f32| blend(accent, text, blend_t);
@@ -437,6 +447,7 @@ impl Theme {
             highlight_bg: to_color(highlight_bg_rgb),
             highlight_fg: to_color(highlight_fg_rgb),
             frontmatter_key: to_color(frontmatter_key_rgb),
+            frontmatter_bg: to_color(frontmatter_bg_rgb),
             headings: HeadingTheme {
                 h1: to_color(h1_rgb),
                 h2: to_color(h2_rgb),
@@ -511,6 +522,7 @@ warning = "#f38ba8"   # dirty flag, warnings
 # highlight_bg        = "#524568"  # ==text== background (accent at 35% — try "#816a9f" for bolder)
 # highlight_fg        = "#cdd6f4"  # ==text== foreground
 # frontmatter_key     = "#a6e3a1"  # YAML/TOML frontmatter key color (default: code green)
+# frontmatter_bg      = "#1e2620"  # YAML/TOML frontmatter block background (default: code at 15%)
 
 # ── Per-level heading colors ──────────────────────────────────────────────────
 [headings]

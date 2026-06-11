@@ -298,7 +298,7 @@ fn apply_frontmatter_spans(
     end_line: usize,
     theme: &Theme,
 ) {
-    let bg = theme.heading_bg;
+    let bg = theme.frontmatter_bg;
     let delim_style = Style::default().fg(theme.muted).bg(bg);
     // Keys: code color (green) + italic — visually distinct from accent headings.
     let key_style = Style::default()
@@ -4527,17 +4527,17 @@ mod tests {
         let text = "---\ntitle: Hello\n---\nrest\n";
         let theme = make_theme();
         let map = build_map(text, &theme, false);
-        // Line 0 (opening `---`) must have full_line_bg = heading_bg.
+        // Line 0 (opening `---`) must have full_line_bg = frontmatter_bg.
         let open = map.get(&0).expect("opening delimiter must have spans");
         assert!(
-            open.iter().any(|s| s.full_line_bg == Some(theme.heading_bg)),
-            "opening `---` must have full_line_bg = heading_bg; got: {open:?}"
+            open.iter().any(|s| s.full_line_bg == Some(theme.frontmatter_bg)),
+            "opening `---` must have full_line_bg = frontmatter_bg; got: {open:?}"
         );
-        // Line 2 (closing `---`) must also have full_line_bg = heading_bg.
+        // Line 2 (closing `---`) must also have full_line_bg = frontmatter_bg.
         let close = map.get(&2).expect("closing delimiter must have spans");
         assert!(
-            close.iter().any(|s| s.full_line_bg == Some(theme.heading_bg)),
-            "closing `---` must have full_line_bg = heading_bg; got: {close:?}"
+            close.iter().any(|s| s.full_line_bg == Some(theme.frontmatter_bg)),
+            "closing `---` must have full_line_bg = frontmatter_bg; got: {close:?}"
         );
     }
 
@@ -4627,21 +4627,21 @@ mod tests {
         let map = build_map(text, &theme, false);
         let content = map.get(&1).expect("content line must have spans");
         assert!(
-            content.iter().any(|s| s.full_line_bg == Some(theme.heading_bg)),
-            "content line must have full_line_bg = heading_bg; got: {content:?}"
+            content.iter().any(|s| s.full_line_bg == Some(theme.frontmatter_bg)),
+            "content line must have full_line_bg = frontmatter_bg; got: {content:?}"
         );
     }
 
     #[test]
     fn frontmatter_does_not_affect_lines_after_block() {
-        // Line 3 is "rest" — must not have heading_bg.
+        // Line 3 is "rest" — must not have frontmatter_bg.
         let text = "---\ntitle: Hello\n---\nrest\n";
         let theme = make_theme();
         let map = build_map(text, &theme, false);
         if let Some(rest) = map.get(&3) {
             assert!(
-                !rest.iter().any(|s| s.full_line_bg == Some(theme.heading_bg)),
-                "lines after frontmatter block must not carry heading_bg; got: {rest:?}"
+                !rest.iter().any(|s| s.full_line_bg == Some(theme.frontmatter_bg)),
+                "lines after frontmatter block must not carry frontmatter_bg; got: {rest:?}"
             );
         }
         // (line 3 having no spans at all is also correct — just plain text)
