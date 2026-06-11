@@ -4,9 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased]
-
-## [0.2.0] — unreleased
+## [0.2.0] — 2026-06-11
 
 ### Added
 
@@ -23,6 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **`--version` / `-V` flag**
 
 ### Changed
+- Release prep: CHANGELOG v0.2.0, version bump, gutter audit (#167)
 
 - **Column width cap** — new `max_cols` setting under `[layout]` (e.g. `max_cols = 88`) limits the prose wrap column on wide terminals; previously the column expanded to 50 % of terminal width without a ceiling
 - **Improved GFM table rendering** — better column alignment, padding, and border characters

@@ -542,4 +542,87 @@ mod tests {
         assert_eq!(cs, 3, "char_start = 3");
         assert_eq!(ce, 6, "char_end = 6 (3 + 3 chars of 'foo')");
     }
+
+    // ---- T-21: snap_to_cursor exercises the ml > cursor_line branch ----
+
+    #[test]
+    fn snap_to_cursor_uses_line_number_ordering_across_lines() {
+        // Kills line 161:20 `replace > with <`.
+        // Single-line tests can't expose this: when ml == cursor_line the
+        // `ml > cursor_line` and `ml < cursor_line` branches both evaluate to
+        // false, so the result is identical. A multi-line doc where the target
+        // match is on a later line than the cursor is required.
+        // With `> → <`: ml=2 < cursor_line=1 is false AND ml==cursor_line is
+        // false → no match found → wraps to index 0 (wrong).
+        let mut s = SearchState::new(false);
+        let d = doc("needle\nboring\nneedle");
+        s.query = "needle".to_string();
+        s.update_matches(&d);
+        assert_eq!(s.matches.len(), 2); // (0,0,6) and (2,0,6)
+
+        s.snap_to_cursor(1, 0); // cursor on line 1 (between the two matches)
+        assert_eq!(
+            s.current, 1,
+            "cursor on line 1 must snap to the match on line 2 (index 1), not line 0"
+        );
+    }
+
+    // ---- T-22: apply_replace_all guard: || vs && ----
+
+    #[test]
+    fn apply_replace_all_with_none_compiled_bails_without_modifying_buffer() {
+        // Kills line 185:36 `replace || with &&`.
+        // With `&&`, the guard only bails when BOTH compiled.is_none() AND
+        // matches.is_empty().  A stale state where compiled is cleared but
+        // matches remain would skip the guard and corrupt the buffer.
+        let mut s = SearchState::new(true);
+        let d = doc("foo bar");
+        s.query = "foo".to_string();
+        s.update_matches(&d);
+        assert_eq!(s.matches.len(), 1);
+
+        // Simulate stale state: compiled cleared, matches still set.
+        s.compiled = None;
+        s.replace = "baz".to_string();
+        let result = s.apply_replace_all(&d);
+        assert_eq!(result, d, "compiled=None must prevent replace-all even when matches is non-empty");
+    }
+
+    // ---- T-23: apply_replace_all bounds guard: < vs <= ----
+
+    #[test]
+    fn apply_replace_all_skips_stale_out_of_bounds_match_lines() {
+        // Kills line 190:19 `replace < with <=`.
+        // With `<=`, `result[ml]` when `ml == result.len()` would panic.
+        // A stale match pointing past the last line must be silently skipped.
+        let mut s = SearchState::new(true);
+        let d = doc("hello");
+        s.replace = "world".to_string();
+        // Inject a valid compiled regex and a stale match on line 99.
+        s.compiled = Some(Regex::new("hello").unwrap());
+        s.matches = vec![(99, 0, 5)];
+        let result = s.apply_replace_all(&d);
+        assert_eq!(result, d, "stale out-of-bounds match must be skipped, not panic");
+    }
+
+    // ---- T-24: zero-width match advance (line 227) ----
+
+    #[test]
+    fn find_all_matches_zero_width_match_advance_terminates() {
+        // Kills line 227 `replace + with -` and `replace + with *`.
+        // `a*` on "aab" produces a non-zero-width match "aa" at (0,0,2), then
+        // a zero-width empty match at byte 2 (advance by +1 → 3), then
+        // another empty at byte 3 → advance to 4 → loop exits.
+        // With `+→*`: advance = m.start() * 1 = 2 → infinite loop.
+        // With `+→-`: advance = m.start() - 1 = 1 → re-finds "a" at 1, then
+        //   zero-width at 2 → advance to 1 again → infinite loop.
+        let mut s = SearchState::new(false);
+        s.regex_mode = true;
+        let d = doc("aab");
+        s.query = "a*".to_string();
+        s.update_matches(&d);
+        // Only "aa" is a non-zero-width match; zero-width empties are skipped.
+        assert_eq!(s.matches.len(), 1, "must find exactly the 'aa' match and terminate");
+        assert_eq!(s.matches[0], (0, 0, 2));
+    }
 }

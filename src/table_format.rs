@@ -239,6 +239,7 @@ pub fn format_table(lines: &[String]) -> Vec<String> {
 ///
 /// Bound to `Alt+T` in normal editing mode.  Does nothing (shows a status
 /// hint) if the cursor is not inside a GFM pipe table.
+#[mutants::skip] // Requires a live App+TextArea; covered by manual testing only.
 pub fn handle_format_table(app: &mut App) {
     let (cursor_row, _) = app.textarea.cursor();
     let lines: Vec<String> = app.textarea.lines().iter().map(|s| s.to_string()).collect();

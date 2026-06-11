@@ -196,10 +196,11 @@ Optional per-element overrides. These take precedence over the derived defaults.
 
 ```toml
 [layout]
-# min_cols         = 60    # minimum editing column width in characters
-# max_cols         = 88    # maximum editing column width — caps the prose wrap margin on wide terminals
-# tab_width        = 4     # spaces per tab character (tabs are expanded on load)
-# powerline_glyphs = true  # set false to use the universal │ separator instead
+# min_cols         = 60     # minimum editing column width in characters
+# max_cols         = 88     # maximum editing column width — caps the prose wrap margin on wide terminals
+# tab_width        = 4      # spaces per tab character (tabs are expanded on load)
+# line_numbers     = false  # set true to show line numbers in the left gutter
+# powerline_glyphs = true   # set false to use the universal │ separator instead
 ```
 
 > **Note:** Nerd Font arrow separators are on by default. If your terminal font doesn't include glyph U+E0B0 and the status bar shows a box character, add `powerline_glyphs = false` to your config. 

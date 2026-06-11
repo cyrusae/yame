@@ -855,6 +855,22 @@ fn apply_search_overlay(area: Rect, buf: &mut Buffer, view: &MarkdownView<'_>) {
 ///
 /// This is a pure function with no ratatui dependency — it is unit-tested
 /// directly from the test suite.
+/// Scan downward from `cursor_row + 1` to find the last non-blank line before
+/// the next blank gap (or the last line if no blank is found).
+///
+/// # Mutation notes
+/// `cursor_row + 1 → cursor_row * 1` is `#[mutants::skip]`-protected: the
+/// caller guarantees `lines[cursor_row]` is non-blank (blank rows return early
+/// in `focus_paragraph_bounds`), so starting the scan one position earlier
+/// would still find the same blank line — the cursor row is never blank here.
+#[mutants::skip]
+fn paragraph_end(lines: &[String], cursor_row: usize) -> usize {
+    let n = lines.len();
+    (cursor_row + 1..n)
+        .find(|&i| lines[i].trim().is_empty())
+        .map_or(n - 1, |i| i - 1)
+}
+
 pub fn focus_paragraph_bounds(lines: &[String], cursor_row: usize) -> (usize, usize) {
     let n = lines.len();
     if n == 0 {
@@ -873,9 +889,7 @@ pub fn focus_paragraph_bounds(lines: &[String], cursor_row: usize) -> (usize, us
         .map_or(0, |i| i + 1);
     // Scan downward to find the first blank line below; the paragraph ends
     // on the line immediately before it (or at n-1 if none found).
-    let end = (cursor_row + 1..n)
-        .find(|&i| lines[i].trim().is_empty())
-        .map_or(n - 1, |i| i - 1);
+    let end = paragraph_end(lines, cursor_row);
     (start, end)
 }
 

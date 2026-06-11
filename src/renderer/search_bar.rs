@@ -300,6 +300,14 @@ const SC_C4: u16 = 15; // desc2
 const SC_INNER_W: u16 = 2 + SC_C1 + 1 + SC_C2 + 1 + SC_C3 + 1 + SC_C4 + 1;
 /// Total box width including left and right border glyphs.
 const SC_BOX_W: u16 = SC_INNER_W + 2;
+
+// Compile-time sanity checks so that arithmetic mutations to the constants above
+// are caught immediately.  The expected values are derived from the column-width
+// literals (SC_C1=12, SC_C2=14, SC_C3=13, SC_C4=15):
+//   SC_INNER_W = 2 + 12 + 1 + 14 + 1 + 13 + 1 + 15 + 1 = 60
+//   SC_BOX_W   = 60 + 2 = 62
+const _: () = assert!(SC_INNER_W == 60, "SC_INNER_W arithmetic is wrong");
+const _: () = assert!(SC_BOX_W == 62, "SC_BOX_W arithmetic is wrong");
 /// Total box height: top border + one row per SHORTCUTS entry + bottom border.
 const SC_BOX_H: u16 = SHORTCUTS.len() as u16 + 2;
 
@@ -445,4 +453,29 @@ fn put_padded(
         cx += 1;
     }
     end
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Mirror the compile-time asserts as runtime tests so that mutants on the
+    /// constant expressions (e.g. `+` → `*`) are also caught by the test suite.
+    #[test]
+    fn shortcut_modal_constants_correct() {
+        assert_eq!(SC_C1, 12);
+        assert_eq!(SC_C2, 14);
+        assert_eq!(SC_C3, 13);
+        assert_eq!(SC_C4, 15);
+        assert_eq!(
+            SC_INNER_W,
+            2 + 12 + 1 + 14 + 1 + 13 + 1 + 15 + 1,
+            "SC_INNER_W does not match manual sum"
+        );
+        assert_eq!(SC_BOX_W, SC_INNER_W + 2, "SC_BOX_W must be SC_INNER_W + 2");
+    }
 }

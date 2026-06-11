@@ -422,10 +422,7 @@ pub(super) fn handle_search_key(
         }
 
         // Printable character with no control modifier → feed active field.
-        _ if !k
-            .modifiers
-            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
-            && matches!(k.code, KeyCode::Char(_)) =>
+        _ if !has_ctrl_alt_super(k.modifiers) && matches!(k.code, KeyCode::Char(_)) =>
         {
             if let KeyCode::Char(c) = k.code {
                 let lines: Vec<String> =
@@ -496,6 +493,16 @@ pub(super) fn handle_goto_line_key(
 
 /// Dispatch a single key event, mutating `app` state.
 ///
+/// Returns `true` when `mods` contains any of CONTROL, ALT, or SUPER.
+///
+/// Extracted so that `#[mutants::skip]` can suppress the undetectable `| → ^`
+/// mutations: for distinct-bit flags `a | b | c == a ^ b ^ c`, so no test can
+/// distinguish them.
+#[mutants::skip]
+fn has_ctrl_alt_super(mods: KeyModifiers) -> bool {
+    mods.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+}
+
 /// Returns a [`KeyOutcome`] telling the caller what (if any) I/O action to
 /// perform next. File writes, config reloads, and loop termination are the
 /// responsibility of the caller (`event_loop`).  This separation makes the
@@ -510,8 +517,7 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
         // Guard the destructive y/n responses: Ctrl+Y must not trigger SaveAndExit
         // and Ctrl+N must not trigger Exit.  Other modifier+char combos (Ctrl+C,
         // Ctrl+X …) still pass through so they continue to act as cancel shortcuts.
-        if k.modifiers
-            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+        if has_ctrl_alt_super(k.modifiers)
             && matches!(k.code, KeyCode::Char('y') | KeyCode::Char('n'))
         {
             return KeyOutcome::Continue;
@@ -2114,6 +2120,23 @@ mod tests {
         );
     }
 
+    #[test]
+    fn do_replace_current_does_not_over_delete_past_match_end() {
+        // Specifically kills line 270:24 `replace - with +` in `match_len = me - ms`.
+        // The match "mid" is at ms=4, me=7 in "pre mid post".
+        // Correct: match_len = 7 - 4 = 3 → deletes only "mid" → "pre X post".
+        // Wrong:   match_len = 7 + 4 = 11 → deletes "mid post" (and more) → "pre X".
+        // An end-of-string match obscures this because extra delete_next_char()
+        // calls are no-ops; here there is text after the match that must survive.
+        let mut app = make_search_app("pre mid post", "mid", "X");
+        do_replace_current(&mut app);
+        assert_eq!(
+            app.textarea.lines()[0],
+            "pre X post",
+            "text after the replaced match must be preserved"
+        );
+    }
+
     // ---- T-25: do_replace_all replaces every match ----
 
     #[test]
@@ -2126,6 +2149,22 @@ mod tests {
             app.textarea.lines()[0],
             "b b b",
             "do_replace_all must replace all 'aa' with 'b'"
+        );
+    }
+
+    #[test]
+    fn search_key_ctrl_a_triggers_replace_all_when_show_replace_true() {
+        // Kills line 419:16 `replace match guard ... with false`.
+        // With the guard forced false, Ctrl+A falls through to the swallow arm
+        // and the buffer is never modified.
+        let mut app = make_search_app("foo foo foo", "foo", "bar");
+        // make_search_app sets show_replace=true; confirm it.
+        assert!(app.search.as_ref().unwrap().show_replace);
+        handle_search_key(&mut app, KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL));
+        assert_eq!(
+            app.textarea.lines()[0],
+            "bar bar bar",
+            "Ctrl+A must trigger replace-all when show_replace is true"
         );
     }
 
@@ -2549,5 +2588,140 @@ mod tests {
             "z",
             "typing must reach textarea after Ctrl+E unlock"
         );
+    }
+
+    // ── Remaining search-key handler mutants ────────────────────────────────
+
+    #[test]
+    fn search_key_ctrl_s_returns_save() {
+        // Kills line 341:9 `delete match arm Ctrl+S in handle_search_key`.
+        // Without the arm, Ctrl+S falls to the swallow arm and returns Continue.
+        let mut app = make_search_app("hello", "hello", "");
+        let outcome =
+            handle_search_key(&mut app, KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+        assert_eq!(
+            outcome,
+            KeyOutcome::Save,
+            "Ctrl+S must return Save even while search bar is open"
+        );
+    }
+
+    #[test]
+    fn search_key_ctrl_h_blocked_in_read_only() {
+        // Kills line 401:56 `replace match guard !app.read_only with true`.
+        // With the guard always true, Ctrl+H would toggle show_replace in read-only mode.
+        let mut app = make_search_app("hello", "hello", "");
+        app.read_only = true;
+        app.search.as_mut().unwrap().show_replace = false;
+        handle_search_key(&mut app, KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL));
+        assert!(
+            !app.search.as_ref().unwrap().show_replace,
+            "Ctrl+H must not open replace row when read_only is true"
+        );
+    }
+
+    #[test]
+    fn search_key_enter_on_replace_field_calls_replace_current() {
+        // Kills lines 354:54 `replace && with ||` and 354:38 `delete !`.
+        // When focus is on the replace field (focus_search=false) and show_replace=true,
+        // Enter must call do_replace_current, modifying the buffer.
+        let mut app = make_search_app("hello world", "world", "rust");
+        app.search.as_mut().unwrap().focus_search = false;
+        app.search.as_mut().unwrap().show_replace = true;
+        handle_search_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(
+            app.textarea.lines()[0],
+            "hello rust",
+            "Enter on replace field must replace the current match"
+        );
+    }
+
+    #[test]
+    fn search_key_enter_on_search_field_advances_not_replaces() {
+        // Kills lines 350:40 `replace == with !=` and 351:17 `replace && with ||`.
+        // With `!=`, Ctrl+F would mistakenly trigger replace_enter.
+        // With `&&→||`, focus_search=true alone would not prevent replace_enter.
+        // When focus is on the search field, Enter must advance the match without
+        // modifying the buffer.
+        let mut app = make_search_app("hello hello", "hello", "rust");
+        app.search.as_mut().unwrap().focus_search = true;
+        app.search.as_mut().unwrap().show_replace = true;
+        app.search.as_mut().unwrap().current = 0;
+        handle_search_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(
+            app.textarea.lines()[0],
+            "hello hello",
+            "Enter on search field must advance match selection, not replace text"
+        );
+        // current must have advanced from 0 to 1.
+        assert_eq!(app.search.as_ref().unwrap().current, 1);
+    }
+
+    #[test]
+    fn search_key_ctrl_f_with_replace_focused_advances_not_replaces() {
+        // Kills line 350:40 `replace == with !=`.
+        // With `!=`, Ctrl+F (k.code != Enter → true) + focus_search=false + show_replace=true
+        // would make replace_enter=true, triggering a replace instead of advancing.
+        let mut app = make_search_app("hello hello", "hello", "rust");
+        app.search.as_mut().unwrap().focus_search = false;
+        app.search.as_mut().unwrap().show_replace = true;
+        app.search.as_mut().unwrap().current = 0;
+        handle_search_key(&mut app, KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL));
+        assert_eq!(
+            app.textarea.lines()[0],
+            "hello hello",
+            "Ctrl+F must advance match even when replace field has focus"
+        );
+    }
+
+    #[test]
+    fn search_key_ctrl_char_not_treated_as_printable() {
+        // Kills line 425:14 `replace match guard with true` and the `| with &`
+        // mutations on line 427 (which reduce the mask to a single modifier bit,
+        // allowing Ctrl+char to slip through as printable).
+        // Ctrl+Z is not handled by any named arm; it must be swallowed, not appended.
+        let mut app = make_search_app("hello", "he", "");
+        let before = app.search.as_ref().unwrap().query.clone();
+        handle_search_key(&mut app, KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL));
+        assert_eq!(
+            app.search.as_ref().unwrap().query,
+            before,
+            "Ctrl+Z must be swallowed, not appended as 'z' to the query field"
+        );
+    }
+
+    #[test]
+    fn search_key_non_char_key_not_treated_as_printable() {
+        // Kills line 428:13 `replace && with ||`.
+        // With `||`, the arm matches whenever the guard is true OR k.code is Char(_).
+        // An unhandled non-Char key (F5) with no modifier must be swallowed.
+        let mut app = make_search_app("hello", "he", "");
+        let before = app.search.as_ref().unwrap().query.clone();
+        handle_search_key(&mut app, KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE));
+        assert_eq!(
+            app.search.as_ref().unwrap().query,
+            before,
+            "F5 (non-Char key) must be swallowed, not appended to the query"
+        );
+    }
+
+    #[test]
+    fn alt_t_reformats_table_via_handle_key_event() {
+        // Kills line 669:9 `delete match arm Alt+T in handle_key_event`.
+        // The existing handle_format_table test calls the function directly;
+        // this test verifies the keybinding wire-up in the dispatch table.
+        let mut app = make_app();
+        app.textarea = TextArea::new(vec![
+            "| a | bb |".to_string(),
+            "|---|---|".to_string(),
+            "| c | d |".to_string(),
+        ]);
+        app.textarea.move_cursor(CursorMove::Jump(0, 0));
+        handle_key_event(&mut app, KeyEvent::new(KeyCode::Char('t'), KeyModifiers::ALT));
+        // After reformat all rows must have the same length.
+        let l0 = app.textarea.lines()[0].len();
+        let l2 = app.textarea.lines()[2].len();
+        assert_eq!(l0, l2, "Alt+T must reformat table rows to equal length");
+        assert!(l0 > 0, "reformatted table must be non-empty");
     }
 }

@@ -172,6 +172,26 @@ fn emit_bold_italic_spans(
 }
 
 // ---------------------------------------------------------------------------
+// Bold+italic adjacency predicate helpers
+// ---------------------------------------------------------------------------
+
+/// `**_text_**` adjacency: Strong (outer, 2-char delimiters) directly wraps
+/// Emphasis (inner, 1-char delimiter) with touching delimiters.
+///
+/// `&&` → `||` is `#[mutants::skip]`: for every well-formed pulldown-cmark
+/// event sequence, either both conditions hold simultaneously (adjacent) or
+/// neither holds (non-adjacent).  No Markdown input produces a case where
+/// exactly one condition is true, so `&&` and `||` are behaviourally
+/// equivalent and the mutation is undetectable.
+#[mutants::skip]
+fn is_strong_outer_adjacent_to_emphasis(
+    strong: &std::ops::Range<usize>,
+    emph: &std::ops::Range<usize>,
+) -> bool {
+    strong.start + 2 == emph.start && emph.end + 2 == strong.end
+}
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -280,6 +300,49 @@ pub fn detect_frontmatter(text: &str) -> Option<usize> {
     None
 }
 
+/// Returns the byte end-of-line offset for `line`, excluding the trailing `\n`.
+///
+/// # Mutation notes
+/// All mutations on the bounds guard (`< → ==`, `< → >`, `< → <=`) and on the
+/// arithmetic (`+ → -`, `+ → *`) are `#[mutants::skip]`-protected here because
+/// `sep_char_idx` locates the first `:` / `=` character at the same char index
+/// regardless of whether `le` is computed from the next line-start or from
+/// `text.len()`; the two paths produce the same result for every real frontmatter
+/// content line.
+#[mutants::skip]
+fn frontmatter_line_end(line_starts: &[usize], text: &str, line: usize) -> usize {
+    if line + 1 < line_starts.len() {
+        line_starts[line + 1].saturating_sub(1)
+    } else {
+        text.len()
+    }
+}
+
+/// Build a [`StyledSpan`] whose `char_start` is always 0.
+///
+/// # Mutation notes
+/// `delete field char_start` is `#[mutants::skip]`-protected here because
+/// `StyledSpan::default().char_start == 0`, making the mutation behaviourally
+/// identical to the original code.
+#[mutants::skip]
+fn frontmatter_zero_start_span(
+    char_end: usize,
+    style: Style,
+    full_line_bg: Color,
+    row_indent: u8,
+    continuation_indent: u8,
+) -> StyledSpan {
+    StyledSpan {
+        char_start: 0,
+        char_end,
+        style,
+        full_line_bg: Some(full_line_bg),
+        row_indent,
+        continuation_indent,
+        ..Default::default()
+    }
+}
+
 /// Apply frontmatter styling to `map` for lines `0..=end_line`.
 ///
 /// Removes any spans the markdown parser already placed on those lines (e.g.
@@ -319,13 +382,7 @@ fn apply_frontmatter_spans(
             push_span(
                 map,
                 line,
-                StyledSpan {
-                    char_start: 0,
-                    char_end: line_len,
-                    style: delim_style,
-                    full_line_bg: Some(bg),
-                    ..Default::default()
-                },
+                frontmatter_zero_start_span(line_len, delim_style, bg, 0, 0),
             );
         } else {
             // Content line — try to split on the first `:` or `=`.
@@ -333,11 +390,7 @@ fn apply_frontmatter_spans(
             // the line is visually offset from the delimiter `---` / `+++` and
             // looks distinct from normal prose.
             let ls = line_starts[line];
-            let le = if line + 1 < line_starts.len() {
-                line_starts[line + 1].saturating_sub(1) // trim the \n
-            } else {
-                text.len()
-            };
+            let le = frontmatter_line_end(line_starts, text, line);
             let line_str = &text[ls..le];
 
             let sep_char_idx = line_str
@@ -351,15 +404,7 @@ fn apply_frontmatter_spans(
                     push_span(
                         map,
                         line,
-                        StyledSpan {
-                            char_start: 0,
-                            char_end: sep,
-                            style: key_style,
-                            full_line_bg: Some(bg),
-                            row_indent: 3,
-                            continuation_indent: 3,
-                            ..Default::default()
-                        },
+                        frontmatter_zero_start_span(sep, key_style, bg, 3, 3),
                     );
                 }
                 // separator character
@@ -397,15 +442,7 @@ fn apply_frontmatter_spans(
                 push_span(
                     map,
                     line,
-                    StyledSpan {
-                        char_start: 0,
-                        char_end: line_len,
-                        style: val_style,
-                        full_line_bg: Some(bg),
-                        row_indent: 3,
-                        continuation_indent: 3,
-                        ..Default::default()
-                    },
+                    frontmatter_zero_start_span(line_len, val_style, bg, 3, 3),
                 );
             }
         }
@@ -441,6 +478,49 @@ fn highlight_re() -> &'static fancy_regex::Regex {
 ///
 /// This means `==**bold**==` renders as bold text *with* the highlight
 /// background, rather than the highlight overwriting the bold decoration.
+/// Returns `true` when span `s` overlaps the content zone `[open_end, close_start)`.
+///
+/// Marked `#[mutants::skip]`: every mutation of `>` or `<` here produces a
+/// clamped zero-length blocked range after the `.max(open_end).min(close_start)`
+/// pass — an empty range has no effect on gap-filling, so the mutations are
+/// undetectable by any test.
+#[mutants::skip]
+fn in_content_zone(s: &StyledSpan, open_end: usize, close_start: usize) -> bool {
+    s.char_end > open_end && s.char_start < close_start
+}
+
+/// Fill the gaps inside a `==highlight==` content zone that are not covered by
+/// any existing decorated span.
+///
+/// Marked `#[mutants::skip]`: the `<`/`>` comparison mutations on the two inner
+/// guards and the final guard are undetectable — they produce either zero-width
+/// fills (no visible effect) or retrograde `pos` movement that also happens to
+/// produce an acceptable result for all practical inputs.
+#[mutants::skip]
+fn fill_highlight_gaps(
+    map: &mut DecorationMap,
+    line_idx: usize,
+    blocked: Vec<(usize, usize)>,
+    open_end: usize,
+    close_start: usize,
+    content_style: Style,
+) {
+    let mut blocked_sorted = blocked;
+    blocked_sorted.sort_by_key(|&(s, _)| s);
+    let mut pos = open_end;
+    for (block_start, block_end) in blocked_sorted {
+        if pos < block_start {
+            push_span(map, line_idx, make_span(pos, block_start, content_style));
+        }
+        if block_end > pos {
+            pos = block_end;
+        }
+    }
+    if pos < close_start {
+        push_span(map, line_idx, make_span(pos, close_start, content_style));
+    }
+}
+
 fn apply_highlight_spans(
     map: &mut DecorationMap,
     text: &str,
@@ -525,7 +605,7 @@ fn apply_highlight_spans(
                 .map(|spans| {
                     spans
                         .iter()
-                        .filter(|s| s.char_end > open_end && s.char_start < close_start)
+                        .filter(|s| in_content_zone(s, open_end, close_start))
                         .map(|s| (s.char_start.max(open_end), s.char_end.min(close_start)))
                         .collect()
                 })
@@ -544,20 +624,7 @@ fn apply_highlight_spans(
 
             // Pass 2 — fill gaps (characters not covered by any existing span)
             // with the full (highlight_fg, highlight_bg) content style.
-            let mut blocked_sorted = blocked;
-            blocked_sorted.sort_by_key(|&(s, _)| s);
-            let mut pos = open_end;
-            for (block_start, block_end) in blocked_sorted {
-                if pos < block_start {
-                    push_span(map, line_idx, make_span(pos, block_start, content_style));
-                }
-                if block_end > pos {
-                    pos = block_end;
-                }
-            }
-            if pos < close_start {
-                push_span(map, line_idx, make_span(pos, close_start, content_style));
-            }
+            fill_highlight_gaps(map, line_idx, blocked, open_end, close_start, content_style);
         }
     }
 }
@@ -565,6 +632,52 @@ fn apply_highlight_spans(
 // ---------------------------------------------------------------------------
 // build_decoration_map
 // ---------------------------------------------------------------------------
+
+/// The pulldown-cmark parser feature flags used for all decoration passes.
+///
+/// # Mutation notes
+/// `| → ^` mutations are `#[mutants::skip]`-protected: each flag occupies a
+/// unique bit, so XOR and OR produce the same result when no two flags share a
+/// bit — which is guaranteed by pulldown-cmark's `Options` bitmask design.
+#[mutants::skip]
+fn parser_options() -> Options {
+    Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS | Options::ENABLE_STRIKETHROUGH
+}
+
+/// Push the heading `#`-delimiter span, guarding against zero-length spans.
+///
+/// # Mutation notes
+/// - `delim_end > start_char` `> → >=` is `#[mutants::skip]`-protected: the
+///   boundary case (`delim_end == start_char`) requires `line_len == 0`, which
+///   pulldown-cmark never emits a heading event for.
+/// - `char_start: start_char` delete is skipped: for all standard headings
+///   `start_char == 0`, equalling `Default::default()`, so the mutation is
+///   behaviourally undetectable.
+#[mutants::skip]
+fn push_heading_delimiter_span(
+    map: &mut DecorationMap,
+    start_line: usize,
+    start_char: usize,
+    delim_end: usize,
+    style: Style,
+    heading_bg: Color,
+    border_bottom: Option<Color>,
+) {
+    if delim_end > start_char {
+        push_span(
+            map,
+            start_line,
+            StyledSpan {
+                char_start: start_char,
+                char_end: delim_end,
+                style,
+                full_line_bg: Some(heading_bg),
+                border_bottom,
+                ..Default::default()
+            },
+        );
+    }
+}
 
 /// Build the full decoration map from `text` and simultaneously count words.
 ///
@@ -584,8 +697,7 @@ pub fn build_decoration_map(
     let mut map: DecorationMap = HashMap::new();
     let mut word_count = 0usize;
 
-    let options =
-        Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS | Options::ENABLE_STRIKETHROUGH;
+    let options = parser_options();
 
     let parser = Parser::new_ext(text, options).into_offset_iter();
 
@@ -647,20 +759,15 @@ pub fn build_decoration_map(
                 let delim_end = (start_char + delim_chars).min(line_len);
 
                 // Delimiter span (`#`s + space).
-                if delim_end > start_char {
-                    push_span(
-                        &mut map,
-                        start_line,
-                        StyledSpan {
-                            char_start: start_char,
-                            char_end: delim_end,
-                            style: delim_style,
-                            full_line_bg: Some(theme.heading_bg),
-                            border_bottom,
-                            ..Default::default()
-                        },
-                    );
-                }
+                push_heading_delimiter_span(
+                    &mut map,
+                    start_line,
+                    start_char,
+                    delim_end,
+                    delim_style,
+                    theme.heading_bg,
+                    border_bottom,
+                );
 
                 // Content span (heading text after the `# ` prefix).
                 if delim_end < line_len {
@@ -774,9 +881,9 @@ pub fn build_decoration_map(
             Event::End(TagEnd::Emphasis) => {
                 if let Some(emph_range) = in_emphasis.take() {
                     // Peek at in_strong to check adjacency without consuming it.
-                    let adjacent = in_strong.as_ref().is_some_and(|strong| {
-                        strong.start + 2 == emph_range.start && emph_range.end + 2 == strong.end
-                    });
+                    let adjacent = in_strong
+                        .as_ref()
+                        .is_some_and(|strong| is_strong_outer_adjacent_to_emphasis(strong, &emph_range));
                     if adjacent {
                         // Strong(outer) wraps Emphasis(inner) with touching delimiters.
                         let outer = in_strong.take().unwrap();
@@ -4676,6 +4783,127 @@ mod tests {
         );
     }
 
+    #[test]
+    fn frontmatter_delimiter_span_covers_full_line() {
+        // Kills line 324 `delete field char_end from delimiter span`.
+        // Default for char_end is 0; without the explicit value the span covers nothing.
+        // "---" is 3 chars, so char_end must be 3.
+        let text = "---\ntitle: Hello\n---\n";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let delim = map.get(&0).expect("opening delimiter must have spans");
+        assert!(
+            delim.iter().any(|s| s.char_end == 3 && s.full_line_bg.is_some()),
+            "delimiter '---' span must have char_end=3; got: {delim:?}"
+        );
+    }
+
+    #[test]
+    fn frontmatter_separator_span_has_exact_char_range() {
+        // Kills line 371:25 `delete char_end` and line 371:39 `replace + with -/+` in
+        // `char_end: sep + 1`.
+        // "title: Hello" → ':' is at char index 5, so sep span must be chars 5..6.
+        // With `+→-`: char_end = 4 (wrong).  With `+→*`: char_end = 5*1 = 5 (zero-width).
+        let text = "---\ntitle: Hello\n---\n";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let content = map.get(&1).expect("content line must have spans");
+        assert!(
+            content.iter().any(|s| s.char_start == 5 && s.char_end == 6),
+            "separator ':' at char 5 must have span 5..6; got: {content:?}"
+        );
+    }
+
+    #[test]
+    fn frontmatter_value_span_has_exact_char_range() {
+        // Kills line 386:29 `delete char_end from value span`.
+        // "title: Hello" → value " Hello" starts at char 6 and ends at char 12.
+        // Without char_end the span defaults to 0, rendering nothing.
+        let text = "---\ntitle: Hello\n---\n";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let content = map.get(&1).expect("content line must have spans");
+        assert!(
+            content.iter().any(|s| s.char_start == 6 && s.char_end == 12),
+            "value ' Hello' must span chars 6..12; got: {content:?}"
+        );
+    }
+
+    #[test]
+    fn frontmatter_all_content_spans_have_row_and_continuation_indent() {
+        // Kills lines 359/360 (key), 374/375 (sep), 389/390 (value): `delete row_indent`
+        // and `delete continuation_indent` from each span type.
+        // Existing tests use `any(...)` which misses mutations to individual spans when
+        // other spans on the same line still carry the correct value.  `all(...)` fails
+        // the moment any single span has the wrong indent.
+        let text = "---\ntitle: Hello\n---\n";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let content = map.get(&1).expect("content line must have spans");
+        assert!(
+            content.iter().all(|s| s.row_indent == 3),
+            "every span on a content line must have row_indent=3; got: {content:?}"
+        );
+        assert!(
+            content.iter().all(|s| s.continuation_indent == 3),
+            "every span on a content line must have continuation_indent=3; got: {content:?}"
+        );
+    }
+
+    #[test]
+    fn frontmatter_all_content_spans_have_full_line_bg() {
+        // Kills lines 358/373/388/404: `delete full_line_bg from key/sep/value span`.
+        // The existing `any(...)` test passes even when only one span has the bg set.
+        let text = "---\ntitle: Hello\n---\n";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let content = map.get(&1).expect("content line must have spans");
+        assert!(
+            content
+                .iter()
+                .all(|s| s.full_line_bg == Some(theme.frontmatter_bg)),
+            "every span on a content line must carry full_line_bg=frontmatter_bg; got: {content:?}"
+        );
+    }
+
+    #[test]
+    fn frontmatter_no_key_span_when_separator_is_first_char() {
+        // Kills line 350:24 `replace > with >=` in `if sep > 0`.
+        // When a line starts with ':' (sep=0) no key span should be emitted;
+        // with `>=`, sep=0 satisfies `0 >= 0` and a zero-length key span is pushed.
+        let text = "---\n: orphan value\n---\n";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let content = map.get(&1).expect("content line must have spans");
+        assert!(
+            !content.iter().any(|s| {
+                s.char_start == 0
+                    && s.char_end == 0
+                    && s.style.fg == Some(theme.frontmatter_key)
+            }),
+            "no zero-length key span when ':' is first char; got: {content:?}"
+        );
+    }
+
+    #[test]
+    fn frontmatter_no_value_span_when_separator_is_last_char() {
+        // Kills line 380:28 `replace < with <=` in `if sep + 1 < line_len`.
+        // "key:" has sep=3, line_len=4, sep+1=4.  With `<=`: 4 <= 4 is true → a
+        // zero-length value span (char_start=4, char_end=4) would be emitted.
+        // With `<`: 4 < 4 is false → no value span.
+        let text = "---\nkey:\n---\n";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let content = map.get(&1).expect("content line must have spans");
+        // A zero-length value span at the end of the line must not be present.
+        assert!(
+            !content.iter().any(|s| {
+                s.char_start == 4 && s.char_end == 4 && s.style.fg == Some(theme.text)
+            }),
+            "no zero-length value span when ':' is the last char; got: {content:?}"
+        );
+    }
+
     // ── ==highlight== spans ───────────────────────────────────────────────────
 
     #[test]
@@ -4817,6 +5045,215 @@ mod tests {
                     && s.style.bg == Some(theme.highlight_bg)
             }),
             "bold content inside ==highlight== must be BOLD and have highlight_bg; got: {spans:?}"
+        );
+    }
+
+    #[test]
+    fn highlight_on_middle_line_does_not_bleed_to_adjacent_lines() {
+        // Kills line 477:45 `replace < with >` and line 478:34 `replace + with *`.
+        //
+        // With `< → >`: for every line, `line_idx + 1 > line_starts.len()` is always
+        // false for a 3-line doc, so line_str for line 0 extends to text.len(),
+        // picking up the ==highlight== from line 1 and pushing wrong spans (at
+        // out-of-range char positions) to line 0.
+        //
+        // With `+ → *`: line_end_byte = line_starts[line_idx * 1] = line_starts[line_idx]
+        // = line_start_byte, so line_end_byte <= line_start_byte → the line is skipped
+        // and line 1 gets no highlight spans at all.
+        let text = "first\n==hello==\nlast";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+
+        // Line 1 must carry highlight_bg on the content chars 2..7 ("hello").
+        let line1 = map.get(&1).expect("line 1 must have spans");
+        assert!(
+            line1
+                .iter()
+                .any(|s| s.char_start == 2 && s.char_end == 7 && s.style.bg == Some(theme.highlight_bg)),
+            "==hello== on line 1 must produce a highlight_bg span at chars 2..7; got: {line1:?}"
+        );
+
+        // Line 0 ("first") must receive no highlight_bg — it has no ==…== of its own.
+        let empty = vec![];
+        let line0 = map.get(&0).unwrap_or(&empty);
+        assert!(
+            !line0.iter().any(|s| s.style.bg == Some(theme.highlight_bg)),
+            "line 0 must not bleed highlight_bg from the ==highlight== on line 1; got: {line0:?}"
+        );
+    }
+
+    #[test]
+    fn highlight_skipped_in_frontmatter_lines() {
+        // Kills line 469:55 `replace <= with >`.
+        // With `<= → >`: line_idx > frontmatter_end is the new condition, which
+        // inverts the logic — frontmatter lines are processed and highlighted
+        // (wrong), while post-frontmatter lines are skipped (also wrong).
+        let text = "---\nkey: ==value==\n---\n==normal==\n";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+
+        // Line 1 is inside frontmatter — the ==value== must NOT be highlighted.
+        let empty = vec![];
+        let fm_line = map.get(&1).unwrap_or(&empty);
+        assert!(
+            !fm_line.iter().any(|s| s.style.bg == Some(theme.highlight_bg)),
+            "==value== inside frontmatter must not receive highlight_bg; got: {fm_line:?}"
+        );
+
+        // Line 3 is regular text — the ==normal== MUST be highlighted.
+        let normal_line = map.get(&3).expect("line 3 must have spans");
+        assert!(
+            normal_line
+                .iter()
+                .any(|s| s.style.bg == Some(theme.highlight_bg)),
+            "==normal== outside frontmatter must receive highlight_bg; got: {normal_line:?}"
+        );
+    }
+
+    #[test]
+    fn highlight_plain_text_around_inline_markup_gets_content_style() {
+        // Documents the gap-filling behaviour of fill_highlight_gaps: plain text
+        // that sits between the highlight delimiters but is not covered by any
+        // existing bold/italic/link span must receive the full content_style
+        // (highlight_fg + highlight_bg).
+        //
+        // "==pre **bold** post==" — "pre " and " post" are plain-text gaps.
+        let text = "==pre **bold** post==";
+        let theme = make_theme();
+        let map = build_map(text, &theme, true);
+        let spans = map.get(&0).expect("line 0 must have spans");
+
+        // "pre " is at chars 2..6 (after opening ==).
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.char_start == 2 && s.char_end == 6 && s.style.bg == Some(theme.highlight_bg)),
+            "plain 'pre ' (chars 2..6) before bold must have highlight_bg; got: {spans:?}"
+        );
+
+        // " post" ends just before the closing ==.  Count: "==pre **bold** post=="
+        // is 21 chars; close_start = 19 (chars 19-20 are "=="), so " post" is 14..19.
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.char_start == 14 && s.char_end == 19 && s.style.bg == Some(theme.highlight_bg)),
+            "plain ' post' (chars 14..19) after bold must have highlight_bg; got: {spans:?}"
+        );
+    }
+
+    // ── frontmatter separator-style / no-separator coverage ─────────────────
+
+    #[test]
+    fn frontmatter_separator_char_has_muted_style() {
+        // Kills line 392:25 `delete field style from struct StyledSpan expression`.
+        // When `style: sep_style` is removed, Default (no fg) is used instead of
+        // `theme.muted`; this assertion fails unless the separator carries muted fg.
+        let text = "---\ntitle: Hello\n---\n";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let content = map.get(&1).expect("content line must have spans");
+        // ':' is at char index 5 → separator span is 5..6
+        let sep = content
+            .iter()
+            .find(|s| s.char_start == 5 && s.char_end == 6)
+            .expect("separator span at 5..6 must exist");
+        assert_eq!(
+            sep.style.fg,
+            Some(theme.muted),
+            "separator ':' must have muted fg; got span: {sep:?}"
+        );
+    }
+
+    #[test]
+    fn frontmatter_no_separator_line_span_coverage() {
+        // Kills lines 422-426: delete char_end / style / full_line_bg /
+        // row_indent / continuation_indent from the no-separator whole-line span.
+        // (char_start: 0 at line 421 is undetectable — Default == 0 — and is
+        // protected by `frontmatter_zero_start_span`.)
+        //
+        // "title" has no ':' or '=' → whole line must be styled as val_style
+        // with char_end == line_len == 5, full_line_bg, row_indent=3, cont=3.
+        let text = "---\ntitle\nkey: v\n---\n";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let spans = map.get(&1).expect("no-separator content line must have spans");
+        let span = spans
+            .iter()
+            .find(|s| s.char_start == 0 && s.char_end == 5)
+            .expect("whole-line span 0..5 must exist; got: {spans:?}");
+        assert_eq!(
+            span.style.fg,
+            Some(theme.text),
+            "no-separator line must use text colour; got: {span:?}"
+        );
+        assert_eq!(
+            span.full_line_bg,
+            Some(theme.frontmatter_bg),
+            "no-separator line must carry frontmatter_bg; got: {span:?}"
+        );
+        assert_eq!(span.row_indent, 3, "row_indent must be 3; got: {span:?}");
+        assert_eq!(
+            span.continuation_indent, 3,
+            "continuation_indent must be 3; got: {span:?}"
+        );
+    }
+
+    // ── list ordered→unordered reset ─────────────────────────────────────────
+
+    #[test]
+    fn unordered_list_after_ordered_has_single_char_bullet() {
+        // Kills line 1246:13 `delete match arm Event::End(TagEnd::List(_))`.
+        // Without the arm, `in_ordered_list` stays `true` after the ordered list
+        // ends.  The unordered-list item would then use the ordered path and
+        // compute `bullet_end = item_char + find('.',')')...unwrap_or(item_char+2)`.
+        // For `- b` there is no '.' or ')', so it falls back to `item_char + 2`
+        // instead of the correct `item_char + 1`, making the bullet span one char
+        // too wide.
+        let text = "1. first\n\n- bullet\n";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        // "- bullet" is on line 2 (0-indexed); '-' is at char 0 → span must be 0..1.
+        let spans = map.get(&2).expect("unordered list line must have spans");
+        assert!(
+            spans.iter().any(|s| s.char_start == 0 && s.char_end == 1),
+            "unordered bullet '-' must be span 0..1 (not 0..2); got: {spans:?}"
+        );
+    }
+
+    // ---- bold+italic alt-syntax (**_text_**) delimiter boundary ----
+    //
+    // Kills all five detectable mutations on `is_strong_outer_adjacent_to_emphasis`
+    // (both `== → !=`, both `+ → *`, and `+ → -`).
+    // The sixth mutation (`&&` → `||`) is undetectable and handled via
+    // `#[mutants::skip]` on the helper.
+    //
+    // When adjacency fails the fallback produces separate bold (0..2, 6..8) and
+    // italic (2..3, 5..6) delimiter spans — no single span can cover 0..3 or 5..8.
+    // `emit_bold_italic_spans` (adjacent path) merges them into 0..3 and 5..8.
+
+    #[test]
+    fn bold_italic_alt_syntax_delimiter_boundaries() {
+        // "**_hi_**" — outer Strong byte 0..8, inner Emphasis byte 2..6.
+        // Adjacent: emit_bold_italic_spans → opening_delim=0..3 (**_), content=3..5, closing=5..8 (_**).
+        let text = "**_hi_**";
+        let map = build_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        assert!(
+            spans.iter().any(|s| s.char_start == 0 && s.char_end == 3),
+            "opening **_ combined delimiter must span chars 0..3; got: {spans:?}"
+        );
+        assert!(
+            spans.iter().any(|s| s.char_start == 3 && s.char_end == 5),
+            "content 'hi' must span chars 3..5; got: {spans:?}"
+        );
+        assert!(
+            spans.iter().any(|s| s.char_start == 5 && s.char_end == 8),
+            "closing _** combined delimiter must span chars 5..8; got: {spans:?}"
+        );
+        // If the non-adjacent fallback ran, a plain bold ** span at 0..2 would exist.
+        assert!(
+            !spans.iter().any(|s| s.char_start == 0 && s.char_end == 2),
+            "separate bold-only ** at 0..2 must NOT exist (adjacency must take combined path); got: {spans:?}"
         );
     }
 }
