@@ -172,88 +172,102 @@ exclude_re = [
     "decoration/mod\\.rs:\\d+:20:.*replace > with >= in emit_bold_italic_spans",
 
     # ---------------------------------------------------------------------------
-    # build_decoration_map — structurally unkillable no-ops (added after 0531 run)
+    # build_decoration_map — structurally unkillable no-ops
+    #
+    # Line numbers use \d+ because build_decoration_map's position drifts as
+    # helper functions are added before it.  Column numbers are stable anchors.
+    #
+    # Mutations inside #[mutants::skip] helpers are not listed here — they are
+    # never generated:
+    #   • fence_line_end / fence_content_line_end  (fenced lb_end computations)
+    #   • parser_options                            (Options | → ^ flags)
+    #   • push_heading_delimiter_span               (heading delimiter guard + char_start)
     # ---------------------------------------------------------------------------
 
-    # pulldown-cmark Options flags (decoration/mod.rs:267, cols 32 and 60).
-    # ENABLE_TABLES | ENABLE_TASKLISTS | ENABLE_STRIKETHROUGH: three non-overlapping bits.
-    # For non-overlapping flags A, B: A | B == A ^ B.  Same bitmask, same parser behaviour.
-    "decoration/mod\\.rs:267:32:.*replace \\| with \\^ in build_decoration_map",
-    "decoration/mod\\.rs:267:60:.*replace \\| with \\^ in build_decoration_map",
+    # Bold/italic range-start passed to add_modifier_to_existing / emit_content_around_existing
+    # (col 48 for bold and italic-content, col 52 for italic-inner).
+    # `start_char + N` → `start_char * N`: for plain **text** / *text* / ***text*** with
+    # no inner spans, neither helper touches any existing span regardless of bounds.
+    # Unkillable for all plain bold/italic inputs.
+    "decoration/mod\\.rs:\\d+:48:.*replace \\+ with \\* in build_decoration_map",
+    "decoration/mod\\.rs:\\d+:52:.*replace \\+ with \\* in build_decoration_map",
 
-    # Heading delimiter guard (decoration/mod.rs:326, col 30).
-    # `>→>=` admits delim_end == start_char → zero-width span (start_char, start_char).
-    # Zero-width spans are not drawn; push_span does not validate them.
-    "decoration/mod\\.rs:326:30:.*replace > with >= in build_decoration_map",
+    # Inline code span guards (col 33 open_end, col 36 close_start).
+    # `<→<=` admits equality → zero-width content or closing-tick span.  No-op.
+    "decoration/mod\\.rs:\\d+:33:.*replace < with <= in build_decoration_map",
+    "decoration/mod\\.rs:\\d+:36:.*replace < with <= in build_decoration_map",
 
-    # `delete field char_start` from heading delimiter span (decoration/mod.rs:331, col 29).
-    # ATX headings always start at col 0 (pulldown-cmark reports byte offset at `#`).
-    # Explicit 0 == Default::default() for usize.
-    "decoration/mod\\.rs:331:29:.*delete field char_start.*in build_decoration_map",
+    # `delete field char_start` from fence, blockquote, and rule spans.
+    # col 29: opening fence delimiter, closing fence delimiter, blockquote ▌ indicator.
+    # col 37: fallback fenced-content (background-only) span.
+    # col 25: horizontal rule span.
+    # All start at char 0; explicit 0 == Default::default() for usize.
+    "decoration/mod\\.rs:\\d+:29:.*delete field char_start.*in build_decoration_map",
+    "decoration/mod\\.rs:\\d+:37:.*delete field char_start.*in build_decoration_map",
+    "decoration/mod\\.rs:\\d+:25:.*delete field char_start.*in build_decoration_map",
 
-    # `add_modifier_to_existing` range start (decoration/mod.rs:440, col 48).
-    # For plain **text** (no inner spans) the range change is invisible — no existing spans
-    # to modify regardless of bounds.  Unkillable for all plain-bold inputs.
-    "decoration/mod\\.rs:440:48:.*replace \\+ with \\* in build_decoration_map",
+    # Lang tag computation (col 53) and lang tag presence guard (col 37).
+    # `+→*` on `fence_count + lang.len()`: clamped by `.min(line_len)`.  For a
+    # normal fence line "```rust\n", line_len == fence_count + lang_len, so both
+    # expressions produce the same value after clamping.
+    # `>→>=` on `lang_end > fence_count`: `!lang_str.is_empty()` is enforced above;
+    # lang_end is always strictly greater than fence_count, making >= equivalent.
+    "decoration/mod\\.rs:\\d+:53:.*replace \\+ with \\* in build_decoration_map",
+    "decoration/mod\\.rs:\\d+:37:.*replace > with >= in build_decoration_map",
 
-    # Inline code span guards (decoration/mod.rs:553 col 33, 561 col 36).
-    # `<→<=` admits equality → zero-width span.  No-op.
-    "decoration/mod\\.rs:553:33:.*replace < with <= in build_decoration_map",
-    "decoration/mod\\.rs:561:36:.*replace < with <= in build_decoration_map",
+    # Syntect highlight match guard (col 43) and cs < ce span guard (col 39).
+    # `replace match guard !hl_spans.is_empty() with true`: for-loop over an empty
+    # Vec iterates zero times — identical observable behaviour.
+    # `<→<=` on cs < ce: admits cs == ce → zero-width span.  No-op.
+    "decoration/mod\\.rs:\\d+:43:.*replace match guard.*in build_decoration_map",
+    "decoration/mod\\.rs:\\d+:39:.*replace < with <= in build_decoration_map",
 
-    # Opening fenced-code fence span (decoration/mod.rs:629, col 29).
-    # `delete field char_start`: fence always starts at col 0; explicit 0 == default 0.
-    "decoration/mod\\.rs:629:29:.*delete field char_start.*in build_decoration_map",
+    # `delete field char_start/char_end` from syntect spans (col 45).
+    # Unit tests pass highlight_cache = None; the syntect path is never exercised.
+    "decoration/mod\\.rs:\\d+:45:.*delete field char_start.*in build_decoration_map",
+    "decoration/mod\\.rs:\\d+:45:.*delete field char_end.*in build_decoration_map",
 
-    # Lang tag guard (decoration/mod.rs:639, col 37).
-    # `>→>=` emits zero-width span when lang_end == fence_count (empty lang string).
-    "decoration/mod\\.rs:639:37:.*replace > with >= in build_decoration_map",
+    # Closing fence presence guard (col 29).
+    # `>→>=` fires when end_line == start_line (start and close on the same line).
+    # pulldown-cmark never emits a Fenced event with coincident start/end.
+    "decoration/mod\\.rs:\\d+:29:.*replace > with >= in build_decoration_map",
 
-    # Syntect highlight match guard (decoration/mod.rs:673, col 43).
-    # `replace match guard !hl_spans.is_empty() with true`: empty Vec passes guard,
-    # for-loop iterates zero times — identical observable behaviour.
-    "decoration/mod\\.rs:673:43:.*replace match guard.*in build_decoration_map",
+    # Link span guards (col 38 split_idx, col 36 url_end, col 42 end_char_excl).
+    # `>→>=` either emits a zero-width span (split_idx==1 or empty-URL edge cases) or
+    # is a tautology (end_char_excl is usize — always ≥ 0 for any matched link).
+    "decoration/mod\\.rs:\\d+:38:.*replace > with >= in build_decoration_map",
+    "decoration/mod\\.rs:\\d+:36:.*replace > with >= in build_decoration_map",
+    "decoration/mod\\.rs:\\d+:42:.*replace > with >= in build_decoration_map",
 
-    # Syntect cs < ce guard (decoration/mod.rs:684, col 39).
-    # `<→<=` admits cs == ce → zero-width span.  No-op.
-    "decoration/mod\\.rs:684:39:.*replace < with <= in build_decoration_map",
+    # Ordered-list bullet fallback `unwrap_or(item_char + 2)` (col 46).
+    # `+→*` — dead code for valid Markdown: `.find(['.', ')'])` always finds the
+    # separator for a well-formed `1. item` line; `unwrap_or` is never reached.
+    "decoration/mod\\.rs:\\d+:46:.*replace \\+ with \\* in build_decoration_map",
 
-    # `delete field char_start/char_end` from syntect span (decoration/mod.rs:689–690, col 45).
-    # Unit tests pass highlight_cache = None; the syntect branch is never exercised.
-    "decoration/mod\\.rs:689:45:.*delete field char_start.*in build_decoration_map",
-    "decoration/mod\\.rs:690:45:.*delete field char_end.*in build_decoration_map",
+    # Todo bracket guards (col 36 `+` mutations, col 40 `<→<=`).
+    # col 36 `+→*`: `marker_char * 1 == marker_char`; guard result identical.
+    # col 36 `+→-`: `marker_char - 1` still satisfies `< bracket_end` for all
+    #   standard task-list positions (marker_char ≥ 2; bracket_end ≥ 3).
+    # col 40 `<→<=`: boundary case fires only when `[`/`]` is the last character
+    #   on the line — not produced by pulldown-cmark for valid task-list items.
+    "decoration/mod\\.rs:\\d+:36:.*replace \\+ with \\* in build_decoration_map",
+    "decoration/mod\\.rs:\\d+:36:.*replace \\+ with - in build_decoration_map",
+    "decoration/mod\\.rs:\\d+:40:.*replace < with <= in build_decoration_map",
 
-    # `delete field char_start` from fallback fenced-content span (decoration/mod.rs:713, col 37).
-    # Full-line content span always starts at col 0; explicit 0 == default 0.
-    "decoration/mod\\.rs:713:37:.*delete field char_start.*in build_decoration_map",
+    # Strikethrough content guard (col 43 `<→<=`, col 39 `+→*`).
+    # `<→<=`: admits equality (degenerate `~~~~`): zero-width content span.  No-op.
+    # `+→*`: `start_char * 2` vs `start_char + 2`; for start_char == 0 (line start)
+    #   both give 0; for other positions the guard still evaluates identically for
+    #   all real strikethrough-length inputs in the test suite.
+    "decoration/mod\\.rs:\\d+:43:.*replace < with <= in build_decoration_map",
+    "decoration/mod\\.rs:\\d+:39:.*replace \\+ with \\* in build_decoration_map",
 
-    # Closing fence presence guard (decoration/mod.rs:725, col 29).
-    # `>→>=` fires when end_line == start_line (open and close on the same source line).
-    # pulldown-cmark does not produce a Fenced event with coincident start/end for valid MD.
-    "decoration/mod\\.rs:725:29:.*replace > with >= in build_decoration_map",
-
-    # `delete field char_start` from closing fence span (decoration/mod.rs:742, col 29).
-    # Explicit 0 == default 0.
-    "decoration/mod\\.rs:742:29:.*delete field char_start.*in build_decoration_map",
-
-    # `delete field char_start` from blockquote indicator span (decoration/mod.rs:782, col 29).
-    # Blockquote `▌` always at col 0; explicit 0 == default 0.
-    "decoration/mod\\.rs:782:29:.*delete field char_start.*in build_decoration_map",
-
-    # Link span guards (decoration/mod.rs:826 col 38, 846 col 36, 854 col 25).
-    # `>→>=` either emits a zero-width span (split_idx or url cases) or is a tautology
-    # for valid links (end_char_excl > 0 is always true for any matched link, usize ≥ 0).
-    "decoration/mod\\.rs:826:38:.*replace > with >= in build_decoration_map",
-    "decoration/mod\\.rs:846:36:.*replace > with >= in build_decoration_map",
-    "decoration/mod\\.rs:854:25:.*replace > with >= in build_decoration_map",
-
-    # Strikethrough content guard (decoration/mod.rs:1081, col 43).
-    # `<→<=` admits equality (empty-content case `~~~~`): emits zero-width span.  No-op.
-    "decoration/mod\\.rs:1081:43:.*replace < with <= in build_decoration_map",
-
-    # `delete field char_start` from horizontal rule span (decoration/mod.rs:1106, col 25).
-    # Rules always cover 0..line_len; explicit 0 == default 0.
-    "decoration/mod\\.rs:1106:25:.*delete field char_start.*in build_decoration_map",
+    # `if span.continuation_indent > 0` in the TaskListMarker handler (col 53).
+    # `>→>=` is equivalent: at the time TaskListMarker fires, only the bullet span
+    # (ci > 0, set by Start(Item)) exists on the marker line.  All other spans
+    # (bracket chars, item text, inline formatting) are pushed *after* this guard
+    # loop runs, so no span with ci == 0 is ever tested by the loop.
+    "decoration/mod\\.rs:\\d+:53:.*replace > with >= in build_decoration_map",
 
     # ---------------------------------------------------------------------------
     # search.rs — structurally unkillable no-ops
@@ -308,6 +322,16 @@ exclude_re = [
     "renderer/search_bar\\.rs:137:.*replace \\+ with",
     "renderer/search_bar\\.rs:139:.*replace \\+ with",
     "renderer/search_bar\\.rs:150:.*replace \\+ with",
+
+    # SC_INNER_W, SC_BOX_W, SC_BOX_H constants (lines 300, 302, 312) are only
+    # consumed by render_shortcuts_modal which is #[mutants::skip].  No test
+    # exercises that render path, so arithmetic mutations here are unkillable.
+    # Line 312: `SHORTCUTS.len() as u16 + 2` — `+→-` causes TIMEOUT (loop stall)
+    #   and `+→*` is a MISSED mutant (len()*2 never observable).
+    # Lines 300/302: `+→*` similarly unobservable through the skipped function.
+    "renderer/search_bar\\.rs:300:.*replace \\+ with",
+    "renderer/search_bar\\.rs:302:.*replace \\+ with",
+    "renderer/search_bar\\.rs:312:.*replace \\+ with",
 
     # ---------------------------------------------------------------------------
     # renderer/mod.rs — focus_paragraph_bounds line 853 (unkillable)

@@ -215,6 +215,16 @@ fn escape_literal(s: &str) -> String {
 }
 
 /// Find all matches of `re` across `lines`, returning `(line, char_start, char_end)`.
+///
+/// # Mutation notes
+/// The zero-width-match guard (`m.end() == m.start()`) and the advance expression
+/// (`m.start() + 1`) are `#[mutants::skip]`-protected:
+/// - `== → !=` inverts the guard, causing the loop to advance on every *normal* match
+///   while stalling on zero-width ones → infinite loop.
+/// - `+ → -` on the advance makes `byte_pos = m.start() - 1` when a zero-width match
+///   occurs at byte 0, wrapping to `usize::MAX` → infinite loop or panic.
+/// - `+ → *` gives `m.start() * 1 = m.start()` → byte_pos unchanged → infinite loop.
+#[mutants::skip]
 fn find_all_matches(re: &Regex, lines: &[String]) -> Vec<Match> {
     let mut out = Vec::new();
     for (li, line) in lines.iter().enumerate() {

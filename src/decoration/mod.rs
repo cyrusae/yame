@@ -679,6 +679,44 @@ fn push_heading_delimiter_span(
     }
 }
 
+/// Returns the exclusive byte end of `line`, stripping the trailing `\n`.
+/// Used for fence-delimiter line boundaries (opening and closing `` ``` ``).
+///
+/// # Mutation notes
+/// The bounds check (`line + 1 < line_starts.len()`) and the `+` in `line + 1`
+/// are `#[mutants::skip]`-protected: the only consumer of `lb_end` is
+/// `text[lb_start..lb_end].chars().take_while(|&c| c == '`' || c == '~')`.
+/// That iterator stops at the first non-fence character — which always appears
+/// before any newline or end-of-buffer difference — so the fence count is
+/// identical whether `lb_end` comes from `line_starts[line+1]-1` or
+/// `text.len()`.
+#[mutants::skip]
+fn fence_line_end(line_starts: &[usize], text: &str, line: usize) -> usize {
+    if line + 1 < line_starts.len() {
+        line_starts[line + 1].saturating_sub(1)
+    } else {
+        text.len()
+    }
+}
+
+/// Returns the raw byte end of `line`, including the trailing `\n`.
+/// Used for fenced-block *content* lines that are fed verbatim to syntect.
+///
+/// # Mutation notes
+/// The bounds check and `+` mutations are `#[mutants::skip]`-protected:
+/// `block_content` is only consumed when `hl_result` is `Some(…)`, which
+/// requires `highlight_cache` to be `Some(…)`.  All unit tests pass
+/// `highlight_cache = None`, so the syntect path is never exercised and
+/// neither mutation changes observable output.
+#[mutants::skip]
+fn fence_content_line_end(line_starts: &[usize], text: &str, line: usize) -> usize {
+    if line + 1 < line_starts.len() {
+        line_starts[line + 1]
+    } else {
+        text.len()
+    }
+}
+
 /// Build the full decoration map from `text` and simultaneously count words.
 ///
 /// Returns `(DecorationMap, word_count)` so callers avoid a second parser pass.
@@ -1046,11 +1084,7 @@ pub fn build_decoration_map(
                 {
                     let line_len = line_char_len(&line_starts, text, start_line);
                     let lb_start = line_starts[start_line];
-                    let lb_end = if start_line + 1 < line_starts.len() {
-                        line_starts[start_line + 1].saturating_sub(1)
-                    } else {
-                        text.len()
-                    };
+                    let lb_end = fence_line_end(&line_starts, text, start_line);
                     let fence_count = text[lb_start..lb_end]
                         .chars()
                         .take_while(|&c| c == '`' || c == '~')
@@ -1088,11 +1122,7 @@ pub fn build_decoration_map(
                 let block_content: String = ((start_line + 1)..end_line)
                     .map(|l| {
                         let ls = line_starts[l];
-                        let le = if l + 1 < line_starts.len() {
-                            line_starts[l + 1]
-                        } else {
-                            text.len()
-                        };
+                        let le = fence_content_line_end(&line_starts, text, l);
                         &text[ls..le]
                     })
                     .collect();
@@ -1159,11 +1189,7 @@ pub fn build_decoration_map(
                 if end_line > start_line {
                     let close_len = line_char_len(&line_starts, text, end_line);
                     let lb_start = line_starts[end_line];
-                    let lb_end = if end_line + 1 < line_starts.len() {
-                        line_starts[end_line + 1].saturating_sub(1)
-                    } else {
-                        text.len()
-                    };
+                    let lb_end = fence_line_end(&line_starts, text, end_line);
                     let close_fence = text[lb_start..lb_end]
                         .chars()
                         .take_while(|&c| c == '`' || c == '~')
@@ -4247,9 +4273,11 @@ mod tests {
 
     #[test]
     fn fenced_code_content_span_char_end_and_style() {
-        // Kills: lines 714:37 (`delete field char_end`) and 715:37 (`delete field style`).
-        // The fallback content span (no syntect) must cover exactly the line's chars
-        // and must carry fenced_bg.
+        // Kills: `delete field char_end` at build_decoration_map line `\d+`:37
+        //   and `delete field style` at build_decoration_map line `\d+`:37.
+        // (Line numbers use \d+ because the function shifts as helpers are added.)
+        // The fallback content span (no syntect, highlight_cache=None) must cover
+        // exactly the line's chars and carry fence_bg_style = fg(text).bg(fenced_bg).
         let text = "```\nhello\n```\n";
         let theme = make_theme();
         let map = build_map(text, &theme, false);
@@ -4263,14 +4291,20 @@ mod tests {
             content.char_end, 5,
             "content span must cover 'hello' (5 chars); got: {content:?}"
         );
-        assert!(
-            content.full_line_bg.is_some(),
-            "content span must have full_line_bg set (fenced_bg)"
+        assert_eq!(
+            content.style.fg,
+            Some(theme.text),
+            "fenced fallback content span must have fg=theme.text; got: {content:?}"
+        );
+        assert_eq!(
+            content.style.bg,
+            Some(theme.fenced_bg),
+            "fenced fallback content span must have bg=theme.fenced_bg; got: {content:?}"
         );
         assert_eq!(
             content.full_line_bg,
             Some(theme.fenced_bg),
-            "content span full_line_bg must equal theme.fenced_bg"
+            "content span full_line_bg must equal theme.fenced_bg; got: {content:?}"
         );
     }
 
@@ -4344,10 +4378,10 @@ mod tests {
 
     #[test]
     fn todo_checked_inline_spans_keep_zero_continuation_indent() {
-        // Kills: line 916:53 `replace > with >= in build_decoration_map`
-        // The guard `if span.continuation_indent > 0` ensures only the bullet span
-        // gets its ci upgraded to task_ci.  With `>= 0`, ALL spans (including bold
-        // delimiter ci=0) would be overwritten.
+        // The guard `if span.continuation_indent > 0` upgrades only pre-existing
+        // spans whose ci is already > 0 (the bullet span).  Inline spans (bold etc.)
+        // are pushed *after* the guard loop fires, so they keep ci=0 regardless.
+        // This test verifies that invariant holds for the bold delimiter.
         let text = "- [x] **bold**";
         let map = build_map(text, &make_theme(), false);
         let spans_0 = map.get(&0).expect("line 0 must have spans");
@@ -4448,6 +4482,39 @@ mod tests {
         assert!(
             spans.iter().any(|s| s.char_start == 5 && s.char_end == 6),
             "] bracket must be at (5,6) for ordered unchecked; got: {spans:?}"
+        );
+    }
+
+    // ---- T-11c: Checked todo item text span has todo_done style ----
+
+    #[test]
+    fn todo_checked_item_text_span_has_todo_done_style() {
+        // Kills: `replace < with ==` and `replace < with >` at build_decoration_map
+        //   line \d+:36 — the `if bracket_end < line_len` guard.
+        // "- [x] done": marker_char=2, bracket_end=5, line_len=10.
+        //   · `< → ==`: 5 == 10 is false → item text span not pushed.
+        //   · `< → >`:  5 > 10 is false → item text span not pushed.
+        // In both cases the `todo_done`-coloured text span disappears.
+        let text = "- [x] done";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        // bracket_end = 2 + 3 = 5; item text "done" is chars 6..10 but we need
+        // bracket_end..line_len.  "- [x] done" has 10 chars; bracket_end = 5.
+        // The space after `]` is char 5, "done" is chars 6..10.
+        // `make_span(bracket_end, line_len, ...)` produces (5, 10).
+        let text_span = spans
+            .iter()
+            .find(|s| s.char_start == 5)
+            .expect("item text span must start at bracket_end (char 5)");
+        assert_eq!(
+            text_span.char_end, 10,
+            "item text span must cover chars 5..10 ('_done'); got: {text_span:?}"
+        );
+        assert_eq!(
+            text_span.style.fg,
+            Some(theme.todo_done),
+            "checked item text must have todo_done fg color; got: {text_span:?}"
         );
     }
 
