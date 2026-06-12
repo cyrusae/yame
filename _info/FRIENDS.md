@@ -12,6 +12,12 @@ To access these functions:
 
 ### How to install:
 
+#### Mac:
+
+#### Linux:
+
+#### Windows:
+
 
 ## The tool: `lf`
 
@@ -19,9 +25,24 @@ To access these functions:
 
 ### How to install:
 
+#### Mac:
+
+#### Linux:
+
+#### Windows:
+
 
 ## The tool: `bat`
 
 ### Why you want this:
 
 ### How to install:
+
+#### Mac:
+
+#### Linux:
+
+#### Windows:
+
+
+For easy outsourcing of all of this, check out `SCRIPTS.md`!
