@@ -237,26 +237,26 @@ Implement all override lookups — check override first, fall back to derived de
 
 ---
 
-## Planned Features (Roadmap)
+## Planned Features
 
-### v1.5: Config Reload & Syntax Highlighting
+> **Note:** This section reflects the original v1 spec. Features below have since shipped
+> (see CHANGELOG.md) or are tracked in Chainlink. Forward-looking plans live in Chainlink
+> issues; this document is now primarily architectural reference.
 
-**Config reload:** `Ctrl+R` reloads `~/.config/yame/config.toml` and applies changes to theming and layout without closing the editor. If the reload fails, display an error in the status bar and keep the previous config active.
+### v1.5 → shipped in v0.1.0-alpha.1 / v0.2.0
 
-**Syntax highlighting in fenced code blocks:** See the detailed section below.
+- Config reload (`Ctrl+R`) — ✅ done
+- Syntax highlighting in fenced code blocks (syntect) — ✅ done
+- Smart pair wrapping — ✅ done
 
-**Smart pair wrapping:** When text is selected, typing an opening bracket/quote (`[`, `(`, `{`, `"`, `'`, `` ` ``, `*`, `_`) wraps the selection with matching pair. Cursor moves to end of wrapped text. No automatic escaping — user controls nesting.
+### v2 → shipped in v0.2.0
 
-### v2: Search/Replace, Line Numbers
+- Search and replace (`Ctrl+F` / `Ctrl+H`) — ✅ done
+- Line numbers (`[layout] line_numbers`) — ✅ done
 
-**Search and replace:** `Ctrl+F` opens a search dialog. Basic regex support. `Ctrl+H` for replace, or as an add-on from the search interaction.
+### v3
 
-**Line numbers:** Optional display of line numbers in a narrow gutter. Controlled via `[ui] show_line_numbers = false` in config (reserved for v2 implementation).
-
-### v3: Table Rendering
-
-**Table alignment and borders:** v1 detects and colors GFM tables. v3 adds column-width computation, alignment, and pretty borders. Tables may overflow the centered column width for readability. Controlled via `[layout] allow_table_overflow = true` in config.
-
+- Table alignment and pretty borders — open; tracked in Chainlink
 ---
 
 ## v1.5 Extension: Syntax Highlighting in Fenced Code Blocks
@@ -364,3 +364,20 @@ To keep scope clear for implementation:
 - No git integration
 - No search/replace (v2)
 - No line numbers (v2)
+
+---
+
+## Locked Design Decisions
+
+Decisions that were actively debated and resolved. Recorded here so they don't get re-litigated.
+Forward-looking feature tracking lives in Chainlink; CHANGELOG.md records what shipped.
+
+| ID | Decision | Resolution |
+|----|----------|------------|
+| D1 | Italic startup warning | Implement as specced — one-time dismissible banner, color fallback when italics unsupported |
+| D2 | CJK wide character rendering | Fixed in v0.1.0-alpha.1 (`unicode-width` crate, five renderer sites); was deferred from v1 |
+| D3 | Tab character handling | Expand tabs to spaces on load (simple path); no in-editor tab stops |
+| D4 | Smart pair wrapping | Implemented in v0.1.0-alpha.1 — selection wrapped by opening delimiter types |
+| D5 | Search mode | Regex via `fancy-regex` crate (richer than `regex`; already pulled in by syntect); case-insensitive by default |
+| D6 | Line number soft-wrap display | First visual row of each logical line only — continuation rows are unnumbered |
+| D7 | Parent directory creation on save | Create missing parent dirs automatically on `Ctrl+S`; no prompt |
