@@ -1079,7 +1079,15 @@ where
 
         if event::poll(POLL_TIMEOUT)? {
             match event::read()? {
-                Event::Key(k) => match handle_key_event(app, k) {
+                // Only process key-press and key-repeat events.  When the Kitty
+                // keyboard protocol is active (e.g. leaked from a previous app
+                // such as neovim that did not restore terminal state on exit),
+                // the terminal also sends Release events.  Letting those through
+                // causes spurious characters — e.g. releasing Ctrl before Z after
+                // a Ctrl+Z produces a bare `(NONE, Char('z'), Release)` that
+                // bypasses the CONTROL match arm and inserts 'z'.
+                Event::Key(k) if k.kind != crossterm::event::KeyEventKind::Release
+                    => match handle_key_event(app, k) {
                     KeyOutcome::Continue => {}
                     KeyOutcome::Save => {
                         handle_save(app)?;

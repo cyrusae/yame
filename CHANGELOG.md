@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## Unreleased
+
+### Added
+
+### Changed
+
+- Integration test planning: catalogue scenarios from FEEDBACK-1 (#89)
+- triage v02-mutants-2: decoration/mod.rs + search surviving mutants (#180)
+- fix: 0611-mutants — End(List) test + search.rs rule pattern (#182)
+- docs: migrate ROADMAP decisions to DESIGN.md, delete ROADMAP.md (#183)
+
+### Fixed
+
 ## [0.2.0] — 2026-06-11
 
 ### Added

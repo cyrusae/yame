@@ -1025,6 +1025,33 @@ fn handle_key_event_cmd_shift_z_redoes_and_sets_force_redecorate() {
     assert!(app.force_redecorate, "Cmd+Shift+Z must set force_redecorate");
 }
 
+// When Kitty's keyboard protocol is active (leaked from a previous app that did
+// not restore terminal state), the terminal emits Release events in addition to
+// Press events.  A Release of 'z' after releasing Ctrl early — i.e. the key
+// arrives as (NONE, Char('z'), kind=Release) — must NOT insert a character.
+// The event_loop guards against this at dispatch time; this test confirms that
+// handle_key_event itself also does the right thing if it ever sees such an event
+// (it falls to the `_` arm → textarea.input → tui-textarea's own Release guard).
+#[test]
+fn release_event_for_bare_z_does_not_insert_character() {
+    use crossterm::event::KeyEventKind;
+    let mut app = make_app_with_lines(&["hello"]);
+    let content_before: Vec<String> = app.textarea.lines().to_vec();
+
+    let k = crossterm::event::KeyEvent::new_with_kind(
+        KeyCode::Char('z'),
+        KeyModifiers::NONE,
+        KeyEventKind::Release,
+    );
+    let outcome = handle_key_event(&mut app, k);
+    assert_eq!(outcome, KeyOutcome::Continue);
+    assert_eq!(
+        app.textarea.lines().to_vec(),
+        content_before,
+        "Release event for bare 'z' must not modify textarea content"
+    );
+}
+
 #[test]
 fn handle_key_event_ctrl_up_scrolls_up_and_sets_free_scroll() {
     let mut app = make_app_with_lines(&["a"; 10]);
