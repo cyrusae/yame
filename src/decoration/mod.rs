@@ -4329,25 +4329,41 @@ mod tests {
         );
     }
 
-    // ---- T-7: Two consecutive lists — in_ordered_list resets ----
+    // ---- T-7: Nested ordered-in-unordered — End(List) resets in_ordered_list ----
 
     #[test]
-    fn ordered_then_unordered_list_bullet_end_resets() {
-        // Kills: line 869:13 `delete match arm Event::End(TagEnd::List(_))`
-        // After End(List), in_ordered_list must be cleared.  Without the reset,
-        // the second unordered list's bullet span gets bullet_end = item_char + 2
-        // (ordered) instead of item_char + 1 (unordered).
-        let text = "1. first\n\n- second";
-        let map = build_map(text, &make_theme(), false);
-        let spans_2 = map.get(&2).expect("line 2 must have spans");
-        // Unordered bullet for "- second": the bullet span must end at char 1 (the `-`).
+    fn nested_ordered_in_unordered_outer_item_keeps_unordered_bullet() {
+        // Kills: `delete match arm Event::End(TagEnd::List(_))` at build_decoration_map.
+        //
+        // pulldown-cmark event sequence for "- outer1\n  1. inner\n- outer2":
+        //   Start(List(None))     → in_ordered_list = false
+        //   Start(Item)           — outer1
+        //   Start(List(Some(1))) → in_ordered_list = true
+        //   Start(Item)           — inner
+        //   End(Item)
+        //   End(List(_))          ← the arm under test; sets in_ordered_list = false
+        //   End(Item)
+        //   Start(Item)           — outer2: reads in_ordered_list here, NO fresh Start(List)
+        //
+        // Without the End(List) arm, in_ordered_list stays `true` from the inner list,
+        // so outer2's bullet_end falls through to `unwrap_or(item_char + 2)` = 2.
+        // With the arm present, in_ordered_list is reset to false → bullet_end = 1.
+        //
+        // The consecutive-list variant "1. first\n\n- second" does NOT kill this mutation
+        // because Start(List(None)) fires for the second list before any of its items,
+        // resetting in_ordered_list to false regardless of the End arm.
+        let text = "- outer1\n  1. inner\n- outer2";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let spans_2 = map.get(&2).expect("line 2 ('- outer2') must have spans");
         let bullet = spans_2
             .iter()
             .find(|s| s.char_start == 0 && s.continuation_indent > 0)
-            .expect("unordered bullet span must exist at char 0");
+            .expect("unordered bullet span must exist on line 2");
         assert_eq!(
             bullet.char_end, 1,
-            "unordered bullet must end at char 1 (not 2+ from ordered); got: {bullet:?}"
+            "outer unordered bullet must end at char 1 after nested ordered list ends; \
+             char_end 2 means in_ordered_list was not reset by End(List); got: {bullet:?}"
         );
     }
 

@@ -282,7 +282,9 @@ exclude_re = [
     # `apply_replace_all` per-match bounds check (search.rs:190, col 19).
     # `<→<=` admits ml == result.len() → OOB.  ml comes from find_all_matches which only
     # yields valid line indices; ml == len is unreachable for valid state.
-    "search\\.rs:190:19:.*replace < with <= in apply_replace_all",
+    # Note: cargo-mutants includes the qualified path `SearchState::apply_replace_all`
+    # in the description, so we need `.*` between `in ` and `apply_replace_all`.
+    "search\\.rs:190:19:.*replace < with <= in.*apply_replace_all",
 
     # ---------------------------------------------------------------------------
     # table_format.rs — infinite-loop and unreachable mutations
