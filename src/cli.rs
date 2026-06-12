@@ -106,8 +106,10 @@ pub(super) fn print_help() {
     println!("  yame -r <file>        Open <file> in read-only mode (no edits, no save)");
     println!("  yame init             Print shell integration function (eval in .bashrc/.zshrc)");
     println!("  yame write-config     Write default config to ~/.config/yame/config.toml");
-    println!("  yame --version        Print version
-  yame --help           Show this help");
+    println!(
+        "  yame --version        Print version
+  yame --help           Show this help"
+    );
     println!();
     println!("KEYBINDINGS");
     println!("  Ctrl+S  Save          Ctrl+Z  Undo        Ctrl+C  Copy selection");

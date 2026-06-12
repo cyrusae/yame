@@ -11,9 +11,11 @@ use crate::search::Match as SearchMatch;
 mod status;
 mod utils;
 
+pub use self::search_bar::{
+    render_search_bar, render_search_help_modal, render_shortcuts_modal, search_bar_height,
+};
 pub use status::{render_info_line, render_status_bar};
 pub use utils::{format_thousands, shorten_path, split_into_spans};
-pub use self::search_bar::{render_search_bar, render_search_help_modal, render_shortcuts_modal, search_bar_height};
 
 mod search_bar;
 
@@ -376,12 +378,7 @@ impl Widget for MarkdownView<'_> {
                 })
                 .unwrap_or(0) as usize;
             let line_ri = line_decs
-                .map(|decs| {
-                    decs.iter()
-                        .map(|s| s.row_indent)
-                        .max()
-                        .unwrap_or(0)
-                })
+                .map(|decs| decs.iter().map(|s| s.row_indent).max().unwrap_or(0))
                 .unwrap_or(0) as usize;
             let wrapped = wrap_line_indented(
                 line,
@@ -501,9 +498,7 @@ impl Widget for MarkdownView<'_> {
                     let num_width = (left_gutter as usize).saturating_sub(2);
                     let num_str = format!("{:>width$}", log_row + 1, width = num_width);
                     for (i, ch) in num_str.chars().enumerate() {
-                        buf[(area.x + i as u16, y)]
-                            .set_char(ch)
-                            .set_fg(num_color);
+                        buf[(area.x + i as u16, y)].set_char(ch).set_fg(num_color);
                     }
                 }
 
@@ -661,12 +656,7 @@ fn apply_selection_overlay(
         let line_ri = view
             .decoration_map
             .get(&log_row)
-            .map(|decs| {
-                decs.iter()
-                    .map(|s| s.row_indent)
-                    .max()
-                    .unwrap_or(0)
-            })
+            .map(|decs| decs.iter().map(|s| s.row_indent).max().unwrap_or(0))
             .unwrap_or(0) as usize;
         let wrapped = wrap_line_indented(
             line,
@@ -722,8 +712,7 @@ fn apply_selection_overlay(
                     let y = area.y + visual_row as u16;
                     let start_dcols = display_cols_for_chars(row_str, row_sel_start - char_start);
                     let end_dcols = display_cols_for_chars(row_str, row_sel_end - char_start);
-                    let x_start =
-                        area.x + left_gutter + continuation_indent + start_dcols as u16;
+                    let x_start = area.x + left_gutter + continuation_indent + start_dcols as u16;
                     let x_end = (area.x + left_gutter + continuation_indent + end_dcols as u16)
                         .min(area.x + left_gutter + content_width as u16);
                     for x in x_start..x_end {
@@ -775,7 +764,12 @@ fn apply_search_overlay(area: Rect, buf: &mut Buffer, view: &MarkdownView<'_>) {
             let line_ci = view
                 .decoration_map
                 .get(&log_row)
-                .map(|decs| decs.iter().map(|s| s.continuation_indent).max().unwrap_or(0))
+                .map(|decs| {
+                    decs.iter()
+                        .map(|s| s.continuation_indent)
+                        .max()
+                        .unwrap_or(0)
+                })
                 .unwrap_or(0) as usize;
             let wrapped = wrap_line_indented(
                 line,
@@ -794,7 +788,12 @@ fn apply_search_overlay(area: Rect, buf: &mut Buffer, view: &MarkdownView<'_>) {
                 let continuation_indent: u16 = if wrap_idx > 0 {
                     view.decoration_map
                         .get(&log_row)
-                        .map(|decs| decs.iter().map(|s| s.continuation_indent).max().unwrap_or(0))
+                        .map(|decs| {
+                            decs.iter()
+                                .map(|s| s.continuation_indent)
+                                .max()
+                                .unwrap_or(0)
+                        })
                         .unwrap_or(0) as u16
                 } else {
                     0
@@ -810,8 +809,7 @@ fn apply_search_overlay(area: Rect, buf: &mut Buffer, view: &MarkdownView<'_>) {
                     let y = area.y + visual_row as u16;
                     let start_dcols = display_cols_for_chars(row_str, row_ms - char_start);
                     let end_dcols = display_cols_for_chars(row_str, row_me - char_start);
-                    let x_start =
-                        area.x + left_gutter + continuation_indent + start_dcols as u16;
+                    let x_start = area.x + left_gutter + continuation_indent + start_dcols as u16;
                     let x_end = (area.x + left_gutter + continuation_indent + end_dcols as u16)
                         .min(area.x + left_gutter + content_width as u16);
                     let highlight_bg = if is_current { cur_bg } else { dim_bg };
@@ -828,7 +826,12 @@ fn apply_search_overlay(area: Rect, buf: &mut Buffer, view: &MarkdownView<'_>) {
             let line_ci = view
                 .decoration_map
                 .get(&log_row)
-                .map(|decs| decs.iter().map(|s| s.continuation_indent).max().unwrap_or(0))
+                .map(|decs| {
+                    decs.iter()
+                        .map(|s| s.continuation_indent)
+                        .max()
+                        .unwrap_or(0)
+                })
                 .unwrap_or(0) as usize;
             let wrapped = wrap_line_indented(
                 line,
@@ -920,7 +923,12 @@ fn apply_focus_overlay(
         let line_ci = view
             .decoration_map
             .get(&log_row)
-            .map(|decs| decs.iter().map(|s| s.continuation_indent).max().unwrap_or(0))
+            .map(|decs| {
+                decs.iter()
+                    .map(|s| s.continuation_indent)
+                    .max()
+                    .unwrap_or(0)
+            })
             .unwrap_or(0) as usize;
         let wrapped = wrap_line_indented(
             line,
@@ -2604,11 +2612,7 @@ mod tests {
     fn build_timed_message_bar_has_three_spans() {
         let app = make_app();
         let line = build_timed_message_bar(&app, "Saved.");
-        assert_eq!(
-            line.spans.len(),
-            3,
-            "timed bar: pill | sep | message"
-        );
+        assert_eq!(line.spans.len(), 3, "timed bar: pill | sep | message");
     }
 
     #[test]

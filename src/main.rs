@@ -80,9 +80,8 @@ fn run(file_path: PathBuf, read_only: bool) -> io::Result<()> {
     app.read_only = read_only;
 
     if read_only {
-        app.status.set_dismissible(
-            "Read-only mode — editing disabled  [any key to dismiss]",
-        );
+        app.status
+            .set_dismissible("Read-only mode — editing disabled  [any key to dismiss]");
     } else if !italic_support {
         app.status.set_dismissible(
             "⚠ Terminal does not support italics — using color fallback  [any key to dismiss]",

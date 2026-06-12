@@ -237,8 +237,7 @@ pub fn render_info_line(f: &mut Frame, area: Rect, app: &App) {
                 ..area
             };
             f.render_widget(
-                Paragraph::new(indicators)
-                    .style(Style::default().fg(theme.accent).bg(theme.bg)),
+                Paragraph::new(indicators).style(Style::default().fg(theme.accent).bg(theme.bg)),
                 indicator_area,
             );
         }

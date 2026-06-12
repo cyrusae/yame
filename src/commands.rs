@@ -58,11 +58,7 @@ pub(super) fn handle_exit(app: &mut App) -> bool {
 /// Uses `app.content_width` (set by the event loop pre-draw pass) so that the
 /// wrap width here exactly matches what the renderer sees — including any extra
 /// gutter width from enabled line numbers.
-pub(super) fn clamp_scroll(
-    app: &mut App,
-    editor_area: Rect,
-    bottom_padding: usize,
-) {
+pub(super) fn clamp_scroll(app: &mut App, editor_area: Rect, bottom_padding: usize) {
     let (cursor_row, cursor_col) = app.textarea.cursor();
     let visible_rows = editor_area.height as usize;
     let lines = app.textarea.lines();

@@ -13,7 +13,9 @@ pub enum StatusMode {
     ExitPrompt,
     /// Active go-to-line prompt.  `input` accumulates the digits the user types;
     /// the prompt is confirmed with Enter or cancelled with Esc.
-    GoToLine { input: String },
+    GoToLine {
+        input: String,
+    },
 }
 
 /// All mutable state for the status bar / hint line.

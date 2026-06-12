@@ -381,8 +381,11 @@ impl Theme {
         // Frontmatter background: code blended 15% toward bg, same recipe as
         // heading_bg but using the code hue so the block reads as a distinct
         // "data" surface rather than a heading.
-        let frontmatter_bg_rgb =
-            resolve(&overrides.frontmatter_bg, blend(code_rgb, bg, 0.15), warnings);
+        let frontmatter_bg_rgb = resolve(
+            &overrides.frontmatter_bg,
+            blend(code_rgb, bg, 0.15),
+            warnings,
+        );
 
         // Per-level heading colors
         let heading_default = |blend_t: f32| blend(accent, text, blend_t);

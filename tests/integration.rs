@@ -428,7 +428,9 @@ fn fixture_inline_code_has_code_color() {
         .get(&34)
         .expect("line 34 ('`inline code` at the start...') must have spans");
     assert!(
-        code_line.iter().any(|s| s.style.fg == Some(theme.code_color)),
+        code_line
+            .iter()
+            .any(|s| s.style.fg == Some(theme.code_color)),
         "line 34 must have a span with fg == theme.code_color for inline code"
     );
     // The inline-code content starts at char 1 (after the opening backtick).

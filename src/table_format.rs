@@ -257,8 +257,7 @@ pub fn handle_format_table(app: &mut App) {
     // because we never add or remove rows, only rewrite their content).
     for (i, new_line) in formatted.iter().enumerate() {
         let row = start + i;
-        app.textarea
-            .move_cursor(CursorMove::Jump(row as u16, 0));
+        app.textarea.move_cursor(CursorMove::Jump(row as u16, 0));
         app.textarea.delete_line_by_end();
         app.textarea.insert_str(new_line);
     }
@@ -329,13 +328,7 @@ mod tests {
 
     #[test]
     fn bounds_empty_line_between_tables_splits_them() {
-        let lines = s(&[
-            "| A |",
-            "| - |",
-            "",
-            "| B |",
-            "| - |",
-        ]);
+        let lines = s(&["| A |", "| - |", "", "| B |", "| - |"]);
         // Cursor on first table.
         assert_eq!(find_table_bounds(&lines, 0), Some((0, 1)));
         // Cursor on second table.
@@ -432,11 +425,7 @@ mod tests {
 
     #[test]
     fn format_table_pads_short_cells_to_max_width() {
-        let lines = s(&[
-            "| A | Longer header |",
-            "| - | ------------ |",
-            "| x | y |",
-        ]);
+        let lines = s(&["| A | Longer header |", "| - | ------------ |", "| x | y |"]);
         let result = format_table(&lines);
         // "A" / "x" are 1 char each but minimum column width is 3, so they
         // pad to 3.  "Longer header" / "y" → max 13 chars.
@@ -455,7 +444,10 @@ mod tests {
         // Separator row must use `:` correctly.
         let sep = &result[1];
         assert!(sep.contains(":---"), "left marker: {sep}");
-        assert!(sep.contains(":---:") || sep.contains("---:"), "other markers: {sep}");
+        assert!(
+            sep.contains(":---:") || sep.contains("---:"),
+            "other markers: {sep}"
+        );
     }
 
     #[test]
@@ -468,8 +460,16 @@ mod tests {
         let result = format_table(&lines);
         let sep = &result[1];
         // Separator columns should be exactly as wide as header columns + surrounding spaces.
-        assert_eq!(result[0].len(), result[1].len(), "all rows same total width");
-        assert_eq!(result[0].len(), result[2].len(), "all rows same total width");
+        assert_eq!(
+            result[0].len(),
+            result[1].len(),
+            "all rows same total width"
+        );
+        assert_eq!(
+            result[0].len(),
+            result[2].len(),
+            "all rows same total width"
+        );
         // No width regression: separator must not be shorter than its column header.
         let sep_cells = parse_row(sep);
         assert!(
@@ -546,12 +546,24 @@ mod tests {
         // Kills: line 103:46 `replace && with || in is_separator_row`
         // With `||`, any non-empty cell is a separator because `contains('-')` or
         // `contains(':')` is often true.  "a-b" contains '-' but is not a separator.
-        assert!(!is_separator_row(&s(&["a-b"])), "cell 'a-b' must not be a separator");
-        assert!(!is_separator_row(&s(&["a:b"])), "cell 'a:b' must not be a separator");
-        assert!(!is_separator_row(&s(&["hello"])), "cell 'hello' must not be a separator");
+        assert!(
+            !is_separator_row(&s(&["a-b"])),
+            "cell 'a-b' must not be a separator"
+        );
+        assert!(
+            !is_separator_row(&s(&["a:b"])),
+            "cell 'a:b' must not be a separator"
+        );
+        assert!(
+            !is_separator_row(&s(&["hello"])),
+            "cell 'hello' must not be a separator"
+        );
         // True separators still work.
         assert!(is_separator_row(&s(&["---"])), "'---' must be a separator");
-        assert!(is_separator_row(&s(&[":--:"])), "':--:' must be a separator");
+        assert!(
+            is_separator_row(&s(&[":--:"])),
+            "':--:' must be a separator"
+        );
     }
 
     // ---- T-22: format_table with single-row input (no separator row) ----
@@ -563,7 +575,11 @@ mod tests {
         // With `&&→||`: same OOB path triggered when len==1.
         let lines = s(&["| A | B |"]);
         let result = format_table(&lines);
-        assert_eq!(result.len(), 1, "single-row input must produce single-row output");
+        assert_eq!(
+            result.len(),
+            1,
+            "single-row input must produce single-row output"
+        );
         assert!(
             result[0].contains('|'),
             "output must still be a pipe-table row: {:?}",

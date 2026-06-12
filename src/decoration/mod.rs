@@ -579,10 +579,10 @@ fn apply_highlight_spans(
             let chars_before = line_str[..byte_start].chars().count();
             let match_chars = line_str[byte_start..byte_end].chars().count();
 
-            let open_start = chars_before;            // position of first '='
-            let open_end = open_start + 2;            // after opening `==`
+            let open_start = chars_before; // position of first '='
+            let open_end = open_start + 2; // after opening `==`
             let close_end = open_start + match_chars; // after closing `==`
-            let close_start = close_end - 2;          // position of closing `==`
+            let close_start = close_end - 2; // position of closing `==`
 
             // Guard: require at least one character of content.
             if open_end >= close_start {
@@ -595,7 +595,11 @@ fn apply_highlight_spans(
             // the filter excludes them safely because they are outside
             // [open_end, close_start)).
             push_span(map, line_idx, make_span(open_start, open_end, delim_style));
-            push_span(map, line_idx, make_span(close_start, close_end, delim_style));
+            push_span(
+                map,
+                line_idx,
+                make_span(close_start, close_end, delim_style),
+            );
 
             // Collect char-ranges of spans that already exist in the content zone
             // [open_end, close_start).  We clone them out to release the immutable
@@ -919,9 +923,9 @@ pub fn build_decoration_map(
             Event::End(TagEnd::Emphasis) => {
                 if let Some(emph_range) = in_emphasis.take() {
                     // Peek at in_strong to check adjacency without consuming it.
-                    let adjacent = in_strong
-                        .as_ref()
-                        .is_some_and(|strong| is_strong_outer_adjacent_to_emphasis(strong, &emph_range));
+                    let adjacent = in_strong.as_ref().is_some_and(|strong| {
+                        is_strong_outer_adjacent_to_emphasis(strong, &emph_range)
+                    });
                     if adjacent {
                         // Strong(outer) wraps Emphasis(inner) with touching delimiters.
                         let outer = in_strong.take().unwrap();
@@ -2364,8 +2368,7 @@ mod tests {
         let sep_text_line1 = "| --- | --- |";
         let has_dash_span = sep_line.iter().any(|s| {
             s.style.fg == Some(theme.muted)
-                && (s.char_start..s.char_end)
-                    .any(|i| sep_text_line1.chars().nth(i) == Some('-'))
+                && (s.char_start..s.char_end).any(|i| sep_text_line1.chars().nth(i) == Some('-'))
         });
         assert!(has_dash_span, "separator row dashes must have muted color");
     }
@@ -3582,7 +3585,9 @@ mod tests {
         let map = build_map(text, &make_theme(), false);
         let spans = map.get(&0).expect("line 0 must have spans");
         assert!(
-            spans.iter().any(|s| s.style.add_modifier.contains(Modifier::BOLD)),
+            spans
+                .iter()
+                .any(|s| s.style.add_modifier.contains(Modifier::BOLD)),
             "minimal 1-char bold **x** must still produce BOLD span (span_len=5 >= 4)"
         );
     }
@@ -3653,9 +3658,7 @@ mod tests {
         for &pos in &[0usize, 4, 8] {
             assert!(
                 spans.iter().any(|s| {
-                    s.char_start == pos
-                        && s.char_end == pos + 1
-                        && s.style.fg == Some(theme.muted)
+                    s.char_start == pos && s.char_end == pos + 1 && s.style.fg == Some(theme.muted)
                 }),
                 "pipe at char {pos} must produce a muted span at {pos}..{}; got: {spans:?}",
                 pos + 1
@@ -3673,9 +3676,7 @@ mod tests {
         for &pos in &[0usize, 4, 8] {
             assert!(
                 spans.iter().any(|s| {
-                    s.char_start == pos
-                        && s.char_end == pos + 1
-                        && s.style.fg == Some(theme.muted)
+                    s.char_start == pos && s.char_end == pos + 1 && s.style.fg == Some(theme.muted)
                 }),
                 "separator pipe at char {pos} must produce a muted span at {pos}..{}; got: {spans:?}",
                 pos + 1
@@ -3693,9 +3694,7 @@ mod tests {
         for &pos in &[0usize, 4, 8] {
             assert!(
                 spans.iter().any(|s| {
-                    s.char_start == pos
-                        && s.char_end == pos + 1
-                        && s.style.fg == Some(theme.muted)
+                    s.char_start == pos && s.char_end == pos + 1 && s.style.fg == Some(theme.muted)
                 }),
                 "body row pipe at char {pos} must produce a muted span at {pos}..{}; got: {spans:?}",
                 pos + 1
@@ -4262,7 +4261,9 @@ mod tests {
         let theme = make_theme();
         let map = build_map(text, &theme, false);
 
-        let closing = map.get(&2).expect("closing tilde fence line must have spans");
+        let closing = map
+            .get(&2)
+            .expect("closing tilde fence line must have spans");
         assert!(
             closing.iter().any(|s| s.char_start == 0 && s.char_end == 3),
             "closing ~~~ fence must span chars 0..3; got: {closing:?}"
@@ -4607,11 +4608,17 @@ mod tests {
             .find(|s| s.char_start == 3 && s.char_end == 4)
             .expect("content char 'x' at (3,4) must have a span");
         assert!(
-            content.style.add_modifier.contains(ratatui::style::Modifier::BOLD),
+            content
+                .style
+                .add_modifier
+                .contains(ratatui::style::Modifier::BOLD),
             "content of ***x*** must be BOLD; got: {content:?}"
         );
         assert!(
-            content.style.add_modifier.contains(ratatui::style::Modifier::ITALIC),
+            content
+                .style
+                .add_modifier
+                .contains(ratatui::style::Modifier::ITALIC),
             "content of ***x*** must be ITALIC; got: {content:?}"
         );
     }
@@ -4632,7 +4639,10 @@ mod tests {
             .find(|s| s.char_start == 3 && s.char_end == 4)
             .expect("italic content 'b' must be at chars (3,4); got no such span");
         assert!(
-            content.style.add_modifier.contains(ratatui::style::Modifier::ITALIC),
+            content
+                .style
+                .add_modifier
+                .contains(ratatui::style::Modifier::ITALIC),
             "italic content must have ITALIC modifier; got: {content:?}"
         );
     }
@@ -4720,13 +4730,16 @@ mod tests {
         // Line 0 (opening `---`) must have full_line_bg = frontmatter_bg.
         let open = map.get(&0).expect("opening delimiter must have spans");
         assert!(
-            open.iter().any(|s| s.full_line_bg == Some(theme.frontmatter_bg)),
+            open.iter()
+                .any(|s| s.full_line_bg == Some(theme.frontmatter_bg)),
             "opening `---` must have full_line_bg = frontmatter_bg; got: {open:?}"
         );
         // Line 2 (closing `---`) must also have full_line_bg = frontmatter_bg.
         let close = map.get(&2).expect("closing delimiter must have spans");
         assert!(
-            close.iter().any(|s| s.full_line_bg == Some(theme.frontmatter_bg)),
+            close
+                .iter()
+                .any(|s| s.full_line_bg == Some(theme.frontmatter_bg)),
             "closing `---` must have full_line_bg = frontmatter_bg; got: {close:?}"
         );
     }
@@ -4757,9 +4770,7 @@ mod tests {
         let content = map.get(&1).expect("content line must have spans");
         assert!(
             content.iter().any(|s| {
-                s.char_start == 0
-                    && s.char_end == 5
-                    && s.style.fg == Some(theme.frontmatter_key)
+                s.char_start == 0 && s.char_end == 5 && s.style.fg == Some(theme.frontmatter_key)
             }),
             "key 'title' (chars 0..5) must have frontmatter_key fg; got: {content:?}"
         );
@@ -4817,7 +4828,9 @@ mod tests {
         let map = build_map(text, &theme, false);
         let content = map.get(&1).expect("content line must have spans");
         assert!(
-            content.iter().any(|s| s.full_line_bg == Some(theme.frontmatter_bg)),
+            content
+                .iter()
+                .any(|s| s.full_line_bg == Some(theme.frontmatter_bg)),
             "content line must have full_line_bg = frontmatter_bg; got: {content:?}"
         );
     }
@@ -4830,7 +4843,9 @@ mod tests {
         let map = build_map(text, &theme, false);
         if let Some(rest) = map.get(&3) {
             assert!(
-                !rest.iter().any(|s| s.full_line_bg == Some(theme.frontmatter_bg)),
+                !rest
+                    .iter()
+                    .any(|s| s.full_line_bg == Some(theme.frontmatter_bg)),
                 "lines after frontmatter block must not carry frontmatter_bg; got: {rest:?}"
             );
         }
@@ -4876,7 +4891,9 @@ mod tests {
         let map = build_map(text, &theme, false);
         let delim = map.get(&0).expect("opening delimiter must have spans");
         assert!(
-            delim.iter().any(|s| s.char_end == 3 && s.full_line_bg.is_some()),
+            delim
+                .iter()
+                .any(|s| s.char_end == 3 && s.full_line_bg.is_some()),
             "delimiter '---' span must have char_end=3; got: {delim:?}"
         );
     }
@@ -4907,7 +4924,9 @@ mod tests {
         let map = build_map(text, &theme, false);
         let content = map.get(&1).expect("content line must have spans");
         assert!(
-            content.iter().any(|s| s.char_start == 6 && s.char_end == 12),
+            content
+                .iter()
+                .any(|s| s.char_start == 6 && s.char_end == 12),
             "value ' Hello' must span chars 6..12; got: {content:?}"
         );
     }
@@ -4960,9 +4979,7 @@ mod tests {
         let content = map.get(&1).expect("content line must have spans");
         assert!(
             !content.iter().any(|s| {
-                s.char_start == 0
-                    && s.char_end == 0
-                    && s.style.fg == Some(theme.frontmatter_key)
+                s.char_start == 0 && s.char_end == 0 && s.style.fg == Some(theme.frontmatter_key)
             }),
             "no zero-length key span when ':' is first char; got: {content:?}"
         );
@@ -4997,9 +5014,9 @@ mod tests {
         let spans = map.get(&0).expect("line 0 must have spans");
         // Content is chars 2..7 ("hello").
         assert!(
-            spans
-                .iter()
-                .any(|s| s.char_start == 2 && s.char_end == 7 && s.style.bg == Some(theme.highlight_bg)),
+            spans.iter().any(|s| s.char_start == 2
+                && s.char_end == 7
+                && s.style.bg == Some(theme.highlight_bg)),
             "highlight content must carry highlight_bg; got: {spans:?}"
         );
     }
@@ -5106,7 +5123,9 @@ mod tests {
         // At least one span in the content zone [2..10) must carry highlight_bg.
         let covered = spans
             .iter()
-            .filter(|s| s.char_start >= 2 && s.char_end <= 10 && s.style.bg == Some(theme.highlight_bg))
+            .filter(|s| {
+                s.char_start >= 2 && s.char_end <= 10 && s.style.bg == Some(theme.highlight_bg)
+            })
             .count();
         assert!(
             covered > 0,
@@ -5150,9 +5169,9 @@ mod tests {
         // Line 1 must carry highlight_bg on the content chars 2..7 ("hello").
         let line1 = map.get(&1).expect("line 1 must have spans");
         assert!(
-            line1
-                .iter()
-                .any(|s| s.char_start == 2 && s.char_end == 7 && s.style.bg == Some(theme.highlight_bg)),
+            line1.iter().any(|s| s.char_start == 2
+                && s.char_end == 7
+                && s.style.bg == Some(theme.highlight_bg)),
             "==hello== on line 1 must produce a highlight_bg span at chars 2..7; got: {line1:?}"
         );
 
@@ -5179,7 +5198,9 @@ mod tests {
         let empty = vec![];
         let fm_line = map.get(&1).unwrap_or(&empty);
         assert!(
-            !fm_line.iter().any(|s| s.style.bg == Some(theme.highlight_bg)),
+            !fm_line
+                .iter()
+                .any(|s| s.style.bg == Some(theme.highlight_bg)),
             "==value== inside frontmatter must not receive highlight_bg; got: {fm_line:?}"
         );
 
@@ -5208,18 +5229,18 @@ mod tests {
 
         // "pre " is at chars 2..6 (after opening ==).
         assert!(
-            spans
-                .iter()
-                .any(|s| s.char_start == 2 && s.char_end == 6 && s.style.bg == Some(theme.highlight_bg)),
+            spans.iter().any(|s| s.char_start == 2
+                && s.char_end == 6
+                && s.style.bg == Some(theme.highlight_bg)),
             "plain 'pre ' (chars 2..6) before bold must have highlight_bg; got: {spans:?}"
         );
 
         // " post" ends just before the closing ==.  Count: "==pre **bold** post=="
         // is 21 chars; close_start = 19 (chars 19-20 are "=="), so " post" is 14..19.
         assert!(
-            spans
-                .iter()
-                .any(|s| s.char_start == 14 && s.char_end == 19 && s.style.bg == Some(theme.highlight_bg)),
+            spans.iter().any(|s| s.char_start == 14
+                && s.char_end == 19
+                && s.style.bg == Some(theme.highlight_bg)),
             "plain ' post' (chars 14..19) after bold must have highlight_bg; got: {spans:?}"
         );
     }
@@ -5259,7 +5280,9 @@ mod tests {
         let text = "---\ntitle\nkey: v\n---\n";
         let theme = make_theme();
         let map = build_map(text, &theme, false);
-        let spans = map.get(&1).expect("no-separator content line must have spans");
+        let spans = map
+            .get(&1)
+            .expect("no-separator content line must have spans");
         let span = spans
             .iter()
             .find(|s| s.char_start == 0 && s.char_end == 5)

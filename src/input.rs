@@ -322,10 +322,7 @@ fn do_replace_all(app: &mut App) {
 ///
 /// Printable characters feed the active field. Action keys navigate matches
 /// or perform replacements. Ctrl+S still saves; Escape closes the bar.
-pub(super) fn handle_search_key(
-    app: &mut App,
-    k: crossterm::event::KeyEvent,
-) -> KeyOutcome {
+pub(super) fn handle_search_key(app: &mut App, k: crossterm::event::KeyEvent) -> KeyOutcome {
     // Dismiss the shortcut cheatsheet on the first keypress inside search mode.
     if let Some(s) = &mut app.search {
         s.show_help = false;
@@ -338,15 +335,13 @@ pub(super) fn handle_search_key(
         }
 
         // Save still works inside search mode.
-        (KeyModifiers::CONTROL, KeyCode::Char('s'))
-        | (KeyModifiers::SUPER, KeyCode::Char('s')) => {
+        (KeyModifiers::CONTROL, KeyCode::Char('s')) | (KeyModifiers::SUPER, KeyCode::Char('s')) => {
             return KeyOutcome::Save;
         }
 
         // Next match: Ctrl+F or Enter while search field is focused.
         // Enter while replace field is focused: replace current then advance.
-        (KeyModifiers::CONTROL, KeyCode::Char('f'))
-        | (KeyModifiers::NONE, KeyCode::Enter) => {
+        (KeyModifiers::CONTROL, KeyCode::Char('f')) | (KeyModifiers::NONE, KeyCode::Enter) => {
             let replace_enter = k.code == KeyCode::Enter
                 && app
                     .search
@@ -380,8 +375,7 @@ pub(super) fn handle_search_key(
 
         // Delete last char of the active field.
         (KeyModifiers::NONE, KeyCode::Backspace) => {
-            let lines: Vec<String> =
-                app.textarea.lines().iter().map(|s| s.to_string()).collect();
+            let lines: Vec<String> = app.textarea.lines().iter().map(|s| s.to_string()).collect();
             if let Some(s) = &mut app.search {
                 s.pop_char(&lines);
             }
@@ -389,8 +383,7 @@ pub(super) fn handle_search_key(
 
         // Toggle regex mode.
         (KeyModifiers::ALT, KeyCode::Char('r')) => {
-            let lines: Vec<String> =
-                app.textarea.lines().iter().map(|s| s.to_string()).collect();
+            let lines: Vec<String> = app.textarea.lines().iter().map(|s| s.to_string()).collect();
             if let Some(s) = &mut app.search {
                 s.regex_mode = !s.regex_mode;
                 s.update_matches(&lines);
@@ -422,8 +415,7 @@ pub(super) fn handle_search_key(
         }
 
         // Printable character with no control modifier → feed active field.
-        _ if !has_ctrl_alt_super(k.modifiers) && matches!(k.code, KeyCode::Char(_)) =>
-        {
+        _ if !has_ctrl_alt_super(k.modifiers) && matches!(k.code, KeyCode::Char(_)) => {
             if let KeyCode::Char(c) = k.code {
                 let lines: Vec<String> =
                     app.textarea.lines().iter().map(|s| s.to_string()).collect();
@@ -448,10 +440,7 @@ pub(super) fn handle_search_key(
 ///
 /// Only digit characters are accepted into the input buffer; Backspace edits it;
 /// Enter commits the jump; Esc cancels without moving the cursor.
-pub(super) fn handle_goto_line_key(
-    app: &mut App,
-    k: crossterm::event::KeyEvent,
-) -> KeyOutcome {
+pub(super) fn handle_goto_line_key(app: &mut App, k: crossterm::event::KeyEvent) -> KeyOutcome {
     match (k.modifiers, k.code) {
         (KeyModifiers::NONE, KeyCode::Esc) => {
             app.status.mode = StatusMode::Normal;
@@ -467,8 +456,7 @@ pub(super) fn handle_goto_line_key(
             {
                 let max_line = app.textarea.lines().len().saturating_sub(1);
                 let target = (n - 1).min(max_line);
-                app.textarea
-                    .move_cursor(CursorMove::Jump(target as u16, 0));
+                app.textarea.move_cursor(CursorMove::Jump(target as u16, 0));
             }
             app.status.mode = StatusMode::Normal;
         }
@@ -574,8 +562,7 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
         // Open search bar.
         (KeyModifiers::CONTROL, KeyCode::Char('f')) => {
             let (cur_line, cur_col) = app.textarea.cursor();
-            let lines: Vec<String> =
-                app.textarea.lines().iter().map(|s| s.to_string()).collect();
+            let lines: Vec<String> = app.textarea.lines().iter().map(|s| s.to_string()).collect();
             let mut s = SearchState::new(false);
             s.update_matches(&lines);
             s.snap_to_cursor(cur_line, cur_col);
@@ -586,8 +573,7 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
         // Open search-and-replace bar.
         (KeyModifiers::CONTROL, KeyCode::Char('h')) => {
             let (cur_line, cur_col) = app.textarea.cursor();
-            let lines: Vec<String> =
-                app.textarea.lines().iter().map(|s| s.to_string()).collect();
+            let lines: Vec<String> = app.textarea.lines().iter().map(|s| s.to_string()).collect();
             let mut s = SearchState::new(true);
             s.update_matches(&lines);
             s.snap_to_cursor(cur_line, cur_col);
@@ -949,9 +935,8 @@ where
             let pre_layout = compute_layout(term_area, min_cols, max_cols);
             // Account for warning banner and search bar when computing the
             // editor area so scroll clamping uses the same geometry as the draw.
-            let warn_rows = u16::from(
-                !app.config_warnings.is_empty() && pre_layout.column.height > 0,
-            );
+            let warn_rows =
+                u16::from(!app.config_warnings.is_empty() && pre_layout.column.height > 0);
             let sb_rows = renderer::search_bar_height(app);
             let top_rows = warn_rows + sb_rows;
             let pre_editor_area = Rect {
@@ -962,10 +947,8 @@ where
             // Keep content_width current so handle_visual_move wraps identically
             // to the renderer.  Computed here (pre-draw) so it is valid before
             // the first key event arrives.
-            let left_gutter = renderer::left_gutter_width(
-                app.textarea.lines().len(),
-                app.show_line_numbers,
-            );
+            let left_gutter =
+                renderer::left_gutter_width(app.textarea.lines().len(), app.show_line_numbers);
             app.content_width = (pre_editor_area.width as usize)
                 .saturating_sub(left_gutter as usize + renderer::GUTTER as usize)
                 .max(1);
@@ -1002,7 +985,10 @@ where
 
             // Warning banner (if any) — always the topmost row of the column.
             let after_warn = if !app.config_warnings.is_empty() && layout.column.height > 0 {
-                let warn_area = Rect { height: 1, ..layout.column };
+                let warn_area = Rect {
+                    height: 1,
+                    ..layout.column
+                };
                 let msg = format!(" ⚠  {}  [any key to dismiss]", app.config_warnings[0]);
                 f.render_widget(
                     Paragraph::new(msg)
@@ -1113,8 +1099,7 @@ where
                         });
                         // Re-resolve file mode in case [filetype] config changed.
                         app.file_mode = resolve_file_mode(&app.file_path, &new_config.filetype);
-                        app.show_line_numbers =
-                            new_config.layout.line_numbers.unwrap_or(false);
+                        app.show_line_numbers = new_config.layout.line_numbers.unwrap_or(false);
                         app.config_warnings = warnings;
                         app.status
                             .set_timed("Config reloaded.", Duration::from_millis(1500));
@@ -2160,7 +2145,10 @@ mod tests {
         let mut app = make_search_app("foo foo foo", "foo", "bar");
         // make_search_app sets show_replace=true; confirm it.
         assert!(app.search.as_ref().unwrap().show_replace);
-        handle_search_key(&mut app, KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL));
+        handle_search_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL),
+        );
         assert_eq!(
             app.textarea.lines()[0],
             "bar bar bar",
@@ -2175,7 +2163,10 @@ mod tests {
         // Kills: line 296:9 `delete match arm (KeyModifiers::NONE, KeyCode::Esc)`
         let mut app = make_search_app("hello", "hello", "");
         handle_search_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-        assert!(app.search.is_none(), "Esc must close search (search = None)");
+        assert!(
+            app.search.is_none(),
+            "Esc must close search (search = None)"
+        );
     }
 
     #[test]
@@ -2189,7 +2180,10 @@ mod tests {
         s.query = "a".to_string();
         s.update_matches(&lines); // 3 matches, current=0
         app.search = Some(s);
-        handle_search_key(&mut app, KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL));
+        handle_search_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL),
+        );
         let current = app.search.as_ref().unwrap().current;
         assert_eq!(current, 1, "Ctrl+F must advance current from 0 to 1");
     }
@@ -2214,7 +2208,10 @@ mod tests {
     fn search_key_backspace_pops_last_char_of_query() {
         // Kills: line 342:9 `delete match arm Backspace`
         let mut app = make_search_app("hello", "hell", "");
-        handle_search_key(&mut app, KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        handle_search_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
+        );
         let query = &app.search.as_ref().unwrap().query;
         assert_eq!(query, "hel", "Backspace must remove last char of query");
     }
@@ -2224,7 +2221,10 @@ mod tests {
         // Kills: line 351:9 `delete match arm Alt+R` and line 355:32 `delete !`
         let mut app = make_search_app("hello", "hello", "");
         let before = app.search.as_ref().unwrap().regex_mode;
-        handle_search_key(&mut app, KeyEvent::new(KeyCode::Char('r'), KeyModifiers::ALT));
+        handle_search_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::ALT),
+        );
         let after = app.search.as_ref().unwrap().regex_mode;
         assert_ne!(before, after, "Alt+R must toggle regex_mode");
     }
@@ -2234,11 +2234,17 @@ mod tests {
         // Kills: line 361:9 `delete match arm Ctrl+H` and line 363:34 `delete !`
         let mut app = make_search_app("hello", "hello", "");
         app.search.as_mut().unwrap().show_replace = false;
-        handle_search_key(&mut app, KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL));
+        handle_search_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL),
+        );
         let show = app.search.as_ref().unwrap().show_replace;
         assert!(show, "Ctrl+H must enable show_replace");
         // Toggle again: from true → false.
-        handle_search_key(&mut app, KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL));
+        handle_search_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL),
+        );
         let show2 = app.search.as_ref().unwrap().show_replace;
         assert!(!show2, "second Ctrl+H must disable show_replace");
     }
@@ -2261,7 +2267,10 @@ mod tests {
     fn search_key_char_appends_to_active_field() {
         // Kills: lines 385:14 `delete !`, 388:13 `&&→||`, and 385:14 match guard mutations.
         let mut app = make_search_app("hello", "he", "");
-        handle_search_key(&mut app, KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
+        handle_search_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE),
+        );
         let query = &app.search.as_ref().unwrap().query;
         assert_eq!(query, "hel", "printable char must append to query field");
     }
@@ -2271,7 +2280,10 @@ mod tests {
         // Kills: line 379:16 match guard mutations (`with true` / `with false`)
         let mut app = make_search_app("aa aa", "aa", "b");
         app.search.as_mut().unwrap().show_replace = true;
-        handle_search_key(&mut app, KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL));
+        handle_search_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL),
+        );
         assert_eq!(
             app.textarea.lines()[0],
             "b b",
@@ -2284,7 +2296,10 @@ mod tests {
         // Kills: line 379:16 `replace match guard with true` — guard must be false here.
         let mut app = make_search_app("aa aa", "aa", "b");
         app.search.as_mut().unwrap().show_replace = false;
-        handle_search_key(&mut app, KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL));
+        handle_search_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL),
+        );
         assert_eq!(
             app.textarea.lines()[0],
             "aa aa",
@@ -2298,8 +2313,14 @@ mod tests {
     fn ctrl_f_opens_search_mode() {
         // Kills: line 511:9 `delete match arm (CONTROL, Char('f'))`
         let mut app = make_app();
-        handle_key_event(&mut app, KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL));
-        assert!(app.search.is_some(), "Ctrl+F must open search (search = Some)");
+        handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL),
+        );
+        assert!(
+            app.search.is_some(),
+            "Ctrl+F must open search (search = Some)"
+        );
         assert!(
             !app.search.as_ref().unwrap().show_replace,
             "Ctrl+F must not open replace row"
@@ -2310,8 +2331,14 @@ mod tests {
     fn ctrl_h_opens_search_and_replace_mode() {
         // Kills: line 523:9 `delete match arm (CONTROL, Char('h'))`
         let mut app = make_app();
-        handle_key_event(&mut app, KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL));
-        assert!(app.search.is_some(), "Ctrl+H must open search (search = Some)");
+        handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL),
+        );
+        assert!(
+            app.search.is_some(),
+            "Ctrl+H must open search (search = Some)"
+        );
         assert!(
             app.search.as_ref().unwrap().show_replace,
             "Ctrl+H must open replace row (show_replace = true)"
@@ -2377,7 +2404,10 @@ mod tests {
         let mut app = make_app();
         app.show_shortcuts = true;
         handle_key_event(&mut app, key(KeyCode::F(1)));
-        assert!(!app.show_shortcuts, "F1 while open must close the shortcuts modal");
+        assert!(
+            !app.show_shortcuts,
+            "F1 while open must close the shortcuts modal"
+        );
     }
 
     // Kills: removing the early-return in the modal-swallow intercept — a
@@ -2388,8 +2418,15 @@ mod tests {
         app.show_shortcuts = true;
         handle_key_event(&mut app, key(KeyCode::Char('x')));
         // Modal swallows the key — textarea stays empty AND modal stays open.
-        assert_eq!(app.textarea.lines()[0], "", "char must be swallowed by modal");
-        assert!(app.show_shortcuts, "modal must remain open on non-dismiss key");
+        assert_eq!(
+            app.textarea.lines()[0],
+            "",
+            "char must be swallowed by modal"
+        );
+        assert!(
+            app.show_shortcuts,
+            "modal must remain open on non-dismiss key"
+        );
     }
 
     // ── Read-only mode ───────────────────────────────────────────────────────
@@ -2597,8 +2634,10 @@ mod tests {
         // Kills line 341:9 `delete match arm Ctrl+S in handle_search_key`.
         // Without the arm, Ctrl+S falls to the swallow arm and returns Continue.
         let mut app = make_search_app("hello", "hello", "");
-        let outcome =
-            handle_search_key(&mut app, KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+        let outcome = handle_search_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
+        );
         assert_eq!(
             outcome,
             KeyOutcome::Save,
@@ -2613,7 +2652,10 @@ mod tests {
         let mut app = make_search_app("hello", "hello", "");
         app.read_only = true;
         app.search.as_mut().unwrap().show_replace = false;
-        handle_search_key(&mut app, KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL));
+        handle_search_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL),
+        );
         assert!(
             !app.search.as_ref().unwrap().show_replace,
             "Ctrl+H must not open replace row when read_only is true"
@@ -2666,7 +2708,10 @@ mod tests {
         app.search.as_mut().unwrap().focus_search = false;
         app.search.as_mut().unwrap().show_replace = true;
         app.search.as_mut().unwrap().current = 0;
-        handle_search_key(&mut app, KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL));
+        handle_search_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL),
+        );
         assert_eq!(
             app.textarea.lines()[0],
             "hello hello",
@@ -2682,7 +2727,10 @@ mod tests {
         // Ctrl+Z is not handled by any named arm; it must be swallowed, not appended.
         let mut app = make_search_app("hello", "he", "");
         let before = app.search.as_ref().unwrap().query.clone();
-        handle_search_key(&mut app, KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL));
+        handle_search_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL),
+        );
         assert_eq!(
             app.search.as_ref().unwrap().query,
             before,
@@ -2717,7 +2765,10 @@ mod tests {
             "| c | d |".to_string(),
         ]);
         app.textarea.move_cursor(CursorMove::Jump(0, 0));
-        handle_key_event(&mut app, KeyEvent::new(KeyCode::Char('t'), KeyModifiers::ALT));
+        handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('t'), KeyModifiers::ALT),
+        );
         // After reformat all rows must have the same length.
         let l0 = app.textarea.lines()[0].len();
         let l2 = app.textarea.lines()[2].len();

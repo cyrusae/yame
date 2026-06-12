@@ -511,7 +511,10 @@ fn shell_init_str_bash_and_zsh_produce_same_output() {
 #[test]
 fn version_string_starts_with_yame() {
     let v = super::cli::version_string();
-    assert!(v.starts_with("yame "), "version string must start with 'yame '");
+    assert!(
+        v.starts_with("yame "),
+        "version string must start with 'yame '"
+    );
 }
 
 #[test]
@@ -529,7 +532,10 @@ fn version_string_contains_semver() {
 fn version_string_matches_cargo_pkg_version() {
     let v = super::cli::version_string();
     let expected = format!("yame {}", env!("CARGO_PKG_VERSION"));
-    assert_eq!(v, expected, "version_string() must equal 'yame {{CARGO_PKG_VERSION}}'");
+    assert_eq!(
+        v, expected,
+        "version_string() must equal 'yame {{CARGO_PKG_VERSION}}'"
+    );
 }
 
 // ── typewriter mode tests ─────────────────────────────────────────────────
@@ -537,7 +543,10 @@ fn version_string_matches_cargo_pkg_version() {
 #[test]
 fn typewriter_mode_off_by_default() {
     let app = make_app();
-    assert!(!app.typewriter_mode, "typewriter_mode must default to false");
+    assert!(
+        !app.typewriter_mode,
+        "typewriter_mode must default to false"
+    );
 }
 
 #[test]
@@ -555,7 +564,10 @@ fn ctrl_t_toggles_typewriter_mode_off() {
     let mut app = make_app();
     app.typewriter_mode = true;
     handle_key_event(&mut app, ctrl(KeyCode::Char('t')));
-    assert!(!app.typewriter_mode, "second Ctrl+T must disable typewriter mode");
+    assert!(
+        !app.typewriter_mode,
+        "second Ctrl+T must disable typewriter mode"
+    );
 }
 
 #[test]
@@ -566,7 +578,10 @@ fn center_scroll_places_cursor_at_midpoint() {
         .move_cursor(tui_textarea::CursorMove::Jump(20, 0));
     center_scroll(&mut app, make_editor_area(10));
     // cursor_row=20, half=5 → scroll_top should be 15
-    assert_eq!(app.scroll_top, 15, "scroll_top must be cursor_row - viewport_height/2");
+    assert_eq!(
+        app.scroll_top, 15,
+        "scroll_top must be cursor_row - viewport_height/2"
+    );
 }
 
 #[test]
@@ -628,7 +643,11 @@ fn goto_line_non_digits_ignored() {
     app.status.start_goto_line();
     handle_goto_line_key(&mut app, key(KeyCode::Char('a')));
     handle_goto_line_key(&mut app, key(KeyCode::Char('!')));
-    assert_eq!(app.status.goto_input(), Some(""), "letters and symbols must be ignored");
+    assert_eq!(
+        app.status.goto_input(),
+        Some(""),
+        "letters and symbols must be ignored"
+    );
 }
 
 #[test]
@@ -664,7 +683,10 @@ fn goto_line_enter_with_empty_input_is_noop() {
     handle_goto_line_key(&mut app, key(KeyCode::Enter));
     let (row_after, _) = app.textarea.cursor();
     assert!(matches!(app.status.mode, StatusMode::Normal));
-    assert_eq!(row_before, row_after, "empty input must not move the cursor");
+    assert_eq!(
+        row_before, row_after,
+        "empty input must not move the cursor"
+    );
 }
 
 #[test]
@@ -688,7 +710,10 @@ fn goto_line_enter_clamps_to_last_line() {
     }
     handle_goto_line_key(&mut app, key(KeyCode::Enter));
     let (row, _) = app.textarea.cursor();
-    assert_eq!(row, 1, "line number beyond doc length must clamp to last line");
+    assert_eq!(
+        row, 1,
+        "line number beyond doc length must clamp to last line"
+    );
 }
 
 #[test]
@@ -1078,9 +1103,13 @@ fn focus_paragraph_bounds_middle_paragraph() {
     use yame::renderer::focus_paragraph_bounds;
     // "a\n\nb\nc\nd\n\ne"
     let lines: Vec<String> = vec![
-        "a".into(), "".into(),
-        "b".into(), "c".into(), "d".into(),
-        "".into(), "e".into(),
+        "a".into(),
+        "".into(),
+        "b".into(),
+        "c".into(),
+        "d".into(),
+        "".into(),
+        "e".into(),
     ];
     // Cursor at line 3 (inside "b c d" block) → (2, 4).
     assert_eq!(focus_paragraph_bounds(&lines, 3), (2, 4));

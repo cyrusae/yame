@@ -146,7 +146,10 @@ mod tests {
         // 100-wide terminal: col = max(50, 60) = 60.  max_cols=80 > 60, so no effect.
         let area = Rect::new(0, 0, 100, 30);
         let layout = compute_layout(area, 60, Some(80));
-        assert_eq!(layout.column.width, 60, "max_cols=80 must not shrink a 60-col column");
+        assert_eq!(
+            layout.column.width, 60,
+            "max_cols=80 must not shrink a 60-col column"
+        );
     }
 
     #[test]

@@ -157,20 +157,13 @@ impl SearchState {
         let idx = self
             .matches
             .iter()
-            .position(|&(ml, ms, _)| {
-                ml > cursor_line || (ml == cursor_line && ms >= cursor_col)
-            })
+            .position(|&(ml, ms, _)| ml > cursor_line || (ml == cursor_line && ms >= cursor_col))
             .unwrap_or(0);
         self.current = idx;
     }
 
     /// Replace the chars `char_start..char_end` on `line` with `self.replace`.
-    pub fn apply_replace_to_line(
-        &self,
-        line: &str,
-        char_start: usize,
-        char_end: usize,
-    ) -> String {
+    pub fn apply_replace_to_line(&self, line: &str, char_start: usize, char_end: usize) -> String {
         let chars: Vec<char> = line.chars().collect();
         let before: String = chars[..char_start.min(chars.len())].iter().collect();
         let after: String = chars[char_end.min(chars.len())..].iter().collect();
@@ -436,7 +429,11 @@ mod tests {
         let before = s.matches.len();
         s.push_char('x', &d);
         assert_eq!(s.replace, "x");
-        assert_eq!(s.matches.len(), before, "replace-field edit must not clear matches");
+        assert_eq!(
+            s.matches.len(),
+            before,
+            "replace-field edit must not clear matches"
+        );
         s.pop_char(&d);
         assert_eq!(s.replace, "");
         assert_eq!(s.matches.len(), before);
@@ -595,7 +592,10 @@ mod tests {
         s.compiled = None;
         s.replace = "baz".to_string();
         let result = s.apply_replace_all(&d);
-        assert_eq!(result, d, "compiled=None must prevent replace-all even when matches is non-empty");
+        assert_eq!(
+            result, d,
+            "compiled=None must prevent replace-all even when matches is non-empty"
+        );
     }
 
     // ---- T-23: apply_replace_all bounds guard: < vs <= ----
@@ -612,7 +612,10 @@ mod tests {
         s.compiled = Some(Regex::new("hello").unwrap());
         s.matches = vec![(99, 0, 5)];
         let result = s.apply_replace_all(&d);
-        assert_eq!(result, d, "stale out-of-bounds match must be skipped, not panic");
+        assert_eq!(
+            result, d,
+            "stale out-of-bounds match must be skipped, not panic"
+        );
     }
 
     // ---- T-24: zero-width match advance (line 227) ----
@@ -632,7 +635,11 @@ mod tests {
         s.query = "a*".to_string();
         s.update_matches(&d);
         // Only "aa" is a non-zero-width match; zero-width empties are skipped.
-        assert_eq!(s.matches.len(), 1, "must find exactly the 'aa' match and terminate");
+        assert_eq!(
+            s.matches.len(),
+            1,
+            "must find exactly the 'aa' match and terminate"
+        );
         assert_eq!(s.matches[0], (0, 0, 2));
     }
 }
