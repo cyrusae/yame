@@ -1,4 +1,5 @@
 use std::io;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crossterm::{
@@ -11,12 +12,16 @@ use tui_textarea::CursorMove;
 
 use yame::app::{App, FileMode, get_selection_text, resolve_file_mode};
 use yame::config::{LayoutConfig, Theme, load_config};
-use yame::decoration::{block_highlights_to_decoration_map, build_decoration_map, count_words};
+use yame::decoration::{
+    DecorationMap, block_highlights_to_decoration_map, build_decoration_map, count_words,
+};
+use yame::highlighting::HighlightCache;
 use yame::layout::{DEFAULT_MIN_COLS, compute_layout};
 use yame::renderer;
+use yame::search::SearchState;
 use yame::status::StatusMode;
 
-use super::commands::{clamp_scroll, handle_exit, handle_save};
+use super::commands::{center_scroll, clamp_scroll, handle_exit, handle_save};
 
 // ---------------------------------------------------------------------------
 // Key-event outcome
@@ -41,38 +46,41 @@ pub(super) enum KeyOutcome {
 }
 
 // ---------------------------------------------------------------------------
-// Decoration dispatch
+// Background decoration worker
 // ---------------------------------------------------------------------------
 
-/// Run the appropriate decoration / highlighting pass for the current file mode
-/// and return `(DecorationMap, word_count)`.
+/// Parameters shipped to the decoration worker for one decoration pass.
 ///
-/// - `Markdown` → full pulldown-cmark decoration pass (existing path).
-/// - `PlainHighlight(lang)` → syntect whole-file highlight; word count computed
-///   separately via [`count_words`].
-/// - `PlainText` → no decoration; word count only.
-fn decorate(text: &str, app: &App) -> (yame::decoration::DecorationMap, usize) {
-    match &app.file_mode {
+/// All fields are cheaply cloneable or `Arc`-wrapped so the main thread can
+/// keep its own copies while the worker operates on its snapshot.
+struct DecorateRequest {
+    text: String,
+    mode: FileMode,
+    theme: Theme,
+    italic_support: bool,
+    cache: Option<Arc<HighlightCache>>,
+}
+
+/// Run the appropriate decoration pass for the given request.
+fn run_decorate(req: &DecorateRequest) -> (DecorationMap, usize) {
+    match &req.mode {
         FileMode::Markdown => build_decoration_map(
-            text,
-            &app.theme,
-            app.italic_support,
-            app.highlight_cache.as_ref(),
+            &req.text,
+            &req.theme,
+            req.italic_support,
+            req.cache.as_deref(),
         ),
         FileMode::PlainHighlight(lang) => {
-            let map = app
-                .highlight_cache
-                .as_ref()
-                .and_then(|cache| cache.highlight_block(lang, text))
+            let map = req
+                .cache
+                .as_deref()
+                .and_then(|cache| cache.highlight_block(lang, &req.text))
                 .map(|hl| block_highlights_to_decoration_map(&hl, 0))
                 .unwrap_or_default();
-            let wc = count_words(text);
+            let wc = count_words(&req.text);
             (map, wc)
         }
-        FileMode::PlainText => (
-            yame::decoration::DecorationMap::default(),
-            count_words(text),
-        ),
+        FileMode::PlainText => (DecorationMap::default(), count_words(&req.text)),
     }
 }
 
@@ -101,6 +109,7 @@ pub(super) fn screen_to_doc(
     scroll_top: usize,
     lines: &[String],
     decoration_map: &yame::decoration::DecorationMap,
+    show_line_numbers: bool,
 ) -> Option<(u16, u16)> {
     if screen_row < editor_area.y
         || screen_col < editor_area.x
@@ -109,14 +118,12 @@ pub(super) fn screen_to_doc(
     {
         return None;
     }
-    // Written as GUTTER + GUTTER (not 2 * GUTTER) so that the `* → /` operator
-    // mutation is eliminated: 2/1 == 2 is equivalent, but `+ → -` (0) and
-    // `+ → *` (1) produce distinct, observable wrong values.
+    let left_gutter = renderer::left_gutter_width(lines.len(), show_line_numbers);
     let cw = (editor_area.width as usize)
-        .saturating_sub(renderer::GUTTER as usize + renderer::GUTTER as usize)
+        .saturating_sub(left_gutter as usize + renderer::GUTTER as usize)
         .max(1);
     let click_vis_row = (screen_row - editor_area.y) as usize;
-    let click_col = screen_col.saturating_sub(editor_area.x + renderer::GUTTER) as usize;
+    let click_col = screen_col.saturating_sub(editor_area.x + left_gutter) as usize;
 
     let mut vis = 0usize;
     for (li, line) in lines.iter().enumerate().skip(scroll_top) {
@@ -180,6 +187,46 @@ pub(super) fn is_navigation_key(k: &crossterm::event::KeyEvent) -> bool {
 
 /// If there is an active selection and `k` is a pair-opener, wrap the
 /// selection with the corresponding pair and return `true`.
+/// Returns `true` for key events that are safe to process in read-only mode:
+/// navigation, selection, copy, search, mode toggles, viewport scroll, and exit.
+/// Everything else (character input, backspace, paste, undo/redo, save, …) returns
+/// `false` and will be suppressed with a status-bar reminder.
+pub(super) fn is_ro_allowed(mods: KeyModifiers, code: KeyCode) -> bool {
+    matches!(
+        (mods, code),
+        // ── Navigation & selection ───────────────────────────────────────────
+        (
+            _,
+            KeyCode::Up
+                | KeyCode::Down
+                | KeyCode::Left
+                | KeyCode::Right
+                | KeyCode::Home
+                | KeyCode::End
+                | KeyCode::PageUp
+                | KeyCode::PageDown,
+        )
+        // ── Exit ─────────────────────────────────────────────────────────────
+        | (KeyModifiers::NONE, KeyCode::Esc)
+        | (KeyModifiers::CONTROL, KeyCode::Char('x'))
+        // ── Copy (not paste) ─────────────────────────────────────────────────
+        | (KeyModifiers::CONTROL, KeyCode::Char('c'))
+        | (KeyModifiers::SUPER, KeyCode::Char('c'))
+        // ── Search (read-only — replace is blocked inside handle_search_key) ─
+        | (KeyModifiers::CONTROL, KeyCode::Char('f'))
+        // ── Go-to-line ───────────────────────────────────────────────────────
+        | (KeyModifiers::CONTROL, KeyCode::Char('g'))
+        // ── Config reload ────────────────────────────────────────────────────
+        | (KeyModifiers::CONTROL, KeyCode::Char('r'))
+        // ── Mode toggles (typewriter, focus, read-only) ──────────────────────
+        | (KeyModifiers::CONTROL, KeyCode::Char('t'))
+        | (KeyModifiers::CONTROL, KeyCode::Char('d'))
+        | (KeyModifiers::CONTROL, KeyCode::Char('e'))
+        // ── Shortcuts modal ───────────────────────────────────────────────────
+        | (KeyModifiers::NONE, KeyCode::F(1))
+    )
+}
+
 pub(super) fn handle_pair_wrap(app: &mut App, k: crossterm::event::KeyEvent) -> bool {
     if k.modifiers
         .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
@@ -207,11 +254,243 @@ pub(super) fn handle_pair_wrap(app: &mut App, k: crossterm::event::KeyEvent) -> 
 }
 
 // ---------------------------------------------------------------------------
+// Search helpers (called from handle_search_key)
+// ---------------------------------------------------------------------------
+
+/// Replace the current match with `search.replace`, then refresh matches.
+fn do_replace_current(app: &mut App) {
+    let Some((ml, ms, me)) = app.search.as_ref().and_then(|s| s.current_match()) else {
+        return;
+    };
+    let replace_text = app
+        .search
+        .as_ref()
+        .map(|s| s.replace.clone())
+        .unwrap_or_default();
+    let match_len = me - ms;
+
+    app.textarea
+        .move_cursor(CursorMove::Jump(ml as u16, ms as u16));
+    for _ in 0..match_len {
+        app.textarea.delete_next_char();
+    }
+    app.textarea.insert_str(&replace_text);
+    app.force_redecorate = true;
+    app.recompute_dirty();
+    app.last_keystroke = Some(std::time::Instant::now());
+
+    let lines: Vec<String> = app.textarea.lines().iter().map(|s| s.to_string()).collect();
+    if let Some(s) = &mut app.search {
+        s.update_matches(&lines);
+        // current index now points to the next match (positions shifted after replacement).
+    }
+}
+
+/// Replace every match with `search.replace`, processing from bottom to top
+/// so earlier char offsets stay valid as later spans are overwritten.
+fn do_replace_all(app: &mut App) {
+    let Some(search) = &app.search else { return };
+    if search.matches.is_empty() {
+        return;
+    }
+    let matches = search.matches.clone();
+    let replace_text = search.replace.clone();
+
+    for &(ml, ms, me) in matches.iter().rev() {
+        app.textarea
+            .move_cursor(CursorMove::Jump(ml as u16, ms as u16));
+        for _ in 0..(me - ms) {
+            app.textarea.delete_next_char();
+        }
+        app.textarea.insert_str(&replace_text);
+    }
+    app.force_redecorate = true;
+    app.recompute_dirty();
+    app.last_keystroke = Some(std::time::Instant::now());
+
+    let lines: Vec<String> = app.textarea.lines().iter().map(|s| s.to_string()).collect();
+    if let Some(s) = &mut app.search {
+        s.update_matches(&lines);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Search-mode key dispatcher
+// ---------------------------------------------------------------------------
+
+/// Handle a key event while the search bar is active.
+///
+/// Printable characters feed the active field. Action keys navigate matches
+/// or perform replacements. Ctrl+S still saves; Escape closes the bar.
+pub(super) fn handle_search_key(app: &mut App, k: crossterm::event::KeyEvent) -> KeyOutcome {
+    // Dismiss the shortcut cheatsheet on the first keypress inside search mode.
+    if let Some(s) = &mut app.search {
+        s.show_help = false;
+    }
+
+    match (k.modifiers, k.code) {
+        // Close search.
+        (KeyModifiers::NONE, KeyCode::Esc) => {
+            app.search = None;
+        }
+
+        // Save still works inside search mode.
+        (KeyModifiers::CONTROL, KeyCode::Char('s')) | (KeyModifiers::SUPER, KeyCode::Char('s')) => {
+            return KeyOutcome::Save;
+        }
+
+        // Next match: Ctrl+F or Enter while search field is focused.
+        // Enter while replace field is focused: replace current then advance.
+        (KeyModifiers::CONTROL, KeyCode::Char('f')) | (KeyModifiers::NONE, KeyCode::Enter) => {
+            let replace_enter = k.code == KeyCode::Enter
+                && app
+                    .search
+                    .as_ref()
+                    .is_some_and(|s| !s.focus_search && s.show_replace);
+            if replace_enter {
+                do_replace_current(app);
+            } else {
+                if let Some(s) = &mut app.search {
+                    s.next_match();
+                }
+                let jump = app.search.as_ref().and_then(|s| s.current_match());
+                if let Some((ml, ms, _)) = jump {
+                    app.textarea
+                        .move_cursor(CursorMove::Jump(ml as u16, ms as u16));
+                }
+            }
+        }
+
+        // Prev match: Shift+Enter.
+        (KeyModifiers::SHIFT, KeyCode::Enter) => {
+            if let Some(s) = &mut app.search {
+                s.prev_match();
+            }
+            let jump = app.search.as_ref().and_then(|s| s.current_match());
+            if let Some((ml, ms, _)) = jump {
+                app.textarea
+                    .move_cursor(CursorMove::Jump(ml as u16, ms as u16));
+            }
+        }
+
+        // Delete last char of the active field.
+        (KeyModifiers::NONE, KeyCode::Backspace) => {
+            let lines: Vec<String> = app.textarea.lines().iter().map(|s| s.to_string()).collect();
+            if let Some(s) = &mut app.search {
+                s.pop_char(&lines);
+            }
+        }
+
+        // Toggle regex mode.
+        (KeyModifiers::ALT, KeyCode::Char('r')) => {
+            let lines: Vec<String> = app.textarea.lines().iter().map(|s| s.to_string()).collect();
+            if let Some(s) = &mut app.search {
+                s.regex_mode = !s.regex_mode;
+                s.update_matches(&lines);
+            }
+        }
+
+        // Ctrl+H: toggle the replace row (blocked in read-only mode).
+        (KeyModifiers::CONTROL, KeyCode::Char('h')) if !app.read_only => {
+            if let Some(s) = &mut app.search {
+                s.show_replace = !s.show_replace;
+                s.focus_search = true; // return focus to search field
+            }
+        }
+
+        // Tab: switch focus between search / replace fields.
+        (KeyModifiers::NONE, KeyCode::Tab) => {
+            if let Some(s) = &mut app.search
+                && s.show_replace
+            {
+                s.focus_search = !s.focus_search;
+            }
+        }
+
+        // Ctrl+A: replace all (only active when the replace row is visible).
+        (KeyModifiers::CONTROL, KeyCode::Char('a'))
+            if app.search.as_ref().is_some_and(|s| s.show_replace) =>
+        {
+            do_replace_all(app);
+        }
+
+        // Printable character with no control modifier → feed active field.
+        _ if !has_ctrl_alt_super(k.modifiers) && matches!(k.code, KeyCode::Char(_)) => {
+            if let KeyCode::Char(c) = k.code {
+                let lines: Vec<String> =
+                    app.textarea.lines().iter().map(|s| s.to_string()).collect();
+                if let Some(s) = &mut app.search {
+                    s.push_char(c, &lines);
+                }
+            }
+        }
+
+        // Swallow everything else so stray keys don't reach the editor.
+        _ => {}
+    }
+
+    KeyOutcome::Continue
+}
+
+// ---------------------------------------------------------------------------
+// Go-to-line key dispatcher
+// ---------------------------------------------------------------------------
+
+/// Handle a key event while the go-to-line prompt is active.
+///
+/// Only digit characters are accepted into the input buffer; Backspace edits it;
+/// Enter commits the jump; Esc cancels without moving the cursor.
+pub(super) fn handle_goto_line_key(app: &mut App, k: crossterm::event::KeyEvent) -> KeyOutcome {
+    match (k.modifiers, k.code) {
+        (KeyModifiers::NONE, KeyCode::Esc) => {
+            app.status.mode = StatusMode::Normal;
+        }
+
+        (KeyModifiers::NONE, KeyCode::Enter) => {
+            // Parse the buffered digits and jump, then always close the prompt.
+            // Scroll clamping is handled automatically on the next frame because
+            // `free_scroll` is always false after a key press.
+            if let Some(raw) = app.status.goto_input()
+                && let Ok(n) = raw.parse::<usize>()
+                && n >= 1
+            {
+                let max_line = app.textarea.lines().len().saturating_sub(1);
+                let target = (n - 1).min(max_line);
+                app.textarea.move_cursor(CursorMove::Jump(target as u16, 0));
+            }
+            app.status.mode = StatusMode::Normal;
+        }
+
+        (KeyModifiers::NONE, KeyCode::Backspace) => {
+            app.status.goto_pop();
+        }
+
+        // Accept digits only; silently ignore everything else.
+        (KeyModifiers::NONE, KeyCode::Char(c)) if c.is_ascii_digit() => {
+            app.status.goto_push(c);
+        }
+
+        _ => {}
+    }
+    KeyOutcome::Continue
+}
+
+// ---------------------------------------------------------------------------
 // Key-event dispatcher (pure — no file I/O, no terminal I/O)
 // ---------------------------------------------------------------------------
 
 /// Dispatch a single key event, mutating `app` state.
 ///
+/// Returns `true` when `mods` contains any of CONTROL, ALT, or SUPER.
+///
+/// Extracted so that `#[mutants::skip]` can suppress the undetectable `| → ^`
+/// mutations: for distinct-bit flags `a | b | c == a ^ b ^ c`, so no test can
+/// distinguish them.
+#[mutants::skip]
+fn has_ctrl_alt_super(mods: KeyModifiers) -> bool {
+    mods.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+}
+
 /// Returns a [`KeyOutcome`] telling the caller what (if any) I/O action to
 /// perform next. File writes, config reloads, and loop termination are the
 /// responsibility of the caller (`event_loop`).  This separation makes the
@@ -226,8 +505,7 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
         // Guard the destructive y/n responses: Ctrl+Y must not trigger SaveAndExit
         // and Ctrl+N must not trigger Exit.  Other modifier+char combos (Ctrl+C,
         // Ctrl+X …) still pass through so they continue to act as cancel shortcuts.
-        if k.modifiers
-            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+        if has_ctrl_alt_super(k.modifiers)
             && matches!(k.code, KeyCode::Char('y') | KeyCode::Char('n'))
         {
             return KeyOutcome::Continue;
@@ -247,10 +525,60 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
         };
     }
 
+    // ── Shortcuts modal — swallow all keys; Esc or F1 closes it ─────────────
+    if app.show_shortcuts {
+        match (k.modifiers, k.code) {
+            (KeyModifiers::NONE, KeyCode::Esc) | (KeyModifiers::NONE, KeyCode::F(1)) => {
+                app.show_shortcuts = false;
+            }
+            _ => {}
+        }
+        return KeyOutcome::Continue;
+    }
+
+    // ── Go-to-line mode — intercepts all keys while the prompt is open ────
+    if matches!(app.status.mode, StatusMode::GoToLine { .. }) {
+        return handle_goto_line_key(app, k);
+    }
+
+    // ── Search mode — intercepts all keys while the bar is open ────────────
+    if app.search.is_some() {
+        return handle_search_key(app, k);
+    }
+
+    // ── Read-only guard ─────────────────────────────────────────────────────
+    if app.read_only && !is_ro_allowed(k.modifiers, k.code) {
+        app.status
+            .set_timed("Read-only — ^X to exit", Duration::from_secs(2));
+        return KeyOutcome::Continue;
+    }
+
     // ── Normal editing mode ─────────────────────────────────────────────────
     match (k.modifiers, k.code) {
         (KeyModifiers::CONTROL, KeyCode::Char('s')) | (KeyModifiers::SUPER, KeyCode::Char('s')) => {
             KeyOutcome::Save
+        }
+
+        // Open search bar.
+        (KeyModifiers::CONTROL, KeyCode::Char('f')) => {
+            let (cur_line, cur_col) = app.textarea.cursor();
+            let lines: Vec<String> = app.textarea.lines().iter().map(|s| s.to_string()).collect();
+            let mut s = SearchState::new(false);
+            s.update_matches(&lines);
+            s.snap_to_cursor(cur_line, cur_col);
+            app.search = Some(s);
+            KeyOutcome::Continue
+        }
+
+        // Open search-and-replace bar.
+        (KeyModifiers::CONTROL, KeyCode::Char('h')) => {
+            let (cur_line, cur_col) = app.textarea.cursor();
+            let lines: Vec<String> = app.textarea.lines().iter().map(|s| s.to_string()).collect();
+            let mut s = SearchState::new(true);
+            s.update_matches(&lines);
+            s.snap_to_cursor(cur_line, cur_col);
+            app.search = Some(s);
+            KeyOutcome::Continue
         }
 
         (KeyModifiers::CONTROL, KeyCode::Char('x')) | (KeyModifiers::NONE, KeyCode::Esc) => {
@@ -292,7 +620,48 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
             KeyOutcome::Continue
         }
 
+        (KeyModifiers::CONTROL, KeyCode::Char('g')) => {
+            app.status.start_goto_line();
+            KeyOutcome::Continue
+        }
+
+        // Ctrl+T: toggle typewriter mode (keep cursor line centred in viewport).
+        (KeyModifiers::CONTROL, KeyCode::Char('t')) => {
+            app.typewriter_mode = !app.typewriter_mode;
+            KeyOutcome::Continue
+        }
+
+        // Ctrl+D: toggle focus mode (dim lines outside the current paragraph).
+        (KeyModifiers::CONTROL, KeyCode::Char('d')) => {
+            app.focus_mode = !app.focus_mode;
+            KeyOutcome::Continue
+        }
+
+        // Ctrl+E: toggle read-only mode on/off without exiting.
+        (KeyModifiers::CONTROL, KeyCode::Char('e')) => {
+            app.read_only = !app.read_only;
+            let msg = if app.read_only {
+                "Read-only on — editing disabled"
+            } else {
+                "Editing enabled"
+            };
+            app.status.set_timed(msg, Duration::from_secs(2));
+            KeyOutcome::Continue
+        }
+
+        // F1: open the full keybindings reference modal.
+        (KeyModifiers::NONE, KeyCode::F(1)) => {
+            app.show_shortcuts = true;
+            KeyOutcome::Continue
+        }
+
         (KeyModifiers::CONTROL, KeyCode::Char('r')) => KeyOutcome::ReloadConfig,
+
+        // Alt+T: reflow the GFM table under the cursor to uniform column widths.
+        (KeyModifiers::ALT, KeyCode::Char('t')) => {
+            yame::table_format::handle_format_table(app);
+            KeyOutcome::Continue
+        }
 
         // Ctrl+Up/Down: scroll viewport without moving cursor.
         (KeyModifiers::CONTROL, KeyCode::Up) => {
@@ -503,24 +872,57 @@ where
     const SCROLL_LINES: usize = 3;
 
     let min_cols = layout_config.min_cols.unwrap_or(DEFAULT_MIN_COLS);
+    let max_cols = layout_config.max_cols;
 
-    // Initial decoration pass.
-    {
-        let text = app.textarea.lines().join("\n");
-        let (map, wc) = decorate(&text, app);
-        app.decoration_map = map;
-        app.word_count = wc;
-    }
+    // Spawn a persistent background decoration worker.
+    //
+    // The worker receives `DecorateRequest` messages and sends back
+    // `(DecorationMap, usize)` results.  Before starting each job it drains
+    // any superseded requests ("latest wins") so rapid typing never queues up
+    // stale work.  The thread exits automatically when `deco_tx` is dropped
+    // (i.e. when the event loop returns).
+    let (deco_tx, deco_work_rx) = std::sync::mpsc::channel::<DecorateRequest>();
+    let (deco_result_tx, deco_rx) = std::sync::mpsc::channel::<(DecorationMap, usize)>();
+    std::thread::Builder::new()
+        .name("deco-worker".into())
+        .spawn(move || {
+            while let Ok(req) = deco_work_rx.recv() {
+                // Drain any superseded requests — only the latest matters.
+                let req = std::iter::once(req)
+                    .chain(deco_work_rx.try_iter())
+                    .last()
+                    .unwrap(); // always at least one element
+                let result = run_decorate(&req);
+                if deco_result_tx.send(result).is_err() {
+                    break; // main thread gone, exit cleanly
+                }
+            }
+        })
+        .expect("failed to spawn decoration worker");
+
+    // decoration_map and word_count are pre-computed in App::new() before the
+    // terminal enters the alternate screen, so the first draw is immediate.
 
     let mut last_editor_area = Rect::default();
     let mut drag_selecting = false;
 
     loop {
-        if app.force_redecorate || app.last_keystroke.is_some_and(|t| t.elapsed() >= DEBOUNCE) {
-            let text = app.textarea.lines().join("\n");
-            let (map, wc) = decorate(&text, app);
+        // Apply the latest completed decoration result from the background worker.
+        // Drain all pending results and keep only the freshest one.
+        let latest = std::iter::from_fn(|| deco_rx.try_recv().ok()).last();
+        if let Some((map, wc)) = latest {
             app.decoration_map = map;
             app.word_count = wc;
+        }
+
+        if app.force_redecorate || app.last_keystroke.is_some_and(|t| t.elapsed() >= DEBOUNCE) {
+            let _ = deco_tx.send(DecorateRequest {
+                text: app.textarea.lines().join("\n"),
+                mode: app.file_mode.clone(),
+                theme: app.theme.clone(),
+                italic_support: app.italic_support,
+                cache: app.highlight_cache.clone(),
+            });
             app.last_keystroke = None;
             app.force_redecorate = false;
         }
@@ -530,40 +932,45 @@ where
         {
             let term_size = terminal.size()?;
             let term_area = Rect::new(0, 0, term_size.width, term_size.height);
-            let pre_layout = compute_layout(term_area, min_cols);
-            let pre_editor_area = if !app.config_warnings.is_empty() && pre_layout.column.height > 0
-            {
-                Rect {
-                    y: pre_layout.column.y + 1,
-                    height: pre_layout.column.height.saturating_sub(1),
-                    ..pre_layout.column
-                }
-            } else {
-                pre_layout.column
+            let pre_layout = compute_layout(term_area, min_cols, max_cols);
+            // Account for warning banner and search bar when computing the
+            // editor area so scroll clamping uses the same geometry as the draw.
+            let warn_rows =
+                u16::from(!app.config_warnings.is_empty() && pre_layout.column.height > 0);
+            let sb_rows = renderer::search_bar_height(app);
+            let top_rows = warn_rows + sb_rows;
+            let pre_editor_area = Rect {
+                y: pre_layout.column.y + top_rows,
+                height: pre_layout.column.height.saturating_sub(top_rows),
+                ..pre_layout.column
             };
             // Keep content_width current so handle_visual_move wraps identically
             // to the renderer.  Computed here (pre-draw) so it is valid before
             // the first key event arrives.
+            let left_gutter =
+                renderer::left_gutter_width(app.textarea.lines().len(), app.show_line_numbers);
             app.content_width = (pre_editor_area.width as usize)
-                .saturating_sub(renderer::GUTTER as usize + renderer::GUTTER as usize)
+                .saturating_sub(left_gutter as usize + renderer::GUTTER as usize)
                 .max(1);
 
             // Clamp is skipped while the user is free-scrolling (mouse wheel or
             // Ctrl+Up/Down).  free_scroll persists until a key press, mouse click,
             // drag, or terminal resize clears it (scroll and hover events do not).
+            // In typewriter mode the cursor line is kept vertically centred instead
+            // of merely kept in-viewport.  Free-scroll still works; the view
+            // re-centres on the next non-scroll event.
             if !app.free_scroll {
-                clamp_scroll(
-                    app,
-                    pre_editor_area,
-                    pre_layout.column.width,
-                    BOTTOM_PADDING,
-                );
+                if app.typewriter_mode {
+                    center_scroll(app, pre_editor_area);
+                } else {
+                    clamp_scroll(app, pre_editor_area, BOTTOM_PADDING);
+                }
             }
         }
 
         execute!(io::stdout(), BeginSynchronizedUpdate)?;
         terminal.draw(|f| {
-            let layout = compute_layout(f.area(), min_cols);
+            let layout = compute_layout(f.area(), min_cols, max_cols);
 
             let content_bg_area = Rect {
                 x: layout.full.x,
@@ -576,7 +983,8 @@ where
                 content_bg_area,
             );
 
-            let editor_area = if !app.config_warnings.is_empty() && layout.column.height > 0 {
+            // Warning banner (if any) — always the topmost row of the column.
+            let after_warn = if !app.config_warnings.is_empty() && layout.column.height > 0 {
                 let warn_area = Rect {
                     height: 1,
                     ..layout.column
@@ -596,6 +1004,38 @@ where
                 layout.column
             };
 
+            // Search bar — rendered below any warning banner, above the editor.
+            let sb_rows = renderer::search_bar_height(app);
+            let editor_area = if sb_rows > 0 && after_warn.height > sb_rows {
+                let sb_area = Rect {
+                    x: layout.full.x,
+                    y: after_warn.y,
+                    width: layout.full.width,
+                    height: sb_rows,
+                };
+                renderer::render_search_bar(f, sb_area, app);
+                Rect {
+                    y: after_warn.y + sb_rows,
+                    height: after_warn.height.saturating_sub(sb_rows),
+                    ..after_warn
+                }
+            } else {
+                after_warn
+            };
+
+            let (search_matches, search_current) = app
+                .search
+                .as_ref()
+                .map(|s| (s.matches.as_slice(), s.current))
+                .unwrap_or((&[], 0));
+            let focus_mode_paragraph = if app.focus_mode {
+                Some(renderer::focus_paragraph_bounds(
+                    app.textarea.lines(),
+                    app.textarea.cursor().0,
+                ))
+            } else {
+                None
+            };
             let view = renderer::MarkdownView {
                 lines: app.textarea.lines(),
                 decoration_map: &app.decoration_map,
@@ -604,8 +1044,18 @@ where
                 selection: app.textarea.selection_range(),
                 theme: &app.theme,
                 column_width: layout.column.width,
+                show_line_numbers: app.show_line_numbers,
+                search_matches,
+                search_current,
+                focus_mode_paragraph,
             };
             f.render_widget(view, editor_area);
+            if app.search.as_ref().is_some_and(|s| s.show_help) {
+                renderer::render_search_help_modal(f, editor_area, app);
+            }
+            if app.show_shortcuts {
+                renderer::render_shortcuts_modal(f, editor_area, app);
+            }
             renderer::render_status_bar(f, layout.status_bar, app);
             renderer::render_info_line(f, layout.info_line, app);
 
@@ -641,14 +1091,15 @@ where
                                 .highlighting
                                 .use_palette_colors
                                 .then(|| yame::highlighting::build_palette_theme(&app.theme));
-                            yame::highlighting::HighlightCache::new(
+                            Arc::new(yame::highlighting::HighlightCache::new(
                                 true,
                                 new_config.highlighting.syntect_theme.clone(),
                                 palette_theme,
-                            )
+                            ))
                         });
                         // Re-resolve file mode in case [filetype] config changed.
                         app.file_mode = resolve_file_mode(&app.file_path, &new_config.filetype);
+                        app.show_line_numbers = new_config.layout.line_numbers.unwrap_or(false);
                         app.config_warnings = warnings;
                         app.status
                             .set_timed("Config reloaded.", Duration::from_millis(1500));
@@ -676,6 +1127,7 @@ where
                             app.scroll_top,
                             app.textarea.lines(),
                             &app.decoration_map,
+                            app.show_line_numbers,
                         ) {
                             app.textarea.cancel_selection();
                             app.textarea.move_cursor(CursorMove::Jump(doc_row, doc_col));
@@ -691,6 +1143,7 @@ where
                             app.scroll_top,
                             app.textarea.lines(),
                             &app.decoration_map,
+                            app.show_line_numbers,
                         ) {
                             if !drag_selecting {
                                 app.textarea.start_selection();
@@ -757,6 +1210,12 @@ mod tests {
             tab_width: 4,
             highlight_cache: None,
             file_mode: FileMode::Markdown,
+            show_line_numbers: false,
+            search: None,
+            typewriter_mode: false,
+            focus_mode: false,
+            show_shortcuts: false,
+            read_only: false,
         }
     }
 
@@ -942,13 +1401,24 @@ mod tests {
     // markdown decoration pass on multi-word text with a heading returns a
     // non-empty map AND word_count > 1.
 
+    // Helper: build a DecorateRequest from an App snapshot (for tests).
+    fn make_req(text: &str, app: &App) -> DecorateRequest {
+        DecorateRequest {
+            text: text.to_string(),
+            mode: app.file_mode.clone(),
+            theme: app.theme.clone(),
+            italic_support: app.italic_support,
+            cache: app.highlight_cache.clone(),
+        }
+    }
+
     // FileMode::Markdown: heading + body text → non-empty map, word_count > 1.
     #[test]
     fn decorate_markdown_returns_nonempty_map_and_correct_word_count() {
         let mut app = make_app();
         app.file_mode = FileMode::Markdown;
         let text = "# Hello World\nThis is some text.\n";
-        let (map, wc) = decorate(text, &app);
+        let (map, wc) = run_decorate(&make_req(text, &app));
         assert!(
             !map.is_empty(),
             "Markdown decoration must produce a non-empty DecorationMap"
@@ -965,7 +1435,7 @@ mod tests {
     fn decorate_plain_text_returns_empty_map_with_word_count() {
         let mut app = make_app();
         app.file_mode = FileMode::PlainText;
-        let (map, wc) = decorate("hello world\n", &app);
+        let (map, wc) = run_decorate(&make_req("hello world\n", &app));
         assert!(
             map.is_empty(),
             "PlainText mode must return an empty DecorationMap"
@@ -1020,12 +1490,13 @@ mod tests {
                 },
                 0,
                 &lines,
-                &map
+                &map,
+                false,
             )
             .is_none()
         );
         // Col outside area
-        assert!(screen_to_doc(0, 20, &area, 0, &lines, &map).is_none());
+        assert!(screen_to_doc(0, 20, &area, 0, &lines, &map, false).is_none());
     }
 
     // Plain (no continuation indent) line: click at gutter+2 → doc col 2.
@@ -1036,7 +1507,7 @@ mod tests {
         let lines: Vec<String> = vec!["hello world".into()];
         let map = DecorationMap::default();
         // screen_col = GUTTER + 2 = 3 → click_col = 2 → char 2 = 'l'
-        let result = screen_to_doc(0, 3, &area, 0, &lines, &map);
+        let result = screen_to_doc(0, 3, &area, 0, &lines, &map, false);
         assert_eq!(result, Some((0, 2)), "plain click must map col correctly");
     }
 
@@ -1057,7 +1528,7 @@ mod tests {
         let map = dec_map_with_ci(0, 2);
         // Visual row 2 is the "ijk" continuation row of line 0.
         // screen_col = GUTTER(1) + ci(2) = 3 → clicking at the first char of "ijk".
-        let result = screen_to_doc(2, 3, &area, 0, &lines, &map);
+        let result = screen_to_doc(2, 3, &area, 0, &lines, &map, false);
         assert_eq!(
             result.map(|(r, _)| r),
             Some(0),
@@ -1081,7 +1552,7 @@ mod tests {
         // Visual row 1 = "defgh" continuation row.
         // screen_col = 1 (GUTTER) + 2 (ci) + 3 = 6 → click_col=5, col_in_row=3
         // → chars_for_display_cols("defgh", 3) = 3 → doc_col = 6 + 3 = 9
-        let result = screen_to_doc(1, 6, &area, 0, &lines, &map);
+        let result = screen_to_doc(1, 6, &area, 0, &lines, &map, false);
         assert_eq!(
             result,
             Some((0, 9)),
@@ -1115,13 +1586,13 @@ mod tests {
         // With `||→&&` mutation the conjunction fires only if ALL four hold, which is
         // false here (row is valid), so the mutant would NOT return None.
         assert!(
-            screen_to_doc(2, 2, &area, 0, &lines, &map).is_none(),
+            screen_to_doc(2, 2, &area, 0, &lines, &map, false).is_none(),
             "col below area.x must return None even when row is in-bounds"
         );
 
         // screen_col=2 < area.x=3 and screen_row=0 < area.y=1 — both out of bounds.
         assert!(
-            screen_to_doc(0, 2, &area, 0, &lines, &map).is_none(),
+            screen_to_doc(0, 2, &area, 0, &lines, &map, false).is_none(),
             "both row and col below area must return None"
         );
     }
@@ -1141,7 +1612,7 @@ mod tests {
         };
         let lines: Vec<String> = vec!["hello".into()];
         let map = DecorationMap::default();
-        let result = screen_to_doc(0, 2, &area, 0, &lines, &map);
+        let result = screen_to_doc(0, 2, &area, 0, &lines, &map, false);
         assert!(
             result.is_some(),
             "screen_col == area.x is inside the area and must return Some"
@@ -1165,7 +1636,7 @@ mod tests {
         };
         let lines: Vec<String> = vec!["aaa".into(), "bbb".into(), "ccc".into()];
         let map = DecorationMap::default();
-        let result = screen_to_doc(2, 1, &area, 0, &lines, &map);
+        let result = screen_to_doc(2, 1, &area, 0, &lines, &map, false);
         assert_eq!(
             result.map(|(r, _)| r),
             Some(1),
@@ -1187,7 +1658,7 @@ mod tests {
         let area = editor_rect(12, 5);
         let lines: Vec<String> = vec!["hello".into(), "world".into()];
         let map = DecorationMap::default();
-        let result = screen_to_doc(1, 1, &area, 0, &lines, &map);
+        let result = screen_to_doc(1, 1, &area, 0, &lines, &map, false);
         assert_eq!(
             result.map(|(r, _)| r),
             Some(1),
@@ -1207,7 +1678,7 @@ mod tests {
         let lines: Vec<String> = vec!["hello".into(), "world".into()];
         let map = DecorationMap::default();
         // screen_col = GUTTER(1) + 3 = 4
-        let result = screen_to_doc(1, 4, &area, 0, &lines, &map);
+        let result = screen_to_doc(1, 4, &area, 0, &lines, &map, false);
         assert_eq!(
             result,
             Some((1, 3)),
@@ -1264,7 +1735,7 @@ mod tests {
         };
         let lines: Vec<String> = vec!["0123456789".into(), "second".into()];
         let map = DecorationMap::default();
-        let result = screen_to_doc(1, 1, &area, 0, &lines, &map);
+        let result = screen_to_doc(1, 1, &area, 0, &lines, &map, false);
         assert_eq!(
             result.map(|(r, _)| r),
             Some(0),
@@ -1286,7 +1757,7 @@ mod tests {
         let area = editor_rect(12, 5); // cw=10
         let lines: Vec<String> = vec!["- hello".into()];
         let map = dec_map_with_ci(0, 2);
-        let result = screen_to_doc(0, 5, &area, 0, &lines, &map);
+        let result = screen_to_doc(0, 5, &area, 0, &lines, &map, false);
         assert_eq!(
             result,
             Some((0, 4)),
@@ -1597,5 +2068,711 @@ mod tests {
             (0, 0),
             "Shift+Up must step back one visual row (col 6 → col 0 on wrapped line)"
         );
+    }
+
+    // ---------------------------------------------------------------------------
+    // Search / replace integration tests
+    // ---------------------------------------------------------------------------
+
+    /// Create an App with a single line of text, an active search for `query`,
+    /// and a replacement string `replace`. The first match is pre-selected.
+    fn make_search_app(content: &str, query: &str, replace: &str) -> App {
+        let mut app = make_app();
+        app.textarea = TextArea::new(vec![content.to_string()]);
+        let lines: Vec<String> = app.textarea.lines().iter().map(|s| s.to_string()).collect();
+        let mut s = yame::search::SearchState::new(true);
+        s.query = query.to_string();
+        s.replace = replace.to_string();
+        s.update_matches(&lines);
+        app.search = Some(s);
+        app
+    }
+
+    // ---- T-24: do_replace_current replaces the active match ----
+
+    #[test]
+    fn do_replace_current_replaces_first_match() {
+        // Kills: lines 222:5 (`replace do_replace_current with ()`),
+        //        230:24 (`replace - with +` and `replace - with /` in `me - ms`).
+        // With `()`: textarea unchanged.
+        // With `-→+` in `me - ms`: match_len = me + ms (wildly large) → over-deletes.
+        let mut app = make_search_app("hello world", "world", "rust");
+        do_replace_current(&mut app);
+        assert_eq!(
+            app.textarea.lines()[0],
+            "hello rust",
+            "do_replace_current must replace 'world' with 'rust'"
+        );
+    }
+
+    #[test]
+    fn do_replace_current_does_not_over_delete_past_match_end() {
+        // Specifically kills line 270:24 `replace - with +` in `match_len = me - ms`.
+        // The match "mid" is at ms=4, me=7 in "pre mid post".
+        // Correct: match_len = 7 - 4 = 3 → deletes only "mid" → "pre X post".
+        // Wrong:   match_len = 7 + 4 = 11 → deletes "mid post" (and more) → "pre X".
+        // An end-of-string match obscures this because extra delete_next_char()
+        // calls are no-ops; here there is text after the match that must survive.
+        let mut app = make_search_app("pre mid post", "mid", "X");
+        do_replace_current(&mut app);
+        assert_eq!(
+            app.textarea.lines()[0],
+            "pre X post",
+            "text after the replaced match must be preserved"
+        );
+    }
+
+    // ---- T-25: do_replace_all replaces every match ----
+
+    #[test]
+    fn do_replace_all_replaces_every_occurrence() {
+        // Kills: lines 252:5 (`replace do_replace_all with ()`),
+        //        262:25 (`replace - with +` and `replace - with /` in `me - ms`).
+        let mut app = make_search_app("aa aa aa", "aa", "b");
+        do_replace_all(&mut app);
+        assert_eq!(
+            app.textarea.lines()[0],
+            "b b b",
+            "do_replace_all must replace all 'aa' with 'b'"
+        );
+    }
+
+    #[test]
+    fn search_key_ctrl_a_triggers_replace_all_when_show_replace_true() {
+        // Kills line 419:16 `replace match guard ... with false`.
+        // With the guard forced false, Ctrl+A falls through to the swallow arm
+        // and the buffer is never modified.
+        let mut app = make_search_app("foo foo foo", "foo", "bar");
+        // make_search_app sets show_replace=true; confirm it.
+        assert!(app.search.as_ref().unwrap().show_replace);
+        handle_search_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(
+            app.textarea.lines()[0],
+            "bar bar bar",
+            "Ctrl+A must trigger replace-all when show_replace is true"
+        );
+    }
+
+    // ---- T-26: handle_search_key — one assertion per key binding ----
+
+    #[test]
+    fn search_key_esc_closes_search() {
+        // Kills: line 296:9 `delete match arm (KeyModifiers::NONE, KeyCode::Esc)`
+        let mut app = make_search_app("hello", "hello", "");
+        handle_search_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(
+            app.search.is_none(),
+            "Esc must close search (search = None)"
+        );
+    }
+
+    #[test]
+    fn search_key_ctrl_f_advances_to_next_match() {
+        // Kills: line 308:9 `delete match arm Ctrl+F / Enter`
+        // Three matches; after Ctrl+F from current=0 → current=1.
+        let mut app = make_app();
+        app.textarea = TextArea::new(vec!["aaa".to_string()]);
+        let lines: Vec<String> = app.textarea.lines().iter().map(|s| s.to_string()).collect();
+        let mut s = yame::search::SearchState::new(false);
+        s.query = "a".to_string();
+        s.update_matches(&lines); // 3 matches, current=0
+        app.search = Some(s);
+        handle_search_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL),
+        );
+        let current = app.search.as_ref().unwrap().current;
+        assert_eq!(current, 1, "Ctrl+F must advance current from 0 to 1");
+    }
+
+    #[test]
+    fn search_key_shift_enter_retreats_to_prev_match() {
+        // Kills: line 330:9 `delete match arm Shift+Enter`
+        let mut app = make_app();
+        app.textarea = TextArea::new(vec!["aaa".to_string()]);
+        let lines: Vec<String> = app.textarea.lines().iter().map(|s| s.to_string()).collect();
+        let mut s = yame::search::SearchState::new(false);
+        s.query = "a".to_string();
+        s.update_matches(&lines); // current = 0
+        s.current = 2;
+        app.search = Some(s);
+        handle_search_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
+        let current = app.search.as_ref().unwrap().current;
+        assert_eq!(current, 1, "Shift+Enter must retreat current from 2 to 1");
+    }
+
+    #[test]
+    fn search_key_backspace_pops_last_char_of_query() {
+        // Kills: line 342:9 `delete match arm Backspace`
+        let mut app = make_search_app("hello", "hell", "");
+        handle_search_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
+        );
+        let query = &app.search.as_ref().unwrap().query;
+        assert_eq!(query, "hel", "Backspace must remove last char of query");
+    }
+
+    #[test]
+    fn search_key_alt_r_toggles_regex_mode() {
+        // Kills: line 351:9 `delete match arm Alt+R` and line 355:32 `delete !`
+        let mut app = make_search_app("hello", "hello", "");
+        let before = app.search.as_ref().unwrap().regex_mode;
+        handle_search_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::ALT),
+        );
+        let after = app.search.as_ref().unwrap().regex_mode;
+        assert_ne!(before, after, "Alt+R must toggle regex_mode");
+    }
+
+    #[test]
+    fn search_key_ctrl_h_opens_replace_row() {
+        // Kills: line 361:9 `delete match arm Ctrl+H` and line 363:34 `delete !`
+        let mut app = make_search_app("hello", "hello", "");
+        app.search.as_mut().unwrap().show_replace = false;
+        handle_search_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL),
+        );
+        let show = app.search.as_ref().unwrap().show_replace;
+        assert!(show, "Ctrl+H must enable show_replace");
+        // Toggle again: from true → false.
+        handle_search_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL),
+        );
+        let show2 = app.search.as_ref().unwrap().show_replace;
+        assert!(!show2, "second Ctrl+H must disable show_replace");
+    }
+
+    #[test]
+    fn search_key_tab_swaps_focus_field() {
+        // Kills: line 369:9 `delete match arm Tab` and line 373:34 `delete !`
+        let mut app = make_search_app("hello", "hello", "");
+        app.search.as_mut().unwrap().show_replace = true;
+        app.search.as_mut().unwrap().focus_search = true;
+        handle_search_key(&mut app, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        let focus = app.search.as_ref().unwrap().focus_search;
+        assert!(!focus, "Tab must switch focus from search to replace");
+        handle_search_key(&mut app, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        let focus2 = app.search.as_ref().unwrap().focus_search;
+        assert!(focus2, "second Tab must switch focus back to search");
+    }
+
+    #[test]
+    fn search_key_char_appends_to_active_field() {
+        // Kills: lines 385:14 `delete !`, 388:13 `&&→||`, and 385:14 match guard mutations.
+        let mut app = make_search_app("hello", "he", "");
+        handle_search_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE),
+        );
+        let query = &app.search.as_ref().unwrap().query;
+        assert_eq!(query, "hel", "printable char must append to query field");
+    }
+
+    #[test]
+    fn search_key_ctrl_a_replaces_all_when_replace_visible() {
+        // Kills: line 379:16 match guard mutations (`with true` / `with false`)
+        let mut app = make_search_app("aa aa", "aa", "b");
+        app.search.as_mut().unwrap().show_replace = true;
+        handle_search_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(
+            app.textarea.lines()[0],
+            "b b",
+            "Ctrl+A must replace all matches when replace row is visible"
+        );
+    }
+
+    #[test]
+    fn search_key_ctrl_a_does_nothing_when_replace_hidden() {
+        // Kills: line 379:16 `replace match guard with true` — guard must be false here.
+        let mut app = make_search_app("aa aa", "aa", "b");
+        app.search.as_mut().unwrap().show_replace = false;
+        handle_search_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(
+            app.textarea.lines()[0],
+            "aa aa",
+            "Ctrl+A must do nothing when replace row is hidden"
+        );
+    }
+
+    // ---- T-27: Normal-mode keys open search / replace ----
+
+    #[test]
+    fn ctrl_f_opens_search_mode() {
+        // Kills: line 511:9 `delete match arm (CONTROL, Char('f'))`
+        let mut app = make_app();
+        handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL),
+        );
+        assert!(
+            app.search.is_some(),
+            "Ctrl+F must open search (search = Some)"
+        );
+        assert!(
+            !app.search.as_ref().unwrap().show_replace,
+            "Ctrl+F must not open replace row"
+        );
+    }
+
+    #[test]
+    fn ctrl_h_opens_search_and_replace_mode() {
+        // Kills: line 523:9 `delete match arm (CONTROL, Char('h'))`
+        let mut app = make_app();
+        handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL),
+        );
+        assert!(
+            app.search.is_some(),
+            "Ctrl+H must open search (search = Some)"
+        );
+        assert!(
+            app.search.as_ref().unwrap().show_replace,
+            "Ctrl+H must open replace row (show_replace = true)"
+        );
+    }
+
+    // ---- T-23: handle_format_table reformats a misaligned table in-place ----
+
+    #[test]
+    fn handle_format_table_reformats_table_in_place() {
+        // Kills: lines 243:5 (`replace handle_format_table with ()`),
+        //        258:25 (`replace + with -` and `replace + with *` in `start + i`).
+        // With `()`: textarea unchanged.
+        // With `+→-` in `start + i`: rows written at wrong lines (before start).
+        // With `+→*` in `start + i`: rows written at wrong lines.
+        let mut app = make_app();
+        app.textarea = TextArea::new(vec![
+            "| A | Bbb |".to_string(),
+            "| - | --- |".to_string(),
+            "| x | y   |".to_string(),
+        ]);
+        app.textarea.move_cursor(CursorMove::Jump(0, 0));
+        yame::table_format::handle_format_table(&mut app);
+        let out: Vec<String> = app.textarea.lines().iter().map(|s| s.to_string()).collect();
+        assert_eq!(out.len(), 3, "row count must be unchanged after format");
+        // All rows must have the same total length after alignment.
+        assert_eq!(
+            out[0].len(),
+            out[2].len(),
+            "header and body row must have equal length after format; rows: {out:?}"
+        );
+        // Content must still be present (not wiped by no-op mutation).
+        assert!(out[0].contains('A'), "header row must still contain 'A'");
+        assert!(out[2].contains('x'), "body row must still contain 'x'");
+    }
+
+    // ── Shortcuts modal ──────────────────────────────────────────────────────
+
+    // Kills: `replace false with true` on `show_shortcuts: false` in App::new /
+    // make_app — the modal would be open before F1 is ever pressed.
+    #[test]
+    fn f1_opens_shortcuts_modal() {
+        let mut app = make_app();
+        assert!(!app.show_shortcuts, "modal must start closed");
+        handle_key_event(&mut app, key(KeyCode::F(1)));
+        assert!(app.show_shortcuts, "F1 must open the shortcuts modal");
+    }
+
+    // Kills: `replace false with true` / `delete app.show_shortcuts = false` in
+    // the modal-swallow intercept — the modal would never close on Esc.
+    #[test]
+    fn esc_closes_shortcuts_modal() {
+        let mut app = make_app();
+        app.show_shortcuts = true;
+        handle_key_event(&mut app, key(KeyCode::Esc));
+        assert!(!app.show_shortcuts, "Esc must close the shortcuts modal");
+    }
+
+    // Kills: `replace false with true` in the F(1) close arm — pressing F1
+    // while modal is open would re-open it immediately instead of closing.
+    #[test]
+    fn f1_closes_shortcuts_modal_when_open() {
+        let mut app = make_app();
+        app.show_shortcuts = true;
+        handle_key_event(&mut app, key(KeyCode::F(1)));
+        assert!(
+            !app.show_shortcuts,
+            "F1 while open must close the shortcuts modal"
+        );
+    }
+
+    // Kills: removing the early-return in the modal-swallow intercept — a
+    // character key pressed while the modal is open would reach the textarea.
+    #[test]
+    fn char_key_while_modal_open_does_not_reach_textarea() {
+        let mut app = make_app();
+        app.show_shortcuts = true;
+        handle_key_event(&mut app, key(KeyCode::Char('x')));
+        // Modal swallows the key — textarea stays empty AND modal stays open.
+        assert_eq!(
+            app.textarea.lines()[0],
+            "",
+            "char must be swallowed by modal"
+        );
+        assert!(
+            app.show_shortcuts,
+            "modal must remain open on non-dismiss key"
+        );
+    }
+
+    // ── Read-only mode ───────────────────────────────────────────────────────
+
+    // Typing a character in read-only mode must be blocked: the textarea stays
+    // empty and a timed status message is set.
+    #[test]
+    fn read_only_blocks_char_input() {
+        let mut app = make_app();
+        app.read_only = true;
+        handle_key_event(&mut app, key(KeyCode::Char('a')));
+        assert_eq!(
+            app.textarea.lines()[0],
+            "",
+            "char input must be blocked in read-only mode"
+        );
+        assert!(
+            matches!(
+                app.status.mode,
+                yame::status::StatusMode::TimedMessage { .. }
+            ),
+            "a timed status message must be shown when blocked"
+        );
+    }
+
+    // Exit key (Ctrl+X) must still work in read-only mode.
+    #[test]
+    fn read_only_allows_exit_key() {
+        let mut app = make_app();
+        app.read_only = true;
+        let outcome = handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(
+            outcome,
+            KeyOutcome::Exit,
+            "Ctrl+X must still exit in read-only mode"
+        );
+    }
+
+    // Navigation (arrow keys) must pass through in read-only mode.
+    #[test]
+    fn read_only_allows_navigation() {
+        let mut app = make_app();
+        app.read_only = true;
+        // Insert two lines so Down has somewhere to go.
+        app.read_only = false;
+        app.textarea
+            .input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        app.read_only = true;
+        let (row_before, _) = app.textarea.cursor();
+        handle_key_event(&mut app, key(KeyCode::Up));
+        let (row_after, _) = app.textarea.cursor();
+        assert!(
+            row_after <= row_before,
+            "Up arrow must move cursor in read-only mode"
+        );
+    }
+
+    // Paste (Ctrl+V) must be blocked in read-only mode.
+    #[test]
+    fn read_only_blocks_paste() {
+        let mut app = make_app();
+        app.read_only = true;
+        handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(
+            app.textarea.lines()[0],
+            "",
+            "paste must be blocked in read-only mode"
+        );
+    }
+
+    // Undo (Ctrl+Z) must be blocked in read-only mode.
+    #[test]
+    fn read_only_blocks_undo() {
+        let mut app = make_app();
+        app.read_only = true;
+        let outcome = handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(outcome, KeyOutcome::Continue);
+        assert!(
+            matches!(
+                app.status.mode,
+                yame::status::StatusMode::TimedMessage { .. }
+            ),
+            "undo must be blocked and trigger a status message in read-only mode"
+        );
+    }
+
+    // is_ro_allowed must return true for every navigation key code.
+    #[test]
+    fn is_ro_allowed_permits_navigation_keys() {
+        use KeyCode::{Down, End, Home, Left, PageDown, PageUp, Right, Up};
+        for code in [Up, Down, Left, Right, Home, End, PageUp, PageDown] {
+            for mods in [KeyModifiers::NONE, KeyModifiers::SHIFT] {
+                assert!(
+                    is_ro_allowed(mods, code),
+                    "{code:?} with {mods:?} must be allowed in read-only mode"
+                );
+            }
+        }
+    }
+
+    // is_ro_allowed must return false for content-modifying keys.
+    #[test]
+    fn is_ro_allowed_blocks_edit_keys() {
+        let blocked = [
+            (KeyModifiers::NONE, KeyCode::Backspace),
+            (KeyModifiers::NONE, KeyCode::Delete),
+            (KeyModifiers::NONE, KeyCode::Enter),
+            (KeyModifiers::NONE, KeyCode::Tab),
+            (KeyModifiers::NONE, KeyCode::Char('a')),
+            (KeyModifiers::CONTROL, KeyCode::Char('s')),
+            (KeyModifiers::CONTROL, KeyCode::Char('v')),
+            (KeyModifiers::CONTROL, KeyCode::Char('z')),
+            (KeyModifiers::CONTROL, KeyCode::Char('y')),
+            (KeyModifiers::ALT, KeyCode::Char('t')),
+            (KeyModifiers::CONTROL, KeyCode::Char('h')),
+        ];
+        for (mods, code) in blocked {
+            assert!(
+                !is_ro_allowed(mods, code),
+                "{code:?} with {mods:?} must be blocked in read-only mode"
+            );
+        }
+    }
+
+    // Ctrl+E must be allowed through the read-only guard (it's the toggle key).
+    #[test]
+    fn is_ro_allowed_permits_ctrl_e() {
+        assert!(
+            is_ro_allowed(KeyModifiers::CONTROL, KeyCode::Char('e')),
+            "Ctrl+E must be allowed in read-only mode so the toggle works"
+        );
+    }
+
+    // Ctrl+E while read-only → disables read-only and shows a timed message.
+    #[test]
+    fn ctrl_e_unlocks_read_only_mode() {
+        let mut app = make_app();
+        app.read_only = true;
+        handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL),
+        );
+        assert!(!app.read_only, "Ctrl+E must disable read-only mode");
+        assert!(
+            matches!(
+                app.status.mode,
+                yame::status::StatusMode::TimedMessage { .. }
+            ),
+            "a timed status message must confirm the mode change"
+        );
+    }
+
+    // Ctrl+E while in edit mode → enables read-only.
+    #[test]
+    fn ctrl_e_locks_into_read_only_mode() {
+        let mut app = make_app();
+        app.read_only = false;
+        handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL),
+        );
+        assert!(app.read_only, "Ctrl+E must enable read-only mode");
+        assert!(
+            matches!(
+                app.status.mode,
+                yame::status::StatusMode::TimedMessage { .. }
+            ),
+            "a timed status message must confirm the mode change"
+        );
+    }
+
+    // After unlocking with Ctrl+E, typing must reach the textarea.
+    #[test]
+    fn after_unlock_typing_reaches_textarea() {
+        let mut app = make_app();
+        app.read_only = true;
+        // Unlock.
+        handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL),
+        );
+        assert!(!app.read_only);
+        // Type a character — must reach the textarea now.
+        handle_key_event(&mut app, key(KeyCode::Char('z')));
+        assert_eq!(
+            app.textarea.lines()[0],
+            "z",
+            "typing must reach textarea after Ctrl+E unlock"
+        );
+    }
+
+    // ── Remaining search-key handler mutants ────────────────────────────────
+
+    #[test]
+    fn search_key_ctrl_s_returns_save() {
+        // Kills line 341:9 `delete match arm Ctrl+S in handle_search_key`.
+        // Without the arm, Ctrl+S falls to the swallow arm and returns Continue.
+        let mut app = make_search_app("hello", "hello", "");
+        let outcome = handle_search_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(
+            outcome,
+            KeyOutcome::Save,
+            "Ctrl+S must return Save even while search bar is open"
+        );
+    }
+
+    #[test]
+    fn search_key_ctrl_h_blocked_in_read_only() {
+        // Kills line 401:56 `replace match guard !app.read_only with true`.
+        // With the guard always true, Ctrl+H would toggle show_replace in read-only mode.
+        let mut app = make_search_app("hello", "hello", "");
+        app.read_only = true;
+        app.search.as_mut().unwrap().show_replace = false;
+        handle_search_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL),
+        );
+        assert!(
+            !app.search.as_ref().unwrap().show_replace,
+            "Ctrl+H must not open replace row when read_only is true"
+        );
+    }
+
+    #[test]
+    fn search_key_enter_on_replace_field_calls_replace_current() {
+        // Kills lines 354:54 `replace && with ||` and 354:38 `delete !`.
+        // When focus is on the replace field (focus_search=false) and show_replace=true,
+        // Enter must call do_replace_current, modifying the buffer.
+        let mut app = make_search_app("hello world", "world", "rust");
+        app.search.as_mut().unwrap().focus_search = false;
+        app.search.as_mut().unwrap().show_replace = true;
+        handle_search_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(
+            app.textarea.lines()[0],
+            "hello rust",
+            "Enter on replace field must replace the current match"
+        );
+    }
+
+    #[test]
+    fn search_key_enter_on_search_field_advances_not_replaces() {
+        // Kills lines 350:40 `replace == with !=` and 351:17 `replace && with ||`.
+        // With `!=`, Ctrl+F would mistakenly trigger replace_enter.
+        // With `&&→||`, focus_search=true alone would not prevent replace_enter.
+        // When focus is on the search field, Enter must advance the match without
+        // modifying the buffer.
+        let mut app = make_search_app("hello hello", "hello", "rust");
+        app.search.as_mut().unwrap().focus_search = true;
+        app.search.as_mut().unwrap().show_replace = true;
+        app.search.as_mut().unwrap().current = 0;
+        handle_search_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(
+            app.textarea.lines()[0],
+            "hello hello",
+            "Enter on search field must advance match selection, not replace text"
+        );
+        // current must have advanced from 0 to 1.
+        assert_eq!(app.search.as_ref().unwrap().current, 1);
+    }
+
+    #[test]
+    fn search_key_ctrl_f_with_replace_focused_advances_not_replaces() {
+        // Kills line 350:40 `replace == with !=`.
+        // With `!=`, Ctrl+F (k.code != Enter → true) + focus_search=false + show_replace=true
+        // would make replace_enter=true, triggering a replace instead of advancing.
+        let mut app = make_search_app("hello hello", "hello", "rust");
+        app.search.as_mut().unwrap().focus_search = false;
+        app.search.as_mut().unwrap().show_replace = true;
+        app.search.as_mut().unwrap().current = 0;
+        handle_search_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(
+            app.textarea.lines()[0],
+            "hello hello",
+            "Ctrl+F must advance match even when replace field has focus"
+        );
+    }
+
+    #[test]
+    fn search_key_ctrl_char_not_treated_as_printable() {
+        // Kills line 425:14 `replace match guard with true` and the `| with &`
+        // mutations on line 427 (which reduce the mask to a single modifier bit,
+        // allowing Ctrl+char to slip through as printable).
+        // Ctrl+Z is not handled by any named arm; it must be swallowed, not appended.
+        let mut app = make_search_app("hello", "he", "");
+        let before = app.search.as_ref().unwrap().query.clone();
+        handle_search_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(
+            app.search.as_ref().unwrap().query,
+            before,
+            "Ctrl+Z must be swallowed, not appended as 'z' to the query field"
+        );
+    }
+
+    #[test]
+    fn search_key_non_char_key_not_treated_as_printable() {
+        // Kills line 428:13 `replace && with ||`.
+        // With `||`, the arm matches whenever the guard is true OR k.code is Char(_).
+        // An unhandled non-Char key (F5) with no modifier must be swallowed.
+        let mut app = make_search_app("hello", "he", "");
+        let before = app.search.as_ref().unwrap().query.clone();
+        handle_search_key(&mut app, KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE));
+        assert_eq!(
+            app.search.as_ref().unwrap().query,
+            before,
+            "F5 (non-Char key) must be swallowed, not appended to the query"
+        );
+    }
+
+    #[test]
+    fn alt_t_reformats_table_via_handle_key_event() {
+        // Kills line 669:9 `delete match arm Alt+T in handle_key_event`.
+        // The existing handle_format_table test calls the function directly;
+        // this test verifies the keybinding wire-up in the dispatch table.
+        let mut app = make_app();
+        app.textarea = TextArea::new(vec![
+            "| a | bb |".to_string(),
+            "|---|---|".to_string(),
+            "| c | d |".to_string(),
+        ]);
+        app.textarea.move_cursor(CursorMove::Jump(0, 0));
+        handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('t'), KeyModifiers::ALT),
+        );
+        // After reformat all rows must have the same length.
+        let l0 = app.textarea.lines()[0].len();
+        let l2 = app.textarea.lines()[2].len();
+        assert_eq!(l0, l2, "Alt+T must reformat table rows to equal length");
+        assert!(l0 > 0, "reformatted table must be non-empty");
     }
 }

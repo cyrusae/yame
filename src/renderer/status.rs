@@ -25,14 +25,22 @@ const SEP_POWERLINE: char = '\u{e0b0}';
 /// always show the same pill while only the hints zone changes.
 fn pill1_parts(app: &App) -> (Span<'static>, Color) {
     let theme = &app.theme;
-    let (pill_bg, pill_fg): (Color, Color) = if app.is_dirty {
+    let (pill_bg, pill_fg): (Color, Color) = if app.read_only {
+        (theme.muted, theme.bg)
+    } else if app.is_dirty {
         (theme.accent, theme.bg)
     } else {
         (theme.text, theme.bg)
     };
-    let dirty_marker = if app.is_dirty { " [*]" } else { "" };
+    let marker = if app.read_only {
+        " [RO]"
+    } else if app.is_dirty {
+        " [*]"
+    } else {
+        ""
+    };
     let path_str = &app.shortened_path;
-    let text = format!(" {path_str}{dirty_marker} ");
+    let text = format!(" {path_str}{marker} ");
     (
         Span::styled(text, Style::default().fg(pill_fg).bg(pill_bg)),
         pill_bg,
@@ -77,6 +85,8 @@ pub fn render_status_bar(f: &mut Frame, area: Rect, app: &App) {
         }
 
         StatusMode::Normal => build_normal_status_bar(app),
+
+        StatusMode::GoToLine { input } => build_goto_line_bar(app, input),
     };
 
     let para = Paragraph::new(content).style(Style::default().bg(canvas_bg));
@@ -131,16 +141,47 @@ pub(super) fn build_normal_status_bar(app: &App) -> Line<'static> {
     let (pill1, pill_bg) = pill1_parts(app);
     let cap1 = Span::styled(sep.clone(), Style::default().fg(pill_bg).bg(hints_bg));
 
-    let hints = Span::styled(
-        " ^S Save  ^X Exit  ^Z Undo  ^Y Redo  ^R Reload ",
-        Style::default().fg(muted_fg).bg(hints_bg),
-    );
+    let hints_text = if app.read_only {
+        " ^E Unlock  ^X Exit  ^F Search  F1 Keys "
+    } else {
+        " ^S Save  ^X Exit  ^F Search  F1 Keys "
+    };
+    let hints = Span::styled(hints_text, Style::default().fg(muted_fg).bg(hints_bg));
     let cap2 = Span::styled(sep, Style::default().fg(hints_bg).bg(canvas_bg));
 
     Line::from(vec![pill1, cap1, hints, cap2])
 }
 
-/// Render the second-to-last row: cursor position and word count.
+/// Build the status bar for the go-to-line prompt.
+///
+/// Shows `" Go to line: {input}_ "` centred on `hints_bg` so the prompt is
+/// visually distinct from the normal hints bar but not as alarming as the exit
+/// prompt.  The trailing `_` acts as a simple text cursor indicator.
+pub(super) fn build_goto_line_bar(app: &App, input: &str) -> Line<'static> {
+    let theme = &app.theme;
+    let hints_bg = theme.ui_bg;
+    let accent_fg = theme.accent;
+
+    let content = format!(" Go to line: {input}_ ");
+    Line::from(vec![Span::styled(
+        content,
+        Style::default()
+            .fg(accent_fg)
+            .bg(hints_bg)
+            .add_modifier(Modifier::BOLD),
+    )])
+}
+
+/// Nerd Font typewriter icon (nf-md-typewriter, U+F04C3).  Requires a patched font.
+const TYPEWRITER_GLYPH: &str = "󰓃";
+/// ASCII fallback for the typewriter mode indicator.
+const TYPEWRITER_ASCII: &str = "[T]";
+/// Nerd Font eye icon (nf-md-eye, U+F06D2) for focus mode.  Requires a patched font.
+const FOCUS_GLYPH: &str = "󰛐";
+/// ASCII fallback for the focus mode indicator.
+const FOCUS_ASCII: &str = "[F]";
+
+/// Render the second-to-last row: cursor position, word count, and mode indicators.
 #[mutants::skip] // Writes into ratatui Buffer — void, not testable via return value.
 pub fn render_info_line(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
@@ -166,4 +207,39 @@ pub fn render_info_line(f: &mut Frame, area: Rect, app: &App) {
         Paragraph::new(text).style(Style::default().fg(theme.muted).bg(theme.bg)),
         text_area,
     );
+
+    // Mode indicators — right-aligned, accent coloured.
+    // Each active mode contributes a token; they are concatenated and rendered
+    // as a single right-aligned widget so they stack naturally.
+    let mut indicators = String::new();
+    if app.focus_mode {
+        let icon = if app.powerline_glyphs {
+            FOCUS_GLYPH
+        } else {
+            FOCUS_ASCII
+        };
+        indicators.push_str(&format!(" {icon} "));
+    }
+    if app.typewriter_mode {
+        let icon = if app.powerline_glyphs {
+            TYPEWRITER_GLYPH
+        } else {
+            TYPEWRITER_ASCII
+        };
+        indicators.push_str(&format!(" {icon} "));
+    }
+    if !indicators.is_empty() {
+        let iw = indicators.chars().count() as u16;
+        if iw <= area.width {
+            let indicator_area = Rect {
+                x: area.x + area.width - iw,
+                width: iw,
+                ..area
+            };
+            f.render_widget(
+                Paragraph::new(indicators).style(Style::default().fg(theme.accent).bg(theme.bg)),
+                indicator_area,
+            );
+        }
+    }
 }

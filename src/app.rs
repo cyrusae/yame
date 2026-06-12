@@ -1,13 +1,17 @@
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 
 use tui_textarea::TextArea;
 
 use crate::config::{FiletypeConfig, Theme};
-use crate::decoration::DecorationMap;
+use crate::decoration::{
+    DecorationMap, block_highlights_to_decoration_map, build_decoration_map, count_words,
+};
 use crate::highlighting::HighlightCache;
 use crate::renderer::shorten_path;
+use crate::search::SearchState;
 use crate::status::StatusLine;
 
 // ---------------------------------------------------------------------------
@@ -164,13 +168,35 @@ pub struct App {
     /// Mirrors `[layout] tab_width` from config; stored here so `handle_key_event`
     /// can expand Tab keypresses without needing access to the full config.
     pub tab_width: usize,
+    /// Show line numbers in the left gutter.
+    /// Mirrors `[layout] line_numbers` from config.  Default false.
+    pub show_line_numbers: bool,
     /// Syntect highlight cache. `None` when highlighting is disabled in config.
-    /// Populated at startup from `[highlighting] enabled` + `syntect_theme`.
-    pub highlight_cache: Option<HighlightCache>,
+    /// Wrapped in `Arc` so the background decoration worker can hold a cheap
+    /// reference without cloning the heavy `SyntaxSet` / `ThemeSet` payloads.
+    pub highlight_cache: Option<Arc<HighlightCache>>,
     /// Editing mode: Markdown decoration, plain syntect highlighting, or plain text.
     /// Resolved from the file extension and `[filetype]` config at startup and
     /// updated on config reload (Ctrl+R).
     pub file_mode: FileMode,
+    /// Active search/replace session, or `None` when the search bar is closed.
+    pub search: Option<SearchState>,
+    /// When true, the viewport is kept centred on the cursor line after every
+    /// non-free-scroll keypress (typewriter mode).  Toggled by Ctrl+T.
+    /// Free-scrolling (mouse wheel, Ctrl+Up/Down) still works; the view
+    /// re-centres on the next cursor-moving keypress.
+    pub typewriter_mode: bool,
+    /// When true, lines outside the logical paragraph containing the cursor
+    /// are dimmed to `theme.muted`.  Toggled by Ctrl+D.
+    pub focus_mode: bool,
+    /// When true the full keybindings reference modal is rendered over the
+    /// editor.  Toggled by F1; dismissed by Esc or F1 while open.
+    pub show_shortcuts: bool,
+    /// When true the buffer is opened in read-only mode: all content-modifying
+    /// keys are suppressed and the status bar shows a distinct `[RO]` pill.
+    /// Set at startup via the `-r` / `--read-only` CLI flag; never toggled at
+    /// runtime.
+    pub read_only: bool,
 }
 
 impl App {
@@ -186,12 +212,38 @@ impl App {
         tab_width: usize,
         highlight_cache: Option<HighlightCache>,
         file_mode: FileMode,
+        show_line_numbers: bool,
     ) -> io::Result<Self> {
         let textarea = load_file(&file_path, tab_width)?;
         // Snapshot the initial content so recompute_dirty() has a baseline for both
         // existing files (undo back to load state → clean) and new files (empty baseline).
         let saved_content = Some(textarea.lines().to_vec());
         let shortened_path = shorten_path(&file_path, 3);
+
+        // Wrap the cache in Arc now so the background decoration worker can hold
+        // a reference without cloning the expensive SyntaxSet/ThemeSet payloads.
+        let highlight_cache: Option<Arc<HighlightCache>> = highlight_cache.map(Arc::new);
+
+        // Pre-compute the initial decoration map before entering the alternate screen
+        // so the event loop's first draw is immediate with fully-styled content,
+        // eliminating the blank-frame flash on startup.
+        let text = textarea.lines().join("\n");
+        let (decoration_map, word_count) = match &file_mode {
+            FileMode::Markdown => {
+                build_decoration_map(&text, &theme, italic_support, highlight_cache.as_deref())
+            }
+            FileMode::PlainHighlight(lang) => {
+                let map = highlight_cache
+                    .as_deref()
+                    .and_then(|cache| cache.highlight_block(lang, &text))
+                    .map(|hl| block_highlights_to_decoration_map(&hl, 0))
+                    .unwrap_or_default();
+                let wc = count_words(&text);
+                (map, wc)
+            }
+            FileMode::PlainText => (DecorationMap::default(), count_words(&text)),
+        };
+
         Ok(Self {
             textarea,
             shortened_path,
@@ -203,8 +255,8 @@ impl App {
             powerline_glyphs,
             last_keystroke: None,
             force_redecorate: false,
-            decoration_map: DecorationMap::default(),
-            word_count: 0,
+            decoration_map,
+            word_count,
             status: StatusLine::default(),
             config_warnings,
             scroll_top: 0,
@@ -215,6 +267,12 @@ impl App {
             tab_width: tab_width.max(1),
             highlight_cache,
             file_mode,
+            show_line_numbers,
+            search: None,
+            typewriter_mode: false,
+            focus_mode: false,
+            show_shortcuts: false,
+            read_only: false, // set by caller via app.read_only = read_only after new()
         })
     }
 
@@ -398,6 +456,12 @@ mod tests {
             tab_width: 4,
             highlight_cache: None,
             file_mode: FileMode::Markdown,
+            show_line_numbers: false,
+            search: None,
+            typewriter_mode: false,
+            focus_mode: false,
+            show_shortcuts: false,
+            read_only: false,
         }
     }
 

@@ -6,7 +6,7 @@ The goal is something meaningfully lighter than VS Code for editing READMEs, not
 
 It can also be used as a distraction-free text editor!
 
-> **v0.1.0.** Core editing, decoration, and theming are solid. Keybindings are stable; config keys may be added to.
+> **v0.2.0.** Core editing, decoration, and theming are solid. Keybindings are stable; config keys may be added to.
 
 <!-- screenshot or demo GIF goes here -->
 
@@ -14,7 +14,7 @@ It can also be used as a distraction-free text editor!
 
 ## What it does
 
-- Opens and saves Markdown files with live inline decoration: headings, bold, italic, inline code, fenced blocks, blockquotes, links, lists, todo checkboxes, tables, strikethrough, horizontal rules
+- Opens and saves Markdown files with live inline decoration: headings, bold, italic, inline code, fenced blocks, blockquotes, links, lists, todo checkboxes, tables, strikethrough, horizontal rules, `==highlights==`, YAML/TOML frontmatter
 - Syntax highlighting in fenced code blocks for over 150 languages
 - Centered editing column with soft word wrap (wide/CJK character aware)
 - Catppuccin Mocha theme by default, fully configurable via `~/.config/yame/config.toml`
@@ -23,11 +23,11 @@ It can also be used as a distraction-free text editor!
 - Decoupled viewport scrolling — scroll to read without moving the cursor
 - Undo/redo via `Ctrl+Z` / `Ctrl+Y`
 - Live config reload with `Ctrl+R`
+- Search and find/replace (`Ctrl+F` / `Ctrl+H`) with regex support
+- Optional line numbers, focus mode, and typewriter mode
 
 ## What it doesn't do yet
 
-- No search / find-replace (planned v2)
-- No line numbers (planned v2)
 - No tab completion, file browser, or split panes
 
 ---
@@ -56,6 +56,7 @@ Tested on macOS. Should work on Linux and Windows; untested. Issues and pull req
 
 ```
 yame <file>           Open <file> for editing (created if it doesn't exist)
+yame -r <file>        Open <file> in read-only mode (no edits, no save)
 yame init             Print shell integration function for your shell
 yame write-config     Write a commented default config to ~/.config/yame/config.toml
 yame --help           Show help
@@ -109,6 +110,14 @@ Without `fd`, replace `fd --type f --extension md` with `find . -name "*.md"`.
 | `Ctrl+C` | Copy selection |
 | `Ctrl+V` | Paste from system clipboard |
 | `Ctrl+R` | Reload config file |
+| `Ctrl+E` | Toggle read-only mode |
+| `Ctrl+F` | Search |
+| `Ctrl+H` | Find & replace |
+| `Ctrl+G` | Go to line |
+| `Ctrl+T` | Toggle typewriter mode |
+| `Ctrl+D` | Toggle focus mode |
+| `Alt+T` | Reformat table |
+| `F1` | Keybinding reference |
 | Arrow keys | Move cursor |
 | `Shift+Arrow` | Select text |
 | `Home` / `End` | Start / end of line |
@@ -165,6 +174,10 @@ Optional per-element overrides. These take precedence over the derived defaults.
 # ui_bar              = "#313244"
 # ui_text             = "#cdd6f4"
 # delimiter_blend     = 0.4         # 0.0 = full muted, 1.0 = full span color
+# highlight_bg        = "#524568"   # ==text== background (accent at 35% — try "#816a9f" for bolder)
+# highlight_fg        = "#cdd6f4"   # ==text== foreground
+# frontmatter_key     = "#a6e3a1"   # YAML/TOML frontmatter key color (default: code green)
+# frontmatter_bg      = "#1e2620"   # YAML/TOML frontmatter block background (default: code at 15%)
 ```
 
 ### Per-level heading colors
@@ -183,9 +196,11 @@ Optional per-element overrides. These take precedence over the derived defaults.
 
 ```toml
 [layout]
-# min_cols         = 60    # minimum editing column width in characters
-# tab_width        = 4     # spaces per tab character (tabs are expanded on load)
-# powerline_glyphs = true  # set false to use the universal │ separator instead
+# min_cols         = 60     # minimum editing column width in characters
+# max_cols         = 88     # maximum editing column width — caps the prose wrap margin on wide terminals
+# tab_width        = 4      # spaces per tab character (tabs are expanded on load)
+# line_numbers     = false  # set true to show line numbers in the left gutter
+# powerline_glyphs = true   # set false to use the universal │ separator instead
 ```
 
 > **Note:** Nerd Font arrow separators are on by default. If your terminal font doesn't include glyph U+E0B0 and the status bar shows a box character, add `powerline_glyphs = false` to your config. 

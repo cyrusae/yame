@@ -18,6 +18,12 @@ Mixed: **bold and *nested italic* inside bold** — pulldown-cmark handles this 
 
 What about *italic and **nested bold***?
 
+==Highlighting test.==
+
+==Highlighting test over **bold**, *italic*, and a [link](https://bsky.app)==
+
+Lorem ipsum I don't actually have this memorized but it would ==probably== be somewhat in character for me to do so. I don't know if I'll even ==end up using== the highlight function because of how large the delimiters are but I wanted to have the ==option==. 
+
 ---
 
 ## Inline Elements
@@ -129,6 +135,8 @@ just fenced_bg tint
 
 ## Tables
 
+Plain separator — pipes and dashes styled muted, no alignment colons:
+
 | Element       | Style                        | Notes               |
 | ------------- | ---------------------------- | ------------------- |
 | Heading       | Bold + accent color          | Full-line bg tint   |
@@ -136,6 +144,14 @@ just fenced_bg tint
 | Italic        | Italic + emphasis color      | With fallback       |
 | Inline code   | Code color + bg tint         | Backticks included  |
 | Link          | Underline + accent / muted   | Split at `](`       |
+
+Alignment markers — colons in separator should appear in accent color:
+
+| Left-aligned  | Centered          |     Right-aligned |  None  |
+| :------------ | :---------------: | ----------------: | ------ |
+| `code` cell   | **bold** cell     |    *italic* cell  | plain  |
+| short         | a longer value    |               42  | text   |
+| left text     | center text       |        999.99     | more   |
 
 ---
 

@@ -54,6 +54,19 @@ pub struct ThemeOverrides {
     pub ui_text: Option<String>,
     /// 0.0 = full muted, 1.0 = full span color. Default 0.4.
     pub delimiter_blend: Option<f32>,
+    /// Background colour for `==highlighted==` text.
+    /// Default: 55 % blend of `code` toward `bg` — a visible green tint.
+    pub highlight_bg: Option<String>,
+    /// Foreground colour for `==highlighted==` text.
+    /// Default: body `text` colour.
+    pub highlight_fg: Option<String>,
+    /// Foreground colour for YAML/TOML frontmatter keys.
+    /// Default: `code` colour (green) so keys are visually distinct from accent headings.
+    pub frontmatter_key: Option<String>,
+    /// Background tint for the entire frontmatter block (delimiters + content).
+    /// Default: `code` blended 15 % toward `bg` — a subtle green panel distinct
+    /// from the accent-tinted heading background.
+    pub frontmatter_bg: Option<String>,
 }
 
 /// Per-level heading color overrides (all optional).
@@ -71,7 +84,17 @@ pub struct HeadingColors {
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct LayoutConfig {
+    /// Minimum editing-column width in terminal columns.  The column expands to
+    /// fill the terminal (up to 50 % of width) but never narrows below this.
+    /// Default 60.
     pub min_cols: Option<u16>,
+    /// Maximum editing-column width in terminal columns.  The column will not
+    /// exceed this value even on wide terminals, keeping line length comfortable
+    /// for prose writing.  Must be ≥ `min_cols`; if smaller, `min_cols` wins.
+    /// Default: unlimited (the column fills up to 50 % of the terminal width).
+    ///
+    /// Example: `max_cols = 88` keeps every line within 88 characters.
+    pub max_cols: Option<u16>,
     /// Number of spaces to substitute for each `\t` on file load. Default 4.
     pub tab_width: Option<u16>,
     /// Use Powerline/Nerd Font filled-arrow glyphs (U+E0B0) in the status bar
@@ -79,6 +102,11 @@ pub struct LayoutConfig {
     /// Requires a Nerd Font or Powerline-patched font. Default true.
     /// Set `powerline_glyphs = false` to opt out if your font lacks glyph U+E0B0.
     pub powerline_glyphs: Option<bool>,
+    /// Show line numbers in the left gutter. Default false.
+    /// Numbers are right-aligned and muted; the cursor line uses accent color.
+    /// The gutter width grows automatically as the document grows past 9, 99,
+    /// 999 … lines so the content column shifts by one cell at each threshold.
+    pub line_numbers: Option<bool>,
 }
 
 /// Configuration for syntax highlighting of fenced code blocks.
@@ -185,6 +213,18 @@ pub struct Theme {
     pub ui_bg: Color,
     pub ui_bar: Color,
     pub ui_text: Color,
+    // line numbers
+    pub line_num_active: Color,   // cursor line — muted
+    pub line_num_inactive: Color, // all other rows — muted blended toward bg
+    // search match highlights
+    pub search_match_bg: Color,   // all non-current matches — dim tint
+    pub search_current_bg: Color, // the currently selected match — brighter tint
+    // ==highlight== spans
+    pub highlight_bg: Color,
+    pub highlight_fg: Color,
+    // frontmatter
+    pub frontmatter_key: Color,
+    pub frontmatter_bg: Color,
     // per-level headings
     pub headings: HeadingTheme,
     pub delimiter_blend: f32,
@@ -295,7 +335,7 @@ impl Theme {
         );
         let blockquote_color = resolve(
             &overrides.blockquote_color,
-            blend(muted, text, 0.5),
+            blend(accent, muted, 0.5),
             warnings,
         );
         let link_text = resolve(
@@ -319,6 +359,33 @@ impl Theme {
         let ui_bar_rgb = resolve(&overrides.ui_bar, bg, warnings);
         let ui_text_rgb = resolve(&overrides.ui_text, text, warnings);
         let delimiter_blend = overrides.delimiter_blend.unwrap_or(0.4).clamp(0.0, 1.0);
+        // Line-number colors: deliberately subdued so they don't compete with content.
+        // Active (cursor) row uses plain muted; inactive rows blend muted 60% toward bg.
+        let line_num_active_rgb = muted;
+        let line_num_inactive_rgb = blend(muted, bg, 0.6);
+        // Search-match highlight colors derived from code_color (green) so they are
+        // visually distinct from selections (which use accent/lavender).
+        let search_match_bg_rgb = blend(code_rgb, bg, 0.35);
+        let search_current_bg_rgb = blend(code_rgb, bg, 0.70);
+        // Highlight (==text==): green tint background, normal text foreground.
+        // Users can override to e.g. a warm yellow for a traditional marker feel.
+        // Default: accent blended 35% toward bg — visibly tinted without reaching
+        // selection-level saturation.  Uses the accent hue so highlights stay
+        // tonally consistent with the rest of the theme.
+        // Override with [theme] highlight_bg.
+        let highlight_bg_rgb = resolve(&overrides.highlight_bg, blend(accent, bg, 0.35), warnings);
+        let highlight_fg_rgb = resolve(&overrides.highlight_fg, text, warnings);
+        // Frontmatter key color: code green by default — visually distinct from
+        // accent headings and makes keys easy to scan against plain-text values.
+        let frontmatter_key_rgb = resolve(&overrides.frontmatter_key, code_rgb, warnings);
+        // Frontmatter background: code blended 15% toward bg, same recipe as
+        // heading_bg but using the code hue so the block reads as a distinct
+        // "data" surface rather than a heading.
+        let frontmatter_bg_rgb = resolve(
+            &overrides.frontmatter_bg,
+            blend(code_rgb, bg, 0.15),
+            warnings,
+        );
 
         // Per-level heading colors
         let heading_default = |blend_t: f32| blend(accent, text, blend_t);
@@ -376,6 +443,14 @@ impl Theme {
             ui_bg: to_color(ui_bg_rgb),
             ui_bar: to_color(ui_bar_rgb),
             ui_text: to_color(ui_text_rgb),
+            line_num_active: to_color(line_num_active_rgb),
+            line_num_inactive: to_color(line_num_inactive_rgb),
+            search_match_bg: to_color(search_match_bg_rgb),
+            search_current_bg: to_color(search_current_bg_rgb),
+            highlight_bg: to_color(highlight_bg_rgb),
+            highlight_fg: to_color(highlight_fg_rgb),
+            frontmatter_key: to_color(frontmatter_key_rgb),
+            frontmatter_bg: to_color(frontmatter_bg_rgb),
             headings: HeadingTheme {
                 h1: to_color(h1_rgb),
                 h2: to_color(h2_rgb),
@@ -447,6 +522,10 @@ warning = "#f38ba8"   # dirty flag, warnings
 # ui_bar              = "#11111b"
 # ui_text             = "#cdd6f4"
 # delimiter_blend     = 0.4        # 0.0 = full muted · 1.0 = full span color
+# highlight_bg        = "#524568"  # ==text== background (accent at 35% — try "#816a9f" for bolder)
+# highlight_fg        = "#cdd6f4"  # ==text== foreground
+# frontmatter_key     = "#a6e3a1"  # YAML/TOML frontmatter key color (default: code green)
+# frontmatter_bg      = "#1e2620"  # YAML/TOML frontmatter block background (default: code at 15%)
 
 # ── Per-level heading colors ──────────────────────────────────────────────────
 [headings]
@@ -460,8 +539,10 @@ warning = "#f38ba8"   # dirty flag, warnings
 # ── Layout ────────────────────────────────────────────────────────────────────
 [layout]
 # min_cols         = 60     # minimum editing-column width in characters
+# max_cols         = 88     # maximum editing-column width (prose wrap margin); default: unlimited
 # tab_width        = 4      # spaces per tab character expanded on load
 # powerline_glyphs = true   # set false to use the universal │ separator (no Nerd Font required)
+# line_numbers     = false  # set true to show line numbers in the left gutter
 
 # ── Syntax highlighting ────────────────────────────────────────────────────────
 [highlighting]

@@ -6,12 +6,18 @@ use ratatui::{
 };
 
 use crate::decoration::{DecorationMap, StyledSpan};
+use crate::search::Match as SearchMatch;
 
 mod status;
 mod utils;
 
+pub use self::search_bar::{
+    render_search_bar, render_search_help_modal, render_shortcuts_modal, search_bar_height,
+};
 pub use status::{render_info_line, render_status_bar};
 pub use utils::{format_thousands, shorten_path, split_into_spans};
+
+mod search_bar;
 
 // ---------------------------------------------------------------------------
 // Soft-wrap helpers
@@ -288,6 +294,23 @@ pub fn char_col_at_visual(
 /// Blank columns on each side of the text content within the editor column.
 pub const GUTTER: u16 = 1;
 
+/// Width of the left gutter in terminal columns, including any line-number
+/// field and its trailing separator space.
+///
+/// When `show_line_numbers` is false: returns [`GUTTER`] (= 1), preserving the
+/// existing single-cell blank gutter behaviour.
+///
+/// When true: returns `digit_count(total_lines.max(1)) + 2`.
+/// The `+ 2` is the two-cell separator gap between the number and content.
+/// Examples: 0–9 lines → 3, 10–99 lines → 4, 100–999 lines → 5.
+pub fn left_gutter_width(total_lines: usize, show_line_numbers: bool) -> u16 {
+    if !show_line_numbers {
+        return GUTTER;
+    }
+    let digits = total_lines.max(1).ilog10() as usize + 1;
+    (digits + 2) as u16
+}
+
 // ---------------------------------------------------------------------------
 // MarkdownView widget
 // ---------------------------------------------------------------------------
@@ -301,12 +324,26 @@ pub struct MarkdownView<'a> {
     pub selection: Option<((usize, usize), (usize, usize))>,
     pub theme: &'a crate::config::Theme,
     pub column_width: u16,
+    /// When true, line numbers are rendered in the left gutter.
+    /// The gutter width adjusts automatically based on the total line count.
+    pub show_line_numbers: bool,
+    /// All current search matches `(line, char_start, char_end)`.  Empty when
+    /// no search is active or the query is blank.
+    pub search_matches: &'a [SearchMatch],
+    /// Index of the currently selected search match (highlighted brighter).
+    pub search_current: usize,
+    /// When `Some((start, end))`, lines outside the inclusive range are dimmed
+    /// to `theme.muted`.  Compute with [`focus_paragraph_bounds`] when focus
+    /// mode is active; pass `None` to disable.
+    pub focus_mode_paragraph: Option<(usize, usize)>,
 }
 
 impl Widget for MarkdownView<'_> {
     #[mutants::skip] // Writes into ratatui Buffer — void, not testable via return value.
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let content_width = (self.column_width as usize).saturating_sub(2 * GUTTER as usize);
+        let left_gutter = left_gutter_width(self.lines.len(), self.show_line_numbers);
+        let content_width =
+            (self.column_width as usize).saturating_sub(left_gutter as usize + GUTTER as usize);
         let visible = area.height as usize;
         let bg = self.theme.bg;
         let default_style = Style::default().fg(self.theme.text).bg(bg);
@@ -328,8 +365,10 @@ impl Widget for MarkdownView<'_> {
         while visual_row < visible && log_row < total {
             let line = &self.lines[log_row];
             let line_decs = self.decoration_map.get(&log_row);
-            // Compute the continuation indent before wrapping so continuation
-            // rows are wrapped at the narrower effective width.
+            // Compute indents before wrapping so rows are wrapped at the correct
+            // effective width.
+            // `line_ci` — continuation indent (wrap_idx > 0 only, e.g. list bullets).
+            // `line_ri` — first-row indent (wrap_idx == 0, e.g. frontmatter content).
             let line_ci = line_decs
                 .map(|decs| {
                     decs.iter()
@@ -338,9 +377,12 @@ impl Widget for MarkdownView<'_> {
                         .unwrap_or(0)
                 })
                 .unwrap_or(0) as usize;
+            let line_ri = line_decs
+                .map(|decs| decs.iter().map(|s| s.row_indent).max().unwrap_or(0))
+                .unwrap_or(0) as usize;
             let wrapped = wrap_line_indented(
                 line,
-                content_width.max(1),
+                content_width.saturating_sub(line_ri).max(1),
                 content_width.saturating_sub(line_ci).max(1),
             );
 
@@ -366,6 +408,7 @@ impl Widget for MarkdownView<'_> {
                                 style: s.style,
                                 is_blockquote: s.is_blockquote,
                                 continuation_indent: s.continuation_indent,
+                                row_indent: s.row_indent,
                                 full_line_bg: s.full_line_bg,
                                 border_bottom: s.border_bottom,
                                 is_rule: s.is_rule,
@@ -374,8 +417,10 @@ impl Widget for MarkdownView<'_> {
                     })
                     .unwrap_or_default();
 
-                // Continuation rows (wrap_idx > 0) of blockquote/list lines are
-                // indented to align with the text start after the `> ` / bullet prefix.
+                // Visual left-margin indent for this row.
+                //
+                // • wrap_idx > 0: use `continuation_indent` (blockquote/list alignment).
+                // • wrap_idx == 0: use `row_indent` (e.g. frontmatter content offset).
                 //
                 // IMPORTANT: read from `line_decs` (all logical-line spans), NOT from
                 // `row_spans` (filtered to visual-row char range).  The bullet/indicator
@@ -392,7 +437,7 @@ impl Widget for MarkdownView<'_> {
                         })
                         .unwrap_or(0) as u16
                 } else {
-                    0
+                    line_ri as u16
                 };
 
                 // Cursor tracking
@@ -405,7 +450,7 @@ impl Widget for MarkdownView<'_> {
                         let col_in_row = display_cols_for_chars(row_str, chars_into_row)
                             .min(content_width.saturating_sub(1));
                         cursor_buf_pos = Some((
-                            area.x + GUTTER + continuation_indent + col_in_row as u16,
+                            area.x + left_gutter + continuation_indent + col_in_row as u16,
                             area.y + visual_row as u16,
                         ));
                     }
@@ -424,8 +469,37 @@ impl Widget for MarkdownView<'_> {
 
                 let y = area.y + visual_row as u16;
 
-                for col in 0..self.column_width {
-                    buf[(area.x + col, y)].set_bg(line_bg);
+                // When line numbers are on, clip special block backgrounds (fenced,
+                // heading) to the content columns only — the gutter always uses the
+                // plain editor bg so numbers stay legible on any block background.
+                if self.show_line_numbers {
+                    for col in 0..left_gutter {
+                        buf[(area.x + col, y)].set_bg(bg);
+                    }
+                    for col in left_gutter..self.column_width {
+                        buf[(area.x + col, y)].set_bg(line_bg);
+                    }
+                } else {
+                    for col in 0..self.column_width {
+                        buf[(area.x + col, y)].set_bg(line_bg);
+                    }
+                }
+
+                // Line numbers: render right-aligned number on the first sub-row,
+                // leave continuation rows blank (gutter inherits plain bg from above).
+                if self.show_line_numbers && wrap_idx == 0 {
+                    let num_color = if log_row == cursor_log_row {
+                        self.theme.line_num_active
+                    } else {
+                        self.theme.line_num_inactive
+                    };
+                    // Number occupies exactly `digits` columns (left_gutter - 2),
+                    // right-aligned; the two trailing cells are the separator gap.
+                    let num_width = (left_gutter as usize).saturating_sub(2);
+                    let num_str = format!("{:>width$}", log_row + 1, width = num_width);
+                    for (i, ch) in num_str.chars().enumerate() {
+                        buf[(area.x + i as u16, y)].set_char(ch).set_fg(num_color);
+                    }
                 }
 
                 if is_rule {
@@ -434,7 +508,7 @@ impl Widget for MarkdownView<'_> {
                         .find(|s| s.is_rule)
                         .map(|s| s.style)
                         .unwrap_or(default_style);
-                    for x in area.x + GUTTER..area.x + GUTTER + content_width as u16 {
+                    for x in area.x + left_gutter..area.x + left_gutter + content_width as u16 {
                         buf[(x, y)].set_char('─').set_style(rule_style);
                     }
                 } else {
@@ -455,12 +529,14 @@ impl Widget for MarkdownView<'_> {
                         default_style.bg(line_bg)
                     };
                     let segments = split_into_spans(row_str, &row_spans, row_default);
-                    let mut x = area.x + GUTTER + continuation_indent;
+                    let mut x = area.x + left_gutter + continuation_indent;
                     for span in &segments {
                         for ch in span.content.chars() {
                             let cw = UnicodeWidthChar::width(ch).unwrap_or(1);
                             // Stop before this char would overflow the content area.
-                            if (x.saturating_sub(area.x + GUTTER)) as usize + cw > content_width {
+                            if (x.saturating_sub(area.x + left_gutter)) as usize + cw
+                                > content_width
+                            {
                                 break;
                             }
                             buf[(x, y)].set_char(ch).set_style(span.style);
@@ -470,7 +546,9 @@ impl Widget for MarkdownView<'_> {
                                 // "owns" that cell, so when the line scrolls away the
                                 // cell can retain stale content from the previous frame.
                                 let x2 = x + 1;
-                                if ((x2.saturating_sub(area.x + GUTTER)) as usize) < content_width {
+                                if ((x2.saturating_sub(area.x + left_gutter)) as usize)
+                                    < content_width
+                                {
                                     buf[(x2, y)].set_char(' ').set_style(span.style);
                                 }
                             }
@@ -479,16 +557,18 @@ impl Widget for MarkdownView<'_> {
                     }
                 }
 
-                // Bottom border (H1–H3 heading underline, last visual row only)
+                // Bottom border (H1–H3 heading underline, last visual row only).
+                // Starts after the gutter so the underline never bleeds into the
+                // line-number column.
                 if let Some(bc) = border_color
                     && is_last_wrap
                 {
                     use ratatui::layout::Rect as R;
                     buf.set_style(
                         R {
-                            x: area.x,
+                            x: area.x + left_gutter,
                             y,
-                            width: self.column_width,
+                            width: self.column_width.saturating_sub(left_gutter),
                             height: 1,
                         },
                         Style::default()
@@ -501,6 +581,18 @@ impl Widget for MarkdownView<'_> {
             }
 
             log_row += 1;
+        }
+
+        // Focus overlay — dims lines outside the current paragraph so the
+        // cursor paragraph reads as the primary content.  Applied before the
+        // search and selection overlays so those always win on top.
+        if let Some(focus) = self.focus_mode_paragraph {
+            apply_focus_overlay(area, buf, &self, focus);
+        }
+
+        // Search-match overlay — below selection so selection takes priority.
+        if !self.search_matches.is_empty() {
+            apply_search_overlay(area, buf, &self);
         }
 
         // Selection overlay — applied after content, before cursor.
@@ -531,10 +623,9 @@ fn apply_selection_overlay(
     selection: ((usize, usize), (usize, usize)),
 ) {
     let ((sel_row_start, sel_col_start), (sel_row_end, sel_col_end)) = selection;
-    // Written as GUTTER + GUTTER (not 2 * GUTTER) so that operator-replacement
-    // mutants produce an observable difference: `+→-` gives 0, `+→*` gives 1.
+    let left_gutter = left_gutter_width(view.lines.len(), view.show_line_numbers);
     let content_width =
-        (view.column_width as usize).saturating_sub(GUTTER as usize + GUTTER as usize);
+        (view.column_width as usize).saturating_sub(left_gutter as usize + GUTTER as usize);
     let visible = area.height as usize;
     let total = view.lines.len();
     let sel_fg = view.theme.selection_fg;
@@ -562,9 +653,14 @@ fn apply_selection_overlay(
                     .unwrap_or(0)
             })
             .unwrap_or(0) as usize;
+        let line_ri = view
+            .decoration_map
+            .get(&log_row)
+            .map(|decs| decs.iter().map(|s| s.row_indent).max().unwrap_or(0))
+            .unwrap_or(0) as usize;
         let wrapped = wrap_line_indented(
             line,
-            content_width.max(1),
+            content_width.saturating_sub(line_ri).max(1),
             content_width.saturating_sub(line_ci).max(1),
         );
 
@@ -578,8 +674,8 @@ fn apply_selection_overlay(
 
             let char_end = char_start + char_len;
 
-            // Mirror the continuation_indent logic from render() so selection
-            // highlighting respects the same left-margin indent.
+            // Mirror the indent logic from render() so selection highlighting
+            // respects the same left-margin offset.
             let continuation_indent: u16 = if wrap_idx > 0 {
                 view.decoration_map
                     .get(&log_row)
@@ -591,7 +687,7 @@ fn apply_selection_overlay(
                     })
                     .unwrap_or(0) as u16
             } else {
-                0
+                line_ri as u16
             };
 
             if log_row >= sel_row_start && log_row <= sel_row_end {
@@ -616,9 +712,9 @@ fn apply_selection_overlay(
                     let y = area.y + visual_row as u16;
                     let start_dcols = display_cols_for_chars(row_str, row_sel_start - char_start);
                     let end_dcols = display_cols_for_chars(row_str, row_sel_end - char_start);
-                    let x_start = area.x + GUTTER + continuation_indent + start_dcols as u16;
-                    let x_end = (area.x + GUTTER + continuation_indent + end_dcols as u16)
-                        .min(area.x + GUTTER + content_width as u16);
+                    let x_start = area.x + left_gutter + continuation_indent + start_dcols as u16;
+                    let x_end = (area.x + left_gutter + continuation_indent + end_dcols as u16)
+                        .min(area.x + left_gutter + content_width as u16);
                     for x in x_start..x_end {
                         buf[(x, y)].set_fg(sel_fg).set_bg(sel_bg);
                     }
@@ -628,6 +724,231 @@ fn apply_selection_overlay(
             visual_row += 1;
         }
 
+        log_row += 1;
+    }
+}
+
+/// Paint search-match highlights over already-rendered content.
+///
+/// Dim background for all non-current matches; brighter background for the
+/// current one.  Applied before the selection and cursor overlays so those
+/// always win when they overlap a match cell.
+#[mutants::skip] // Writes into ratatui Buffer — no return value to assert.
+fn apply_search_overlay(area: Rect, buf: &mut Buffer, view: &MarkdownView<'_>) {
+    let left_gutter = left_gutter_width(view.lines.len(), view.show_line_numbers);
+    let content_width =
+        (view.column_width as usize).saturating_sub(left_gutter as usize + GUTTER as usize);
+    let visible = area.height as usize;
+    let total = view.lines.len();
+
+    let dim_bg = view.theme.search_match_bg;
+    let cur_bg = view.theme.search_current_bg;
+
+    // Group matches by line for efficient lookup during the visual scan.
+    // Build a small sorted vec of (char_start, char_end, is_current).
+    let mut by_line: std::collections::HashMap<usize, Vec<(usize, usize, bool)>> =
+        std::collections::HashMap::new();
+    for (i, &(ml, ms, me)) in view.search_matches.iter().enumerate() {
+        by_line
+            .entry(ml)
+            .or_default()
+            .push((ms, me, i == view.search_current));
+    }
+
+    let mut visual_row: usize = 0;
+    let mut log_row = view.scroll_top;
+
+    while visual_row < visible && log_row < total {
+        if let Some(row_matches) = by_line.get(&log_row) {
+            let line = &view.lines[log_row];
+            let line_ci = view
+                .decoration_map
+                .get(&log_row)
+                .map(|decs| {
+                    decs.iter()
+                        .map(|s| s.continuation_indent)
+                        .max()
+                        .unwrap_or(0)
+                })
+                .unwrap_or(0) as usize;
+            let wrapped = wrap_line_indented(
+                line,
+                content_width.max(1),
+                content_width.saturating_sub(line_ci).max(1),
+            );
+            let char_ranges = wrap_char_ranges(line, &wrapped);
+
+            for (wrap_idx, (&row_str, &(char_start, char_len))) in
+                wrapped.iter().zip(char_ranges.iter()).enumerate()
+            {
+                if visual_row >= visible {
+                    break;
+                }
+                let char_end = char_start + char_len;
+                let continuation_indent: u16 = if wrap_idx > 0 {
+                    view.decoration_map
+                        .get(&log_row)
+                        .map(|decs| {
+                            decs.iter()
+                                .map(|s| s.continuation_indent)
+                                .max()
+                                .unwrap_or(0)
+                        })
+                        .unwrap_or(0) as u16
+                } else {
+                    0
+                };
+
+                for &(ms, me, is_current) in row_matches {
+                    let row_ms = ms.max(char_start);
+                    let row_me = me.min(char_end);
+                    if row_ms >= row_me {
+                        visual_row += 1;
+                        continue;
+                    }
+                    let y = area.y + visual_row as u16;
+                    let start_dcols = display_cols_for_chars(row_str, row_ms - char_start);
+                    let end_dcols = display_cols_for_chars(row_str, row_me - char_start);
+                    let x_start = area.x + left_gutter + continuation_indent + start_dcols as u16;
+                    let x_end = (area.x + left_gutter + continuation_indent + end_dcols as u16)
+                        .min(area.x + left_gutter + content_width as u16);
+                    let highlight_bg = if is_current { cur_bg } else { dim_bg };
+                    for x in x_start..x_end {
+                        buf[(x, y)].set_bg(highlight_bg);
+                    }
+                }
+                visual_row += 1;
+            }
+            log_row += 1;
+        } else {
+            // No matches on this line — count its visual rows and move on.
+            let line = &view.lines[log_row];
+            let line_ci = view
+                .decoration_map
+                .get(&log_row)
+                .map(|decs| {
+                    decs.iter()
+                        .map(|s| s.continuation_indent)
+                        .max()
+                        .unwrap_or(0)
+                })
+                .unwrap_or(0) as usize;
+            let wrapped = wrap_line_indented(
+                line,
+                content_width.max(1),
+                content_width.saturating_sub(line_ci).max(1),
+            );
+            visual_row += wrapped.len().max(1);
+            log_row += 1;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Focus mode helpers
+// ---------------------------------------------------------------------------
+
+/// Return the inclusive `(start, end)` line range of the logical paragraph that
+/// contains `cursor_row`.
+///
+/// A paragraph is a contiguous run of non-blank lines bounded above and below
+/// by blank lines (or the document edges).  Blank lines are their own
+/// single-line "paragraph": when the cursor sits on a blank line the function
+/// returns `(cursor_row, cursor_row)`.
+///
+/// This is a pure function with no ratatui dependency — it is unit-tested
+/// directly from the test suite.
+/// Scan downward from `cursor_row + 1` to find the last non-blank line before
+/// the next blank gap (or the last line if no blank is found).
+///
+/// # Mutation notes
+/// `cursor_row + 1 → cursor_row * 1` is `#[mutants::skip]`-protected: the
+/// caller guarantees `lines[cursor_row]` is non-blank (blank rows return early
+/// in `focus_paragraph_bounds`), so starting the scan one position earlier
+/// would still find the same blank line — the cursor row is never blank here.
+#[mutants::skip]
+fn paragraph_end(lines: &[String], cursor_row: usize) -> usize {
+    let n = lines.len();
+    (cursor_row + 1..n)
+        .find(|&i| lines[i].trim().is_empty())
+        .map_or(n - 1, |i| i - 1)
+}
+
+pub fn focus_paragraph_bounds(lines: &[String], cursor_row: usize) -> (usize, usize) {
+    let n = lines.len();
+    if n == 0 {
+        return (0, 0);
+    }
+    let cursor_row = cursor_row.min(n.saturating_sub(1));
+    // Cursor on a blank line → the focus is just that single line.
+    if lines[cursor_row].trim().is_empty() {
+        return (cursor_row, cursor_row);
+    }
+    // Scan upward to find the first blank line above; the paragraph starts
+    // on the line immediately after it (or at 0 if none found).
+    let start = (0..cursor_row)
+        .rev()
+        .find(|&i| lines[i].trim().is_empty())
+        .map_or(0, |i| i + 1);
+    // Scan downward to find the first blank line below; the paragraph ends
+    // on the line immediately before it (or at n-1 if none found).
+    let end = paragraph_end(lines, cursor_row);
+    (start, end)
+}
+
+/// Dim all text cells outside the focus paragraph by overwriting their fg with
+/// `theme.muted`, making out-of-focus content recede visually.
+///
+/// Applied before search and selection overlays so those always render on top.
+#[mutants::skip] // Writes into ratatui Buffer — void, not testable via return value.
+fn apply_focus_overlay(
+    area: Rect,
+    buf: &mut Buffer,
+    view: &MarkdownView<'_>,
+    focus: (usize, usize),
+) {
+    let (focus_start, focus_end) = focus;
+    let left_gutter = left_gutter_width(view.lines.len(), view.show_line_numbers);
+    let content_width =
+        (view.column_width as usize).saturating_sub(left_gutter as usize + GUTTER as usize);
+    let dim_fg = view.theme.muted;
+    let visible = area.height as usize;
+    let total = view.lines.len();
+
+    let mut visual_row = 0usize;
+    let mut log_row = view.scroll_top;
+
+    while visual_row < visible && log_row < total {
+        let line = &view.lines[log_row];
+        let line_ci = view
+            .decoration_map
+            .get(&log_row)
+            .map(|decs| {
+                decs.iter()
+                    .map(|s| s.continuation_indent)
+                    .max()
+                    .unwrap_or(0)
+            })
+            .unwrap_or(0) as usize;
+        let wrapped = wrap_line_indented(
+            line,
+            content_width.max(1),
+            content_width.saturating_sub(line_ci).max(1),
+        );
+
+        for _ in 0..wrapped.len() {
+            if visual_row >= visible {
+                break;
+            }
+            if log_row < focus_start || log_row > focus_end {
+                let y = area.y + visual_row as u16;
+                let x_end = (area.x + left_gutter + content_width as u16).min(area.x + area.width);
+                for x in (area.x + left_gutter)..x_end {
+                    buf[(x, y)].set_fg(dim_fg);
+                }
+            }
+            visual_row += 1;
+        }
         log_row += 1;
     }
 }
@@ -648,7 +969,8 @@ mod tests {
     use crate::decoration::{DecorationMap, StyledSpan};
     use crate::status::StatusLine;
 
-    use super::status::{build_normal_status_bar, build_timed_message_bar};
+    use super::search_bar::search_bar_height;
+    use super::status::{build_goto_line_bar, build_normal_status_bar, build_timed_message_bar};
     use super::*;
 
     fn make_app() -> App {
@@ -675,10 +997,59 @@ mod tests {
             tab_width: 4,
             highlight_cache: None,
             file_mode: crate::app::FileMode::Markdown,
+            show_line_numbers: false,
+            search: None,
+            typewriter_mode: false,
+            focus_mode: false,
+            show_shortcuts: false,
+            read_only: false,
         }
     }
 
     // --- display_cols_for_chars ---
+
+    // ── left_gutter_width ────────────────────────────────────────────────────
+
+    #[test]
+    fn left_gutter_width_off_returns_gutter_constant() {
+        // When line numbers are disabled the gutter is always GUTTER (= 1),
+        // regardless of document size.
+        assert_eq!(left_gutter_width(0, false), GUTTER);
+        assert_eq!(left_gutter_width(9, false), GUTTER);
+        assert_eq!(left_gutter_width(1000, false), GUTTER);
+    }
+
+    #[test]
+    fn left_gutter_width_on_zero_or_single_digit_lines() {
+        // 0–9 lines → 1 digit + 2 separator cells = 3.
+        // 0.max(1) = 1; 1.ilog10() = 0; digits = 1; result = 3.
+        assert_eq!(left_gutter_width(0, true), 3);
+        assert_eq!(left_gutter_width(1, true), 3);
+        assert_eq!(left_gutter_width(9, true), 3);
+    }
+
+    #[test]
+    fn left_gutter_width_on_two_digit_lines() {
+        // 10–99 lines → 2 digits + 2 separator cells = 4.
+        assert_eq!(left_gutter_width(10, true), 4);
+        assert_eq!(left_gutter_width(99, true), 4);
+    }
+
+    #[test]
+    fn left_gutter_width_on_three_digit_lines() {
+        // 100–999 lines → 3 digits + 2 separator cells = 5.
+        assert_eq!(left_gutter_width(100, true), 5);
+        assert_eq!(left_gutter_width(999, true), 5);
+    }
+
+    #[test]
+    fn left_gutter_width_on_four_digit_lines() {
+        // 1000–9999 lines → 4 digits + 2 separator cells = 6.
+        assert_eq!(left_gutter_width(1000, true), 6);
+        assert_eq!(left_gutter_width(9999, true), 6);
+    }
+
+    // ── display_cols_for_chars ────────────────────────────────────────────────
 
     #[test]
     fn display_cols_ascii_equals_char_count() {
@@ -1444,6 +1815,10 @@ mod tests {
             selection: None,
             theme: &theme,
             column_width: 40,
+            show_line_numbers: false,
+            search_matches: &[],
+            search_current: 0,
+            focus_mode_paragraph: None,
         };
         view.render(area, &mut buf);
 
@@ -1518,6 +1893,10 @@ mod tests {
             selection: None,
             theme: &theme,
             column_width: 20,
+            show_line_numbers: false,
+            search_matches: &[],
+            search_current: 0,
+            focus_mode_paragraph: None,
         };
         view.render(area, &mut buf);
 
@@ -1580,6 +1959,10 @@ mod tests {
             selection: None,
             theme,
             column_width: 10,
+            show_line_numbers: false,
+            search_matches: &[],
+            search_current: 0,
+            focus_mode_paragraph: None,
         }
     }
 
@@ -1868,6 +2251,10 @@ mod tests {
             selection: None,
             theme: &theme,
             column_width: 8, // cw = 8 - 2*1 = 6
+            show_line_numbers: false,
+            search_matches: &[],
+            search_current: 0,
+            focus_mode_paragraph: None,
         };
         apply_selection_overlay(area, &mut buf, &view, ((0, 0), (0, 10)));
         let sel_bg = theme.selection_bg;
@@ -1963,6 +2350,10 @@ mod tests {
             selection: None,
             theme: &theme,
             column_width: 8,
+            show_line_numbers: false,
+            search_matches: &[],
+            search_current: 0,
+            focus_mode_paragraph: None,
         };
         // Selection: char 7 to end of line (within sub-row 1, chars 6-9).
         // sub-row 1: row_sel_start=max(7,6)=7. x_start = 1+2+(7-6) = 4. Highlights x=4.
@@ -2016,7 +2407,11 @@ mod tests {
             cursor: (0, 0),
             selection: None,
             theme: &theme,
-            column_width: 10, // cw = 10 - (GUTTER+GUTTER) = 8
+            column_width: 10, // cw = 10 - (left_gutter+GUTTER) = 10-1-1 = 8
+            show_line_numbers: false,
+            search_matches: &[],
+            search_current: 0,
+            focus_mode_paragraph: None,
         };
         apply_selection_overlay(area, &mut buf, &view, ((0, 0), (0, 9)));
         let sel_bg = theme.selection_bg;
@@ -2076,6 +2471,10 @@ mod tests {
             selection: None,
             theme: &theme,
             column_width: 10,
+            show_line_numbers: false,
+            search_matches: &[],
+            search_current: 0,
+            focus_mode_paragraph: None,
         };
         // Select chars 7..9 on line 0 — straddles within the second visual row.
         apply_selection_overlay(area, &mut buf, &view, ((0, 7), (0, 9)));
@@ -2112,6 +2511,169 @@ mod tests {
     // With correct `&&`: `while 2 < 5 && 2 < 2` = false → clean exit. ✓
     // With `&&→||`:      `2 < 5 || 2 < 2` = true → view.lines[2] → panic. ✓
     // With `<→<=` (log): `2 < 5 && 2 <= 2` = true → view.lines[2] → panic. ✓
+    // ── search_bar_height ────────────────────────────────────────────────────
+
+    #[test]
+    fn search_bar_height_none_returns_zero() {
+        let mut app = make_app();
+        app.search = None;
+        assert_eq!(search_bar_height(&app), 0);
+    }
+
+    #[test]
+    fn search_bar_height_search_only_returns_one() {
+        let mut app = make_app();
+        app.search = Some(crate::search::SearchState::new(false));
+        assert_eq!(search_bar_height(&app), 1);
+    }
+
+    #[test]
+    fn search_bar_height_with_replace_returns_two() {
+        let mut app = make_app();
+        app.search = Some(crate::search::SearchState::new(true));
+        assert_eq!(search_bar_height(&app), 2);
+    }
+
+    // ── status bar builders ──────────────────────────────────────────────────
+
+    #[test]
+    fn build_normal_status_bar_has_four_spans() {
+        let app = make_app();
+        let line = build_normal_status_bar(&app);
+        assert_eq!(
+            line.spans.len(),
+            4,
+            "normal bar: pill | sep | hints | trailing-sep"
+        );
+    }
+
+    #[test]
+    fn build_normal_status_bar_hints_span_contains_save_shortcut() {
+        let app = make_app();
+        let line = build_normal_status_bar(&app);
+        let hints = &line.spans[2];
+        assert!(
+            hints.content.contains("^S Save"),
+            "hints span must contain the Save shortcut"
+        );
+    }
+
+    #[test]
+    fn build_normal_status_bar_pill_shows_filename() {
+        let app = make_app();
+        let line = build_normal_status_bar(&app);
+        let pill = &line.spans[0];
+        assert!(
+            pill.content.contains("foo.md"),
+            "pill must show the shortened path"
+        );
+    }
+
+    #[test]
+    fn build_normal_status_bar_clean_pill_bg_is_text_colour() {
+        let app = make_app();
+        let theme = app.theme.clone();
+        let line = build_normal_status_bar(&app);
+        let pill = &line.spans[0];
+        assert_eq!(
+            pill.style.bg,
+            Some(theme.text),
+            "clean file pill background must be theme.text"
+        );
+    }
+
+    #[test]
+    fn build_normal_status_bar_dirty_pill_bg_is_accent_colour() {
+        let mut app = make_app();
+        app.is_dirty = true;
+        let theme = app.theme.clone();
+        let line = build_normal_status_bar(&app);
+        let pill = &line.spans[0];
+        assert_eq!(
+            pill.style.bg,
+            Some(theme.accent),
+            "dirty file pill background must be theme.accent"
+        );
+    }
+
+    #[test]
+    fn build_normal_status_bar_dirty_pill_shows_dirty_marker() {
+        let mut app = make_app();
+        app.is_dirty = true;
+        let line = build_normal_status_bar(&app);
+        let pill = &line.spans[0];
+        assert!(
+            pill.content.contains("[*]"),
+            "dirty pill must contain the [*] marker"
+        );
+    }
+
+    #[test]
+    fn build_timed_message_bar_has_three_spans() {
+        let app = make_app();
+        let line = build_timed_message_bar(&app, "Saved.");
+        assert_eq!(line.spans.len(), 3, "timed bar: pill | sep | message");
+    }
+
+    #[test]
+    fn build_timed_message_bar_last_span_contains_message() {
+        let app = make_app();
+        let line = build_timed_message_bar(&app, "File saved.");
+        let msg = &line.spans[2];
+        assert!(
+            msg.content.contains("File saved."),
+            "last span must contain the message text"
+        );
+    }
+
+    #[test]
+    fn build_timed_message_bar_pill_still_shows_path() {
+        let app = make_app();
+        let line = build_timed_message_bar(&app, "Saved.");
+        let pill = &line.spans[0];
+        assert!(
+            pill.content.contains("foo.md"),
+            "pill must still show the path during a timed message"
+        );
+    }
+
+    #[test]
+    fn build_goto_line_bar_has_one_span() {
+        let app = make_app();
+        let line = build_goto_line_bar(&app, "42");
+        assert_eq!(line.spans.len(), 1, "goto-line bar is a single span");
+    }
+
+    #[test]
+    fn build_goto_line_bar_span_contains_prompt_and_input() {
+        let app = make_app();
+        let line = build_goto_line_bar(&app, "99");
+        let span = &line.spans[0];
+        assert!(
+            span.content.contains("Go to line:"),
+            "span must contain the 'Go to line:' prompt"
+        );
+        assert!(
+            span.content.contains("99"),
+            "span must contain the user's input"
+        );
+    }
+
+    #[test]
+    fn build_goto_line_bar_empty_input_shows_cursor_only() {
+        let app = make_app();
+        let line = build_goto_line_bar(&app, "");
+        let span = &line.spans[0];
+        assert!(
+            span.content.contains("Go to line:"),
+            "prompt present even with empty input"
+        );
+        assert!(
+            span.content.contains('_'),
+            "cursor indicator must be present"
+        );
+    }
+
     #[test]
     fn selection_overlay_loop_stops_at_document_end() {
         use ratatui::buffer::Buffer;

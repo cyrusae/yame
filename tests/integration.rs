@@ -11,24 +11,28 @@ fn fixture_decoration_roundtrip() {
     let theme = Theme::default_theme();
     let (map, word_count) = build_decoration_map(text, &theme, true, None);
 
-    // Line 0 ("# Heading One") must have a full_line_bg highlight.
+    // Line 0 ("# Heading One") must have full_line_bg == theme.heading_bg.
+    // (Checking the exact value, not just is_some(), so delete-field mutations are caught.)
     assert!(
-        map[&0].iter().any(|s| s.full_line_bg.is_some()),
-        "H1 on line 0 must have full_line_bg"
+        map[&0]
+            .iter()
+            .any(|s| s.full_line_bg == Some(theme.heading_bg)),
+        "H1 on line 0 must have full_line_bg == theme.heading_bg"
     );
 
-    // At least one span anywhere in the file must be BOLD.
+    // Line 10 is the normal-paragraph line containing **bold content**.
+    // Check that BOLD appears on that specific line, not just somewhere in the file.
     assert!(
-        map.values()
-            .flatten()
+        map[&10]
+            .iter()
             .any(|s| s.style.add_modifier.contains(Modifier::BOLD)),
-        "expected at least one BOLD span in the fixture"
+        "line 10 (**bold content**) must contain at least one BOLD span"
     );
 
-    // At least one span must be a blockquote.
+    // Line 46 ("> A single-line blockquote.") must have a blockquote indicator.
     assert!(
-        map.values().flatten().any(|s| s.is_blockquote),
-        "expected at least one blockquote span in the fixture"
+        map[&46].iter().any(|s| s.is_blockquote),
+        "line 46 ('> A single-line blockquote.') must have an is_blockquote span"
     );
 
     // The fixture has more than 100 words.
@@ -39,30 +43,64 @@ fn fixture_decoration_roundtrip() {
 }
 
 /// Strikethrough syntax (~~text~~) must produce a CROSSED_OUT span.
+///
+/// Line 38 (0-indexed) of the fixture is "~~Strikethrough.~~".
+/// The content span "Strikethrough." at chars 2..16 must carry CROSSED_OUT.
 #[test]
 fn fixture_has_strikethrough() {
     let text = include_str!("fixtures/sample.md");
     let theme = Theme::default_theme();
     let (map, _) = build_decoration_map(text, &theme, true, None);
+
+    // Check the specific line rather than any-line — kills whole-function and
+    // line-replacement mutations that emit CROSSED_OUT on the wrong line.
+    let strike_line = map
+        .get(&38)
+        .expect("line 38 ('~~Strikethrough.~~') must have spans");
     assert!(
-        map.values()
-            .flatten()
+        strike_line
+            .iter()
             .any(|s| s.style.add_modifier.contains(Modifier::CROSSED_OUT)),
-        "expected at least one CROSSED_OUT span (strikethrough) in the fixture"
+        "line 38 ('~~Strikethrough.~~') must have a CROSSED_OUT span"
+    );
+    // The opening ~~ delimiters are at chars 0..2; content starts at char 2.
+    assert!(
+        strike_line
+            .iter()
+            .any(|s| s.char_start == 2 && s.style.add_modifier.contains(Modifier::CROSSED_OUT)),
+        "strikethrough content on line 38 must start at char 2 (after ~~)"
     );
 }
 
 /// Link text must be underlined per the decoration spec.
+///
+/// Line 30 (0-indexed) is "A [link to example](https://example.com) ...".
+/// The link text "link to example" at chars 3..18 must be UNDERLINED with
+/// fg == theme.link_text.
 #[test]
 fn fixture_has_link_underline() {
     let text = include_str!("fixtures/sample.md");
     let theme = Theme::default_theme();
     let (map, _) = build_decoration_map(text, &theme, true, None);
+
+    let link_line = map
+        .get(&30)
+        .expect("line 30 ('A [link to example]...') must have spans");
+
+    // Link text must be UNDERLINED on this specific line.
     assert!(
-        map.values()
-            .flatten()
+        link_line
+            .iter()
             .any(|s| s.style.add_modifier.contains(Modifier::UNDERLINED)),
-        "expected at least one UNDERLINED span (link text) in the fixture"
+        "line 30 must have an UNDERLINED span for the link text"
+    );
+    // Link text must also carry theme.link_text as its foreground color.
+    assert!(
+        link_line
+            .iter()
+            .any(|s| s.style.add_modifier.contains(Modifier::UNDERLINED)
+                && s.style.fg == Some(theme.link_text)),
+        "link text on line 30 must be UNDERLINED with fg == theme.link_text"
     );
 }
 
@@ -181,20 +219,32 @@ fn fixture_task_list_has_max_continuation_indent() {
 
 /// `***text***` must produce a span with both BOLD and ITALIC modifiers.
 ///
-/// The fixture contains "***Bold and italic combined with triple asterisks.***";
-/// pulldown-cmark emits this as a single strong+emphasis range that
-/// emit_bold_italic_spans handles by setting both modifiers on one span.
+/// Line 40 (0-indexed) is "***Bold and italic combined with triple asterisks.***".
+/// The content at chars 3..49 must carry both BOLD and ITALIC modifiers.
 #[test]
 fn fixture_has_bold_italic_combined() {
     let text = include_str!("fixtures/sample.md");
     let theme = Theme::default_theme();
     let (map, _) = build_decoration_map(text, &theme, true, None);
+
+    let bold_italic_line = map
+        .get(&40)
+        .expect("line 40 ('***Bold and italic...***') must have spans");
     assert!(
-        map.values().flatten().any(|s| {
+        bold_italic_line.iter().any(|s| {
             s.style.add_modifier.contains(Modifier::BOLD)
                 && s.style.add_modifier.contains(Modifier::ITALIC)
         }),
-        "expected at least one span with both BOLD and ITALIC modifiers (***text***)"
+        "line 40 must have a span with both BOLD and ITALIC modifiers"
+    );
+    // Content starts at char 3 (after opening ***).
+    assert!(
+        bold_italic_line.iter().any(|s| {
+            s.char_start == 3
+                && s.style.add_modifier.contains(Modifier::BOLD)
+                && s.style.add_modifier.contains(Modifier::ITALIC)
+        }),
+        "BOLD+ITALIC content on line 40 must start at char 3 (after ***)"
     );
 }
 
@@ -365,19 +415,30 @@ fn unknown_lang_tag_falls_back_silently() {
 
 /// Inline code spans (`` `code` ``) must receive fg == theme.code_color.
 ///
-/// The fixture line "Normal paragraph text with **bold content**, *italic
-/// content*, and `inline code`." contains inline code; decoration must assign
-/// theme.code_color as the foreground on those spans.
+/// Line 34 (0-indexed) is "`inline code` at the start, ...".
+/// The content "inline code" at chars 1..12 must have fg == theme.code_color.
 #[test]
 fn fixture_inline_code_has_code_color() {
     let text = include_str!("fixtures/sample.md");
     let theme = Theme::default_theme();
     let (map, _) = build_decoration_map(text, &theme, true, None);
+
+    // Line 34 starts with a backtick-delimited span — check this specific line.
+    let code_line = map
+        .get(&34)
+        .expect("line 34 ('`inline code` at the start...') must have spans");
     assert!(
-        map.values()
-            .flatten()
+        code_line
+            .iter()
             .any(|s| s.style.fg == Some(theme.code_color)),
-        "expected at least one span with fg == theme.code_color (inline code)"
+        "line 34 must have a span with fg == theme.code_color for inline code"
+    );
+    // The inline-code content starts at char 1 (after the opening backtick).
+    assert!(
+        code_line
+            .iter()
+            .any(|s| s.char_start == 1 && s.style.fg == Some(theme.code_color)),
+        "inline code content on line 34 must start at char 1 (after the opening `)"
     );
 }
 
@@ -385,21 +446,33 @@ fn fixture_inline_code_has_code_color() {
 // Italic
 // ---------------------------------------------------------------------------
 
-/// At least one span in the fixture must carry the ITALIC modifier.
+/// Line 10 must carry the ITALIC modifier on the `*italic content*` span.
 ///
-/// The fixture has `*italic content*` on the paragraph line; this guards that
-/// italic is actually emitted as a distinct modifier rather than collapsed into
-/// the bold path.
+/// Line 10 (0-indexed) is the normal-paragraph line containing both
+/// `**bold content**` and `*italic content*`; italic must be emitted as a
+/// distinct modifier, not collapsed into the bold path.
 #[test]
 fn fixture_italic_has_italic_modifier() {
     let text = include_str!("fixtures/sample.md");
     let theme = Theme::default_theme();
     let (map, _) = build_decoration_map(text, &theme, true, None);
+
+    let para_line = map
+        .get(&10)
+        .expect("line 10 (normal paragraph with *italic*) must have spans");
     assert!(
-        map.values()
-            .flatten()
+        para_line
+            .iter()
             .any(|s| s.style.add_modifier.contains(Modifier::ITALIC)),
-        "expected at least one ITALIC span in the fixture"
+        "line 10 must have an ITALIC span for *italic content*"
+    );
+    // Italic must use theme.italic_color, not default text color.
+    assert!(
+        para_line
+            .iter()
+            .any(|s| s.style.add_modifier.contains(Modifier::ITALIC)
+                && s.style.fg == Some(theme.italic_color)),
+        "italic span on line 10 must have fg == theme.italic_color"
     );
 }
 

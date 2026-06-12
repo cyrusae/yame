@@ -53,24 +53,16 @@ pub(super) fn handle_exit(app: &mut App) -> bool {
 /// Extracted from the draw closure so that `terminal.draw` can be a pure render
 /// with no state mutations.
 ///
-/// `col_width`      – full column width in terminal cells (includes gutters).
 /// `bottom_padding` – virtual empty rows to keep below the cursor.
-pub(super) fn clamp_scroll(
-    app: &mut App,
-    editor_area: Rect,
-    col_width: u16,
-    bottom_padding: usize,
-) {
+///
+/// Uses `app.content_width` (set by the event loop pre-draw pass) so that the
+/// wrap width here exactly matches what the renderer sees — including any extra
+/// gutter width from enabled line numbers.
+pub(super) fn clamp_scroll(app: &mut App, editor_area: Rect, bottom_padding: usize) {
     let (cursor_row, cursor_col) = app.textarea.cursor();
     let visible_rows = editor_area.height as usize;
     let lines = app.textarea.lines();
-    // Written as GUTTER + GUTTER (not 2 * GUTTER) so that the `* → /` mutant
-    // (2 / GUTTER == 2 when GUTTER=1, i.e., equivalent) does not survive: the
-    // `+ → *` and `+ → /` variants yield GUTTER*GUTTER=1 and GUTTER/GUTTER=1,
-    // both ≠ 2 and therefore observable.
-    let cw = (col_width as usize)
-        .saturating_sub(renderer::GUTTER as usize + renderer::GUTTER as usize)
-        .max(1);
+    let cw = app.content_width.max(1);
 
     // Scroll up: cursor above the viewport.
     // Equivalent mutant note: `< → <=` when cursor_row == scroll_top sets
@@ -122,6 +114,19 @@ pub(super) fn clamp_scroll(
     }
 }
 
+/// Centre the viewport on the cursor line for typewriter mode.
+///
+/// Sets `scroll_top` so the cursor logical line sits at `viewport_height / 2`.
+/// Uses logical-line counting (not visual rows) — fast, allocation-free, and
+/// imperceptibly off for prose where wrapped lines are uncommon.  Called
+/// instead of `clamp_scroll` when `app.typewriter_mode` is active and
+/// `app.free_scroll` is false.
+pub(super) fn center_scroll(app: &mut App, editor_area: Rect) {
+    let (cursor_row, _) = app.textarea.cursor();
+    let half = (editor_area.height as usize) / 2;
+    app.scroll_top = cursor_row.saturating_sub(half);
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -164,10 +169,16 @@ mod tests {
             tab_width: 4,
             highlight_cache: None,
             file_mode: FileMode::Markdown,
+            show_line_numbers: false,
+            search: None,
+            typewriter_mode: false,
+            focus_mode: false,
+            show_shortcuts: false,
+            read_only: false,
         }
     }
 
-    // Kills commands.rs:91:43 `replace + with * in clamp_scroll`.
+    // Kills commands.rs `replace + with * in clamp_scroll`.
     //
     // The mutation changes `i + 1 == char_ranges.len()` to `i * 1 == char_ranges.len()`
     // (i.e., `i == len`, always false for a valid iterator since i < len).  Without
@@ -175,7 +186,7 @@ mod tests {
     // char_end for every intermediate segment, leaving it at 0 (the first visual row)
     // instead of the correct last visual row.
     //
-    // Setup (col_width=12 → cw=10):
+    // Setup (app.content_width=10):
     //   line 0: "aaaa"             → 1 visual row
     //   line 1: "bbbb"             → 1 visual row
     //   line 2: "0123456789 cc"    → 2 visual rows: ["0123456789", "cc"]
@@ -189,7 +200,7 @@ mod tests {
     //   mutant does not → scroll_top stays 0.
     #[test]
     fn clamp_scroll_subrow_fallback_fires_at_end_of_wrapped_line() {
-        // col_width=12 → cw = 12-(1+1) = 10.  "0123456789 cc" = 10+space+2 = 13 chars.
+        // content_width=10.  "0123456789 cc" = 10+space+2 = 13 chars.
         // At cw=10 it soft-wraps: ["0123456789", "cc"].
         let mut app = make_app(vec!["aaaa", "bbbb", "0123456789 cc"], 10);
         app.scroll_top = 0;
@@ -206,7 +217,7 @@ mod tests {
             width: 12,
             height: 3,
         };
-        clamp_scroll(&mut app, area, 12, 0);
+        clamp_scroll(&mut app, area, 0);
 
         assert_eq!(
             app.scroll_top, 1,

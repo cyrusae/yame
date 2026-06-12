@@ -1,6 +1,6 @@
 [package]
 name = "yame"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "A lightweight terminal Markdown editor"
 license = "MIT"
@@ -20,15 +20,19 @@ pulldown-cmark = { version = "0.13", default-features = false, features = ["html
 serde = { version = "1", features = ["derive"] }
 toml = "1.1"
 arboard = "3"
-# Provides the #[mutants::skip] attribute — a no-op proc macro at compile time.
-# Must be in [dependencies] (not dev-dependencies) because the attributes appear
-# on non-test functions, which aren't visible to the compiler via dev-dep paths.
-mutants = "0.0.4"
 unicode-width = "0.2"
 syntect = { version = "5.3.0", default-features = false, features = ["default-themes", "default-syntaxes", "regex-fancy"] }
 # Extra syntax definitions (TOML, TypeScript, Kotlin, Dockerfile, …) curated by
 # the bat project.  `syntect-fancy` matches our `regex-fancy` pure-Rust setup.
 two-face = { version = "0.5.1", default-features = false, features = ["syntect-fancy"] }
+# Already pulled in transitively by syntect's regex-fancy feature — zero extra cost.
+fancy-regex = { version = "0.16", default-features = false }
+
+[dependencies.mutants]
+# Zero-cost proc-macro that provides #[mutants::skip].  Always compiled so that
+# cargo-mutants' source scanner reliably sees the attribute — cfg_attr wrappers
+# are NOT expanded by the scanner and would be silently ignored.
+version = "0.0.4"
 
 [profile.release]
 strip = true

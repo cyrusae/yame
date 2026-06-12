@@ -4,7 +4,36 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased]
+## [0.2.0] — 2026-06-11
+
+### Added
+
+- **Search & find/replace** — `Ctrl+F` opens a search bar; `Enter` / `Shift+Enter` step through matches; `Alt+R` toggles regex mode; `Ctrl+H` switches to find-and-replace (`Tab` swaps fields, `Ctrl+A` replaces all)
+- **Shortcut reference modal** — `F1` opens (and closes) a full in-app keybinding cheatsheet; also shown automatically on first search open
+- **Line numbers** — add `line_numbers = true` under `[layout]` in config; cursor line uses accent color, others muted; gutter widens automatically at every order of magnitude
+- **`==highlight==` inline decoration** — new inline span with configurable `highlight_bg` / `highlight_fg`; inner bold, italic, and links are preserved
+- **YAML/TOML frontmatter styling** — auto-detected and rendered as a distinct block: delimiter lines muted, keys in code-green italic with a 3-space indent, values in body text, full-block background tinted from the code color
+- **Focus mode** (`Ctrl+D`) — dims text outside the current paragraph; good for long documents
+- **Typewriter mode** (`Ctrl+T`) — keeps the cursor line vertically centered in the viewport as you write
+- **Read-only mode** — launch with `yame -r <file>` or toggle in-app with `Ctrl+E`; status bar changes color as a persistent reminder
+- **Go-to-line** (`Ctrl+G`) — jump directly to any line number
+- **`Alt+T` table reflow** — reformats the GFM pipe table the cursor is in to uniform column widths
+- **`--version` / `-V` flag**
+
+### Changed
+- Release prep: CHANGELOG v0.2.0, version bump, gutter audit (#167)
+
+- **Column width cap** — new `max_cols` setting under `[layout]` (e.g. `max_cols = 88`) limits the prose wrap column on wide terminals; previously the column expanded to 50 % of terminal width without a ceiling
+- **Improved GFM table rendering** — better column alignment, padding, and border characters
+- **Background decoration thread** — the syntax-highlighting and decoration pass now runs off the main event loop, keeping keystroke latency low on large files
+- `[theme]` config gains `highlight_bg`, `highlight_fg`, `frontmatter_key`, `frontmatter_bg` overrides
+
+### Fixed
+
+- Blank-frame flash eliminated on file open
+- Style bleed-through in modal overlays (search bar, shortcuts modal)
+- Click-to-cursor off-by-one in soft-wrapped list items
+- Bold/italic inside blockquotes no longer bleeds to the full line
 
 ## [0.1.0-alpha.1] - 2026-05-25
 
@@ -35,6 +64,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - v1 polish: italic startup warning, `delimiter_blend` config token, parent-dir creation on save (#35)
 
 ### Fixed
+- Fix style bleed-through in modal overlays (shortcuts + search-help) (#159)
+- startup: eliminate blank-frame flash on file open (#132)
+- renderer: clip fenced/heading bg to content area, dim line-number colors (#131)
 - FEEDBACK-2 2.3: cap highlight cache to prevent unbounded memory growth (#142)
 - FEEDBACK-2 1.1: table header decoration swallows inline formatting (#141)
 - FEEDBACK-2 batch 2: deduplicate selection, clipboard enum, path cache, mutants skip (#140)
@@ -69,99 +101,3 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Scroll clamping now accounts for soft-wrapped visual rows, preventing cursor jumping off-screen (#63)
 - Ghost scroll accumulation eliminated by intercepting scroll events before tui-textarea (#63)
 - Italic default color now matches text color (not accent blend) (#60)
-
-### Changed
-- force-push to mirror after rebase (#129)
-- resolve stash-pop CHANGELOG conflict (#152)
-- cargo-deny unmaintained annotation (#151)
-- close completed mutant issues (#150)
-- fix remaining mutant survivors post-session-110 (#149)
-- mutants: skip timeout-only functions (screen_to_doc, apply_selection_overlay, spans helpers) (#148)
-- mutants: kill spans.rs add_byte_range_span style + renderer/utils pure-fn mutants (#147)
-- mutants: kill decorate() FileMode dispatch missed mutants (input.rs:55) (#146)
-- mutants: kill handle_key_event missed + timeout key arms via unit tests (input.rs) (#145)
-- mutants: kill clamp_scroll arithmetic missed mutants (commands.rs) (#144)
-- git stash and sync with remote (#128)
-- bump version to v0.1.0 for release (#127)
-- kill surviving mutants: screen_to_doc, decoration, highlighting, renderer (#138)
-- Integration test planning: catalogue scenarios from FEEDBACK-1 (#89)
-- perf: lazy-init SyntaxSet/ThemeSet in HighlightCache (defer cost to first code block) (#136)
-- test: assert default-syntaxes coverage (toml, ts, bash, etc) (#134)
-- feat: visual-line Up/Down navigation (wrap-aware cursor movement) (#126)
-- docs: update README for recent feature changes (#123)
-- test: kill surviving mutants in supports_italic, wrap_line_indented, apply_selection_overlay (#124)
-- ui: Saved flash over second pill only with bg color (#121)
-- v0.1.0 version bump (#118)
-- planning: yame init + help flag + v0.1.0 pre-publish review (#114)
-- expand integration tests: strikethrough, links, rules, fenced, headings, template TOML (#102)
-- chore: replace duplicate mutants.toml with symlink to .cargo/mutants.toml (#112)
-- mutant triage: skip annotations + handle_pair_wrap fix + backlog issues (#106)
-- kill wrap_line + wrap_char_ranges arithmetic mutants: +/* and boundary operators (#107)
-- kill link_split_char_idx mutants + skip timeout line (words.rs): 7 logic + 1 infinite-loop timeout (#110)
-- kill clamp_scroll walk-backward loop mutants: 18 surviving arithmetic + comparison operators (#108)
-- extract handle_key_event: decouple key dispatch from I/O for testability (#103)
-- kill misc input/app mutants: handle_key_event is_nav branch (lines 269/275) + expand_tabs double-tab (#109)
-- decoration mutant pass: add_byte_range_span field invariants + emit_* boundary arithmetic (#105)
-- kill surviving mutants: selection overlay, clamp_scroll, pair_wrap, navigation, status, config (#104)
-- Auto-scaffold ~/.config/yame/config.toml on first run (#101)
-- Alpha release prep: version bump, Cargo.toml metadata, README polish, crates.io publish (#100)
-- Rework Saved/warning status message display on UI bar (#76)
-- Decouple scroll from cursor: scroll should pan without moving cursor (#56)
-- powerline_glyphs config flag: opt-in Nerd Font arrow in status bar (#96)
-- Replace Powerline glyph with universally-renderable separator (#54)
-- ROADMAP.md maintenance pass: prune done items, update issue index (#94)
-- Split decoration.rs: extract parser helpers and move tests to submodule (#74)
-- Research: file size audit before refactor decision (#93)
-- Strikethrough text color: match blockquote blend; tildes stay muted (#92)
-- v1.5: cache arboard::Clipboard instance in App (#38)
-- v1.5: fix O(N2) char counting and allocation hot-paths in renderer (#37)
-- v1.5: merge count_words into build_decoration_map (single-pass) (#36)
-- Separate scroll clamping from terminal.draw closure (pure render) (#86)
-- Update DESIGN.md: remove stale scrollbar widget reference (#87)
-- split_into_spans: early-exit for undecorated lines to avoid heap alloc (#85)
-- Skip decoration rebuild on pure navigation keystrokes (#83)
-- Annotate build_decoration_map with mutants::skip (#69)
-- Document yame init shell helper design notes and review (#68)
-- Color fenced code language tag accent, backtick fences inline-code color (#57)
-- Color scheme: Catppuccin Crust `#11111b` main bg; gutter and editor column unified (#49)
-- Status bar redesigned as floating Powerline pills on canvas background (#49, #52, #53)
-- Filename pill turns accent color when buffer is dirty (#58)
-- UI chrome bg dynamically blends toward text color (`blend(text, bg, 0.10)`) (#52)
-- Formatting now persists on the cursor line (decoration stripping removed) (#61)
-- Virtual bottom padding added so last document lines don't sit flush against the UI bar (#62)
-- `cargo deny`: suppressed RUSTSEC-2024-0436 (arboard transitive dep, not actionable) (#64)
-- BSL-1.0 (Boost Software License) added to `cargo deny` allowlist for arboard transitive deps (#64)
-- Phase 12: README & Distribution (#13)
-- chore: remove scrollbar widget (#34)
-- fix: initial decoration pass, gutter, todo muted, info line width (#33)
-- fix: POSIX trailing newline, navigation dirty flag, mouse coordinate offset (#32)
-- Phase 11: Integration Test & Coverage Audit (#12)
-- Phase 10: Polish & Edge Cases (#11)
-- Phase 9: File Operations & Edit Behaviors (#10)
-- Phase 8: Debounce Loop (#9)
-- Phase 7: Custom Renderer (#8)
-- Wire MarkdownView into event loop draw call (#30)
-- Selection overlay (full fg+bg override) (#29)
-- Cursor rendering (#28)
-- MarkdownView widget struct and Widget impl stub (#25)
-- wrap_line() with word/hard-break and blockquote continuation (#27)
-- span_split_into_spans() with multi-byte safety (#26)
-- CI tooling: cargo-mutants, cargo-deny, cargo-nextest (#31)
-- Word count (count_words) (#24)
-- Cursor line exclusion (#23)
-- GFM tables (with v3 TODO seam) (#22)
-- Todo items (checked/unchecked) (#21)
-- Lists and bullet/number accent color (#20)
-- Links — split at ]( boundary, text/url styling (#19)
-- Blockquotes with ▌ indicator and continuation indent flag (#18)
-- Fenced code blocks (with v1.5 TODO seam) (#17)
-- Inline code spans (#16)
-- Bold and italic spans with delimiter blending (#15)
-- Heading decoration (H1-H6 with heading_bg) (#14)
-- Phase 6: Decoration Engine (#7)
-- Phase 5: Status Bar & Info Line (#6)
-- Phase 3: App State & tui-textarea Integration (#4)
-- Phase 4: Layout Engine (#5)
-- Phase 2: Config & Theming (#3)
-- Phase 1: Terminal Lifecycle (#2)
-- Phase 0: Project Scaffold (#1)
