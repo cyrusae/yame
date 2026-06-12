@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - docs: migrate ROADMAP decisions to DESIGN.md, delete ROADMAP.md (#183)
 
 ### Fixed
+- fix: undo/redo keyboard shortcuts not working (Cmd/Ctrl+Z / Cmd/Ctrl+Y) (#185)
 
 ## [0.2.0] — 2026-06-11
 

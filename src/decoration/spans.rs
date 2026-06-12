@@ -33,7 +33,7 @@ pub fn byte_to_line_char(line_starts: &[usize], text: &str, byte: usize) -> (usi
 
 /// Number of displayable chars on a line (excludes the trailing `\n`).
 #[mutants::skip] // Tested implicitly; suite-throughput timeouts prevent empirical confirmation.
-pub(super) fn line_char_len(line_starts: &[usize], text: &str, line_idx: usize) -> usize {
+pub(crate) fn line_char_len(line_starts: &[usize], text: &str, line_idx: usize) -> usize {
     let ls = line_starts[line_idx];
     let le = if line_idx + 1 < line_starts.len() {
         line_starts[line_idx + 1].saturating_sub(1) // trim the \n
@@ -44,12 +44,12 @@ pub(super) fn line_char_len(line_starts: &[usize], text: &str, line_idx: usize) 
 }
 
 #[mutants::skip] // Trivial wrapper; tested implicitly through add_byte_range_span.
-pub(super) fn push_span(map: &mut DecorationMap, line: usize, span: StyledSpan) {
+pub(crate) fn push_span(map: &mut DecorationMap, line: usize, span: StyledSpan) {
     map.entry(line).or_default().push(span);
 }
 
 #[mutants::skip] // Struct constructor; tested implicitly through callers in decoration/mod.rs.
-pub(super) fn make_span(char_start: usize, char_end: usize, style: Style) -> StyledSpan {
+pub(crate) fn make_span(char_start: usize, char_end: usize, style: Style) -> StyledSpan {
     StyledSpan {
         char_start,
         char_end,
@@ -58,14 +58,14 @@ pub(super) fn make_span(char_start: usize, char_end: usize, style: Style) -> Sty
     }
 }
 
-pub(super) struct SpanParams {
-    pub(super) style: Style,
-    pub(super) full_line_bg: Option<Color>,
-    pub(super) is_blockquote: bool,
+pub(crate) struct SpanParams {
+    pub(crate) style: Style,
+    pub(crate) full_line_bg: Option<Color>,
+    pub(crate) is_blockquote: bool,
 }
 
 /// Add a span that covers a byte range; handles multi-line ranges by splitting per line.
-pub(super) fn add_byte_range_span(
+pub(crate) fn add_byte_range_span(
     map: &mut DecorationMap,
     line_starts: &[usize],
     text: &str,

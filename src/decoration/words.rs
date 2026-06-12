@@ -12,7 +12,7 @@ pub fn count_words(text: &str) -> usize {
 
 /// Find the `](` split point in a `[text](url)` char slice.
 /// Returns the char index of `]`.
-pub(super) fn link_split_char_idx(chars: &[char]) -> Option<usize> {
+pub(crate) fn link_split_char_idx(chars: &[char]) -> Option<usize> {
     let mut bracket_depth = 0usize;
     let mut i = 0;
     while i < chars.len() {
@@ -32,7 +32,7 @@ pub(super) fn link_split_char_idx(chars: &[char]) -> Option<usize> {
 }
 
 /// Count chars in a `&str` slice (for ordered list marker scanning).
-pub(super) fn count_chars_in(s: &str) -> usize {
+pub(crate) fn count_chars_in(s: &str) -> usize {
     s.chars().count()
 }
 

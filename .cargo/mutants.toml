@@ -108,7 +108,8 @@ exclude_re = [
     # `if block_end > pos { pos = block_end; }` in emit_content_around_existing.
     # `>→>=` is equivalent: when block_end == pos the assignment `pos = block_end`
     # is a no-op (sets pos to itself).  Column-anchored to survive line drift.
-    "decoration/mod\\.rs:\\d+:22:.*replace > with >= in emit_content_around_existing",
+    # Now in decoration/emit.rs (column unchanged — function was already top-level).
+    "decoration/emit\\.rs:\\d+:22:.*replace > with >= in emit_content_around_existing",
 
     # `.filter(|s| s.char_end > range_start && s.char_start < range_end)` overlap
     # guard in emit_content_around_existing.
@@ -117,8 +118,9 @@ exclude_re = [
     #     (range_start, range_start), which the gap-filling loop ignores.  Unkillable.
     #   · `<→<=` (col 70): admits spans where char_start == range_end (adjacent on the
     #     right).  Same zero-width outcome: (range_end, range_end).  Unkillable.
-    "decoration/mod\\.rs:\\d+:40:.*replace > with >= in emit_content_around_existing",
-    "decoration/mod\\.rs:\\d+:70:.*replace < with <= in emit_content_around_existing",
+    # Now in decoration/emit.rs (columns unchanged — function was already top-level).
+    "decoration/emit\\.rs:\\d+:40:.*replace > with >= in emit_content_around_existing",
+    "decoration/emit\\.rs:\\d+:70:.*replace < with <= in emit_content_around_existing",
 
     # Note: `delete field` mutations in spans.rs:91-92 (is_blockquote, full_line_bg) are
     # killed by add_byte_range_span_propagates_span_params_fields in decoration/mod.rs.
