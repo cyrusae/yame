@@ -2,8 +2,8 @@ use ratatui::style::{Modifier, Style};
 
 use crate::config::{Theme, blend_colors};
 
-use super::spans::{byte_to_line_char, make_span, push_span};
 use super::DecorationMap;
+use super::spans::{byte_to_line_char, make_span, push_span};
 
 // ---------------------------------------------------------------------------
 // Span-emission helpers

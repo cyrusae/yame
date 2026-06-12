@@ -2,9 +2,9 @@ use ratatui::style::{Color, Modifier, Style};
 
 use crate::config::Theme;
 
+use super::DecorationMap;
 use super::spans::{line_char_len, push_span};
 use super::types::StyledSpan;
-use super::DecorationMap;
 
 // ---------------------------------------------------------------------------
 // Frontmatter detection and styling

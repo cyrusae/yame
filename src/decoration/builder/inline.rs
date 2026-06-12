@@ -7,7 +7,7 @@ use crate::decoration::emit::{
     is_strong_outer_adjacent_to_emphasis,
 };
 use crate::decoration::spans::{
-    add_byte_range_span, byte_to_line_char, make_span, push_span, SpanParams,
+    SpanParams, add_byte_range_span, byte_to_line_char, make_span, push_span,
 };
 
 use super::BuildState;
@@ -116,9 +116,10 @@ pub(super) fn on_strong_end(s: &mut BuildState, _range: std::ops::Range<usize>) 
 pub(super) fn on_emphasis_end(s: &mut BuildState, _range: std::ops::Range<usize>) {
     if let Some(emph_range) = s.in_emphasis.take() {
         // Peek at in_strong to check adjacency without consuming it.
-        let adjacent = s.in_strong.as_ref().is_some_and(|strong| {
-            is_strong_outer_adjacent_to_emphasis(strong, &emph_range)
-        });
+        let adjacent = s
+            .in_strong
+            .as_ref()
+            .is_some_and(|strong| is_strong_outer_adjacent_to_emphasis(strong, &emph_range));
         if adjacent {
             // Strong(outer) wraps Emphasis(inner) with touching delimiters.
             let outer = s.in_strong.take().unwrap();

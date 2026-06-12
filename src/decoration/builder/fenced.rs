@@ -169,9 +169,7 @@ pub(super) fn on_start(s: &mut BuildState, lang: &CowStr, range: std::ops::Range
                             StyledSpan {
                                 char_start: cs,
                                 char_end: ce,
-                                style: Style::default()
-                                    .fg(hl_span.fg)
-                                    .bg(s.theme.fenced_bg),
+                                style: Style::default().fg(hl_span.fg).bg(s.theme.fenced_bg),
                                 // Only the first span signals full_line_bg so the
                                 // background fills the column beyond the last char.
                                 full_line_bg: if i == 0 {

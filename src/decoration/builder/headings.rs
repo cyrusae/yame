@@ -2,9 +2,9 @@ use pulldown_cmark::HeadingLevel;
 use ratatui::style::{Color, Modifier, Style};
 
 use crate::config::blend_colors;
+use crate::decoration::DecorationMap;
 use crate::decoration::spans::{byte_to_line_char, line_char_len, push_span};
 use crate::decoration::types::StyledSpan;
-use crate::decoration::DecorationMap;
 
 use super::BuildState;
 

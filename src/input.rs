@@ -600,8 +600,7 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
             KeyOutcome::Continue
         }
 
-        (KeyModifiers::CONTROL, KeyCode::Char('z'))
-        | (KeyModifiers::SUPER, KeyCode::Char('z')) => {
+        (KeyModifiers::CONTROL, KeyCode::Char('z')) | (KeyModifiers::SUPER, KeyCode::Char('z')) => {
             app.status.dismiss();
             app.config_warnings.clear();
             app.textarea.undo();
@@ -612,8 +611,7 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
         }
 
         // Ctrl+Y / Cmd+Y / Cmd+Shift+Z (macOS convention) → redo.
-        (KeyModifiers::CONTROL, KeyCode::Char('y'))
-        | (KeyModifiers::SUPER, KeyCode::Char('y')) => {
+        (KeyModifiers::CONTROL, KeyCode::Char('y')) | (KeyModifiers::SUPER, KeyCode::Char('y')) => {
             app.status.dismiss();
             app.config_warnings.clear();
             app.textarea.redo();
@@ -1086,48 +1084,49 @@ where
                 // causes spurious characters — e.g. releasing Ctrl before Z after
                 // a Ctrl+Z produces a bare `(NONE, Char('z'), Release)` that
                 // bypasses the CONTROL match arm and inserts 'z'.
-                Event::Key(k) if k.kind != crossterm::event::KeyEventKind::Release
-                    => match handle_key_event(app, k) {
-                    KeyOutcome::Continue => {}
-                    KeyOutcome::Save => {
-                        handle_save(app)?;
+                Event::Key(k) if k.kind != crossterm::event::KeyEventKind::Release => {
+                    match handle_key_event(app, k) {
+                        KeyOutcome::Continue => {}
+                        KeyOutcome::Save => {
+                            handle_save(app)?;
+                        }
+                        KeyOutcome::SaveAndExit => {
+                            handle_save(app)?;
+                            break;
+                        }
+                        KeyOutcome::Exit => break,
+                        KeyOutcome::ReloadConfig => {
+                            let (new_config, new_warnings) = load_config();
+                            let mut warnings = new_warnings;
+                            app.theme = Theme::from_config(
+                                &new_config.palette,
+                                &new_config.theme,
+                                &new_config.headings,
+                                &mut warnings,
+                            );
+                            // Rebuild the highlight cache so fenced code blocks pick up
+                            // any theme or palette changes immediately.
+                            app.highlight_cache = new_config.highlighting.enabled.then(|| {
+                                let palette_theme = new_config
+                                    .highlighting
+                                    .use_palette_colors
+                                    .then(|| yame::highlighting::build_palette_theme(&app.theme));
+                                Arc::new(yame::highlighting::HighlightCache::new(
+                                    true,
+                                    new_config.highlighting.syntect_theme.clone(),
+                                    palette_theme,
+                                ))
+                            });
+                            // Re-resolve file mode in case [filetype] config changed.
+                            app.file_mode = resolve_file_mode(&app.file_path, &new_config.filetype);
+                            app.show_line_numbers = new_config.layout.line_numbers.unwrap_or(false);
+                            app.config_warnings = warnings;
+                            app.status
+                                .set_timed("Config reloaded.", Duration::from_millis(1500));
+                            app.last_keystroke = Some(std::time::Instant::now());
+                        }
                     }
-                    KeyOutcome::SaveAndExit => {
-                        handle_save(app)?;
-                        break;
-                    }
-                    KeyOutcome::Exit => break,
-                    KeyOutcome::ReloadConfig => {
-                        let (new_config, new_warnings) = load_config();
-                        let mut warnings = new_warnings;
-                        app.theme = Theme::from_config(
-                            &new_config.palette,
-                            &new_config.theme,
-                            &new_config.headings,
-                            &mut warnings,
-                        );
-                        // Rebuild the highlight cache so fenced code blocks pick up
-                        // any theme or palette changes immediately.
-                        app.highlight_cache = new_config.highlighting.enabled.then(|| {
-                            let palette_theme = new_config
-                                .highlighting
-                                .use_palette_colors
-                                .then(|| yame::highlighting::build_palette_theme(&app.theme));
-                            Arc::new(yame::highlighting::HighlightCache::new(
-                                true,
-                                new_config.highlighting.syntect_theme.clone(),
-                                palette_theme,
-                            ))
-                        });
-                        // Re-resolve file mode in case [filetype] config changed.
-                        app.file_mode = resolve_file_mode(&app.file_path, &new_config.filetype);
-                        app.show_line_numbers = new_config.layout.line_numbers.unwrap_or(false);
-                        app.config_warnings = warnings;
-                        app.status
-                            .set_timed("Config reloaded.", Duration::from_millis(1500));
-                        app.last_keystroke = Some(std::time::Instant::now());
-                    }
-                },
+                }
                 Event::Mouse(mouse) => match mouse.kind {
                     MouseEventKind::ScrollDown => {
                         let max = app.textarea.lines().len().saturating_sub(1);

@@ -5,10 +5,10 @@ use ratatui::style::Style;
 
 use crate::config::Theme;
 
+use super::DecorationMap;
 use super::frontmatter::detect_frontmatter;
 use super::spans::{make_span, push_span};
 use super::types::StyledSpan;
-use super::DecorationMap;
 
 // ---------------------------------------------------------------------------
 // ==highlight== post-pass

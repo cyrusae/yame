@@ -74,9 +74,7 @@ pub(super) fn on_item_start(s: &mut BuildState, range: std::ops::Range<usize>) {
         let line_text = &s.text[s.line_starts[item_line]..];
         line_text[scan_start..]
             .find(['.', ')'])
-            .map(|i| {
-                item_char + count_chars_in(&line_text[scan_start..scan_start + i + 1])
-            })
+            .map(|i| item_char + count_chars_in(&line_text[scan_start..scan_start + i + 1]))
             .unwrap_or(item_char + 2)
     } else {
         item_char + 1
@@ -150,7 +148,11 @@ pub(super) fn on_task_marker(s: &mut BuildState, checked: bool, range: std::ops:
             push_span(
                 &mut s.map,
                 marker_line,
-                make_span(bracket_end, line_len, Style::default().fg(s.theme.todo_done)),
+                make_span(
+                    bracket_end,
+                    line_len,
+                    Style::default().fg(s.theme.todo_done),
+                ),
             );
         }
     } else {

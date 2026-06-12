@@ -152,7 +152,13 @@ pub fn build_decoration_map(
     }
 
     // ==highlight== post-pass: scan non-code, non-frontmatter lines for ==...==.
-    apply_highlight_spans(&mut s.map, text, &s.line_starts, &s.code_block_lines, s.theme);
+    apply_highlight_spans(
+        &mut s.map,
+        text,
+        &s.line_starts,
+        &s.code_block_lines,
+        s.theme,
+    );
 
     (s.map, s.word_count)
 }

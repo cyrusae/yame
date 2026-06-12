@@ -1022,7 +1022,10 @@ fn handle_key_event_cmd_shift_z_redoes_and_sets_force_redecorate() {
     );
     let outcome = handle_key_event(&mut app, k);
     assert_eq!(outcome, KeyOutcome::Continue);
-    assert!(app.force_redecorate, "Cmd+Shift+Z must set force_redecorate");
+    assert!(
+        app.force_redecorate,
+        "Cmd+Shift+Z must set force_redecorate"
+    );
 }
 
 // When Kitty's keyboard protocol is active (leaked from a previous app that did
