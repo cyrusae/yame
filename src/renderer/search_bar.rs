@@ -359,7 +359,7 @@ static SHORTCUTS: &[HelpRow] = &[
     HelpRow::Entry("Ctrl+S / ⌘S", "Save", "Ctrl+X / Esc", "Exit"),
     HelpRow::Entry("Ctrl+R", "Reload config", "", ""),
     HelpRow::Section("Edit"),
-    HelpRow::Entry("Ctrl+Z", "Undo", "Ctrl+Y", "Redo"),
+    HelpRow::Entry("Ctrl+Z / ⌘Z", "Undo", "Ctrl+Y / ⌘Y / ⌘⇧Z", "Redo"),
     HelpRow::Entry("Ctrl+C / ⌘C", "Copy", "Ctrl+V / ⌘V", "Paste"),
     HelpRow::Entry("Tab", "Indent", "", ""),
     HelpRow::Section("Navigate"),

@@ -10,7 +10,7 @@ homepage = "https://github.com/cyrusae/yame"
 readme = "README.md"
 keywords = ["markdown", "editor", "terminal", "tui"]
 categories = ["command-line-utilities", "text-editors"]
-exclude = [".chainlink", ".claude", ".github", "_docs", ".antigravitycli", ".mcp.json", "mutants.out"]
+exclude = [".chainlink", ".claude", ".github", "_docs", "_info", ".antigravitycli", ".mcp.json", "mutants.out"]
 
 [dependencies]
 ratatui = "0.30"

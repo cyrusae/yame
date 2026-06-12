@@ -600,7 +600,8 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
             KeyOutcome::Continue
         }
 
-        (KeyModifiers::CONTROL, KeyCode::Char('z')) => {
+        (KeyModifiers::CONTROL, KeyCode::Char('z'))
+        | (KeyModifiers::SUPER, KeyCode::Char('z')) => {
             app.status.dismiss();
             app.config_warnings.clear();
             app.textarea.undo();
@@ -610,7 +611,20 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
             KeyOutcome::Continue
         }
 
-        (KeyModifiers::CONTROL, KeyCode::Char('y')) => {
+        // Ctrl+Y / Cmd+Y / Cmd+Shift+Z (macOS convention) → redo.
+        (KeyModifiers::CONTROL, KeyCode::Char('y'))
+        | (KeyModifiers::SUPER, KeyCode::Char('y')) => {
+            app.status.dismiss();
+            app.config_warnings.clear();
+            app.textarea.redo();
+            app.force_redecorate = true;
+            app.last_keystroke = Some(std::time::Instant::now());
+            app.recompute_dirty();
+            KeyOutcome::Continue
+        }
+
+        // Cmd+Shift+Z → redo (macOS standard; SUPER|SHIFT can't be an or-pattern).
+        (mods, KeyCode::Char('z')) if mods == KeyModifiers::SUPER | KeyModifiers::SHIFT => {
             app.status.dismiss();
             app.config_warnings.clear();
             app.textarea.redo();

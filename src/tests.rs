@@ -975,6 +975,24 @@ fn handle_key_event_ctrl_z_undoes_and_sets_force_redecorate() {
 }
 
 #[test]
+fn handle_key_event_cmd_z_undoes_and_sets_force_redecorate() {
+    let mut app = make_app_with_lines(&["hello"]);
+    app.textarea.input(crossterm::event::KeyEvent::new(
+        KeyCode::Char('x'),
+        KeyModifiers::NONE,
+    ));
+    app.force_redecorate = false;
+    let k = crossterm::event::KeyEvent::new(KeyCode::Char('z'), KeyModifiers::SUPER);
+    let outcome = handle_key_event(&mut app, k);
+    assert_eq!(outcome, KeyOutcome::Continue);
+    assert!(app.force_redecorate, "Cmd+Z must set force_redecorate");
+    assert!(
+        app.last_keystroke.is_some(),
+        "Cmd+Z must set last_keystroke"
+    );
+}
+
+#[test]
 fn handle_key_event_ctrl_y_redoes_and_sets_force_redecorate() {
     let mut app = make_app_with_lines(&["hello"]);
     app.force_redecorate = false;
@@ -982,6 +1000,29 @@ fn handle_key_event_ctrl_y_redoes_and_sets_force_redecorate() {
     let outcome = handle_key_event(&mut app, k);
     assert_eq!(outcome, KeyOutcome::Continue);
     assert!(app.force_redecorate, "Ctrl+Y must set force_redecorate");
+}
+
+#[test]
+fn handle_key_event_cmd_y_redoes_and_sets_force_redecorate() {
+    let mut app = make_app_with_lines(&["hello"]);
+    app.force_redecorate = false;
+    let k = crossterm::event::KeyEvent::new(KeyCode::Char('y'), KeyModifiers::SUPER);
+    let outcome = handle_key_event(&mut app, k);
+    assert_eq!(outcome, KeyOutcome::Continue);
+    assert!(app.force_redecorate, "Cmd+Y must set force_redecorate");
+}
+
+#[test]
+fn handle_key_event_cmd_shift_z_redoes_and_sets_force_redecorate() {
+    let mut app = make_app_with_lines(&["hello"]);
+    app.force_redecorate = false;
+    let k = crossterm::event::KeyEvent::new(
+        KeyCode::Char('z'),
+        KeyModifiers::SUPER | KeyModifiers::SHIFT,
+    );
+    let outcome = handle_key_event(&mut app, k);
+    assert_eq!(outcome, KeyOutcome::Continue);
+    assert!(app.force_redecorate, "Cmd+Shift+Z must set force_redecorate");
 }
 
 #[test]
