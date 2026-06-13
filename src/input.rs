@@ -21,7 +21,8 @@ use yame::renderer;
 use yame::search::SearchState;
 use yame::status::StatusMode;
 
-use super::commands::{center_scroll, clamp_scroll, handle_exit, handle_save};
+use super::commands::{center_scroll, clamp_scroll, handle_exit, handle_save, handle_save_to_path};
+use super::picker;
 
 // ---------------------------------------------------------------------------
 // Key-event outcome
@@ -46,6 +47,8 @@ pub(super) enum KeyOutcome {
     /// User confirmed a filename in the save-as prompt.  Carries the typed path
     /// and whether to exit after saving (triggered by the exit-prompt Y path).
     SaveAs { filename: String, then_exit: bool },
+    /// Ctrl+O: suspend TUI, run the file picker, load the selected file.
+    OpenPicker,
 }
 
 // ---------------------------------------------------------------------------
@@ -506,7 +509,10 @@ pub(super) fn handle_save_as_key(app: &mut App, k: crossterm::event::KeyEvent) -
                     return KeyOutcome::Continue;
                 }
                 app.status.mode = StatusMode::Normal;
-                return KeyOutcome::SaveAs { filename, then_exit };
+                return KeyOutcome::SaveAs {
+                    filename,
+                    then_exit,
+                };
             }
         }
 
@@ -598,6 +604,25 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
         return handle_save_as_key(app, k);
     }
 
+    // ── Switch-file prompt — dirty-buffer confirmation for Ctrl+O ────────
+    if matches!(app.status.mode, StatusMode::SwitchFilePrompt) {
+        return match k.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                app.status.mode = StatusMode::Normal;
+                KeyOutcome::OpenPicker
+            }
+            KeyCode::Char('n')
+            | KeyCode::Char('N')
+            | KeyCode::Esc
+            | KeyCode::Char('c')
+            | KeyCode::Char('C') => {
+                app.status.mode = StatusMode::Normal;
+                KeyOutcome::Continue
+            }
+            _ => KeyOutcome::Continue,
+        };
+    }
+
     // ── Go-to-line mode — intercepts all keys while the prompt is open ────
     if matches!(app.status.mode, StatusMode::GoToLine { .. }) {
         return handle_goto_line_key(app, k);
@@ -624,6 +649,17 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
                 KeyOutcome::Continue
             } else {
                 KeyOutcome::Save
+            }
+        }
+
+        // Ctrl+O: open file picker.  If the current buffer is dirty, ask the
+        // user to confirm discarding changes before suspending the TUI.
+        (KeyModifiers::CONTROL, KeyCode::Char('o')) => {
+            if app.is_dirty {
+                app.status.mode = StatusMode::SwitchFilePrompt;
+                KeyOutcome::Continue
+            } else {
+                KeyOutcome::OpenPicker
             }
         }
 
@@ -1213,15 +1249,50 @@ where
                                 .set_timed("Config reloaded.", Duration::from_millis(1500));
                             app.last_keystroke = Some(std::time::Instant::now());
                         }
-                        KeyOutcome::SaveAs { filename, then_exit } => {
+                        KeyOutcome::SaveAs {
+                            filename,
+                            then_exit,
+                        } => {
                             let path = std::path::PathBuf::from(&filename);
                             app.shortened_path = renderer::shorten_path(&path, 3);
-                            app.file_mode = resolve_file_mode(&path, &yame::config::FiletypeConfig::default());
+                            app.file_mode =
+                                resolve_file_mode(&path, &yame::config::FiletypeConfig::default());
                             app.file_path = Some(path);
-                            super::commands::handle_save_to_path(app)?;
+                            handle_save_to_path(app)?;
                             if then_exit {
                                 break;
                             }
+                        }
+                        KeyOutcome::OpenPicker => {
+                            match picker::pick_file() {
+                                Ok(Some(path)) => {
+                                    // No-op if the user picked the file already open.
+                                    let same = app.file_path.as_deref() == Some(path.as_path());
+                                    if !same {
+                                        match app.load_new_file(path, app.tab_width) {
+                                            Ok(()) => {
+                                                if let Some(p) = &app.file_path {
+                                                    app.file_mode = resolve_file_mode(
+                                                        p,
+                                                        &yame::config::FiletypeConfig::default(),
+                                                    );
+                                                }
+                                            }
+                                            Err(e) => {
+                                                app.status
+                                                    .set_dismissible(format!("⚠ Open failed: {e}"));
+                                            }
+                                        }
+                                    }
+                                }
+                                Ok(None) => {} // user cancelled
+                                Err(e) => {
+                                    app.status.set_dismissible(format!("⚠ Picker: {e}"));
+                                }
+                            }
+                            // Always force a full repaint after leaving/re-entering
+                            // alternate screen — the terminal may have been dirtied.
+                            terminal.clear()?;
                         }
                     }
                 }
@@ -3018,9 +3089,18 @@ mod tests {
     #[test]
     fn save_as_key_char_appends_to_buffer() {
         let mut app = make_untitled_app();
-        handle_save_as_key(&mut app, KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
-        handle_save_as_key(&mut app, KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE));
-        handle_save_as_key(&mut app, KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE));
+        handle_save_as_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE),
+        );
+        handle_save_as_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE),
+        );
+        handle_save_as_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE),
+        );
         assert_eq!(
             app.status.save_as_state().map(|(i, _)| i),
             Some("foo"),
@@ -3032,9 +3112,18 @@ mod tests {
     #[test]
     fn save_as_key_backspace_removes_last_char() {
         let mut app = make_untitled_app();
-        handle_save_as_key(&mut app, KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
-        handle_save_as_key(&mut app, KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE));
-        handle_save_as_key(&mut app, KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        handle_save_as_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE),
+        );
+        handle_save_as_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE),
+        );
+        handle_save_as_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
+        );
         assert_eq!(
             app.status.save_as_state().map(|(i, _)| i),
             Some("f"),
@@ -3057,10 +3146,22 @@ mod tests {
     #[test]
     fn save_as_key_enter_with_filename_emits_save_as_outcome() {
         let mut app = make_untitled_app();
-        handle_save_as_key(&mut app, KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
-        handle_save_as_key(&mut app, KeyEvent::new(KeyCode::Char('.'), KeyModifiers::NONE));
-        handle_save_as_key(&mut app, KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
-        handle_save_as_key(&mut app, KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE));
+        handle_save_as_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
+        );
+        handle_save_as_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('.'), KeyModifiers::NONE),
+        );
+        handle_save_as_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE),
+        );
+        handle_save_as_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE),
+        );
         let outcome =
             handle_save_as_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         assert!(
@@ -3074,11 +3175,20 @@ mod tests {
     fn save_as_key_enter_propagates_then_exit_flag() {
         let mut app = make_untitled_app();
         app.status.start_save_as(true); // then_exit = true
-        handle_save_as_key(&mut app, KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE));
+        handle_save_as_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE),
+        );
         let outcome =
             handle_save_as_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         assert!(
-            matches!(outcome, KeyOutcome::SaveAs { then_exit: true, .. }),
+            matches!(
+                outcome,
+                KeyOutcome::SaveAs {
+                    then_exit: true,
+                    ..
+                }
+            ),
             "then_exit=true must be propagated to the SaveAs outcome"
         );
     }
@@ -3118,8 +3228,114 @@ mod tests {
             "Ctrl+S on untitled buffer must return Continue (save-as prompt, not Save)"
         );
         assert!(
-            matches!(app.status.mode, yame::status::StatusMode::SaveAs { then_exit: false, .. }),
+            matches!(
+                app.status.mode,
+                yame::status::StatusMode::SaveAs {
+                    then_exit: false,
+                    ..
+                }
+            ),
             "Ctrl+S on untitled buffer must open the save-as prompt"
+        );
+    }
+
+    // ── Ctrl+O / file picker ─────────────────────────────────────────────────
+
+    // Ctrl+O on a clean buffer should go straight to OpenPicker.
+    // Kills: removing the `is_dirty` branch → always sets SwitchFilePrompt.
+    #[test]
+    fn ctrl_o_on_clean_buffer_returns_open_picker() {
+        let mut app = make_app();
+        app.is_dirty = false;
+        let outcome = handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(
+            outcome,
+            KeyOutcome::OpenPicker,
+            "Ctrl+O on a clean buffer must return OpenPicker immediately"
+        );
+        assert!(
+            matches!(app.status.mode, yame::status::StatusMode::Normal),
+            "status must stay Normal when buffer is clean"
+        );
+    }
+
+    // Ctrl+O on a dirty buffer must show the confirmation prompt, not open picker.
+    // Kills: removing the `is_dirty` branch → dirty buffer opens picker without warning.
+    #[test]
+    fn ctrl_o_on_dirty_buffer_shows_switch_prompt() {
+        let mut app = make_app();
+        app.is_dirty = true;
+        let outcome = handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(
+            outcome,
+            KeyOutcome::Continue,
+            "Ctrl+O on a dirty buffer must return Continue (prompt shown, not picker)"
+        );
+        assert!(
+            matches!(app.status.mode, yame::status::StatusMode::SwitchFilePrompt),
+            "Ctrl+O on a dirty buffer must open the SwitchFilePrompt"
+        );
+    }
+
+    // SwitchFilePrompt: Y confirms and returns OpenPicker.
+    // Kills: Y arm returning Continue instead of OpenPicker.
+    #[test]
+    fn switch_file_prompt_y_returns_open_picker() {
+        let mut app = make_app();
+        app.status.mode = yame::status::StatusMode::SwitchFilePrompt;
+        let outcome = handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
+        );
+        assert_eq!(
+            outcome,
+            KeyOutcome::OpenPicker,
+            "Y in SwitchFilePrompt must return OpenPicker"
+        );
+        assert!(
+            matches!(app.status.mode, yame::status::StatusMode::Normal),
+            "status must return to Normal after confirming"
+        );
+    }
+
+    // SwitchFilePrompt: N cancels and stays Normal.
+    // Kills: N arm returning OpenPicker instead of Continue.
+    #[test]
+    fn switch_file_prompt_n_cancels() {
+        let mut app = make_app();
+        app.status.mode = yame::status::StatusMode::SwitchFilePrompt;
+        let outcome = handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE),
+        );
+        assert_eq!(
+            outcome,
+            KeyOutcome::Continue,
+            "N in SwitchFilePrompt must return Continue"
+        );
+        assert!(
+            matches!(app.status.mode, yame::status::StatusMode::Normal),
+            "status must return to Normal after cancelling"
+        );
+    }
+
+    // SwitchFilePrompt: Esc cancels.
+    // Kills: Esc arm missing → Esc becomes a no-op and mode stays SwitchFilePrompt.
+    #[test]
+    fn switch_file_prompt_esc_cancels() {
+        let mut app = make_app();
+        app.status.mode = yame::status::StatusMode::SwitchFilePrompt;
+        let outcome = handle_key_event(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(outcome, KeyOutcome::Continue);
+        assert!(
+            matches!(app.status.mode, yame::status::StatusMode::Normal),
+            "Esc must dismiss the SwitchFilePrompt"
         );
     }
 }

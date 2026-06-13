@@ -257,7 +257,7 @@ impl App {
         Ok(Self {
             textarea,
             shortened_path,
-            file_path,  // already Option<PathBuf>
+            file_path, // already Option<PathBuf>
             is_dirty: false,
             saved_content,
             theme,
@@ -284,6 +284,34 @@ impl App {
             show_shortcuts: false,
             read_only: false, // set by caller via app.read_only = read_only after new()
         })
+    }
+
+    /// Replace the current buffer with the contents of `path`.
+    ///
+    /// Resets all per-file state (scroll, search, sticky column, status) so the
+    /// editor feels like a fresh open.  `file_mode` is left unchanged — the
+    /// caller is responsible for re-resolving it after this returns.
+    #[mutants::skip] // Calls load_file (fs I/O) — mutations masked by OS state.
+    pub fn load_new_file(&mut self, path: PathBuf, tab_width: usize) -> io::Result<()> {
+        let textarea = load_file(&path, tab_width)?;
+        let saved_content = Some(textarea.lines().to_vec());
+        let shortened_path = shorten_path(&path, 3);
+
+        self.textarea = textarea;
+        self.file_path = Some(path);
+        self.shortened_path = shortened_path;
+        self.saved_content = saved_content;
+        self.is_dirty = false;
+        self.scroll_top = 0;
+        self.search = None;
+        self.decoration_map = DecorationMap::default();
+        self.last_keystroke = Some(std::time::Instant::now());
+        self.force_redecorate = true;
+        self.sticky_col = None;
+        self.free_scroll = false;
+        self.status = crate::status::StatusLine::default();
+        self.word_count = 0;
+        Ok(())
     }
 
     /// Record that a keystroke occurred: start the debounce timer and recompute

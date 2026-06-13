@@ -14,6 +14,8 @@ use yame::config::{Theme, load_config, supports_italic};
 mod cli;
 mod commands;
 mod input;
+mod picker;
+mod preview;
 
 #[mutants::skip] // Installs a global panic hook — untestable side effect.
 fn setup_panic_hook() {
@@ -115,7 +117,8 @@ fn main() {
     let command = cli::parse_args().unwrap_or_else(|_| std::process::exit(1));
     match command {
         cli::Command::Edit { path, read_only } => {
-            if let Err(e) = run(path, read_only) {  // path: Option<PathBuf>
+            if let Err(e) = run(path, read_only) {
+                // path: Option<PathBuf>
                 eprintln!("error: {e}");
                 std::process::exit(1);
             }
@@ -136,6 +139,12 @@ fn main() {
         }
         cli::Command::WriteConfig => {
             cli::run_write_config();
+        }
+        cli::Command::Preview { path } => {
+            if let Err(e) = preview::render_preview(&path) {
+                eprintln!("error: {e}");
+                std::process::exit(1);
+            }
         }
     }
 }

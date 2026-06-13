@@ -89,6 +89,14 @@ pub fn render_status_bar(f: &mut Frame, area: Rect, app: &App) {
         StatusMode::GoToLine { input } => build_goto_line_bar(app, input),
 
         StatusMode::SaveAs { input, .. } => build_save_as_bar(app, input),
+
+        StatusMode::SwitchFilePrompt => Line::from(vec![Span::styled(
+            " Unsaved changes will be lost — switch file? [Y]es  [N]o ",
+            Style::default()
+                .fg(warning_fg)
+                .bg(hints_bg)
+                .add_modifier(Modifier::BOLD),
+        )]),
     };
 
     let para = Paragraph::new(content).style(Style::default().bg(canvas_bg));

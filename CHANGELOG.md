@@ -9,6 +9,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Added
 - feat: Ctrl+I insert fenced code block (#186)
 - feat: empty buffer mode — `yame` with no arguments opens an untitled buffer; Ctrl+S prompts for a filename (save-as); exit prompt also routes through save-as for untitled buffers (#152)
+- feat: Ctrl+O file picker — suspends TUI, runs `$YAME_PICKER` (or auto-detects lf / fzf), loads selected file; dirty-buffer guard asks before discarding; file switching resets all per-file state (#151, #189)
+- feat: `yame --preview <file>` — headless ANSI render for lf/file-manager previewers; respects `$COLUMNS`; full decoration and syntax-highlight pipeline; bg colours suppressed for clean integration (#190)
 
 ### Changed
 - chore: migrate tui-textarea → tui-textarea-2, bump crossterm 0.28 → 0.29 (#184)

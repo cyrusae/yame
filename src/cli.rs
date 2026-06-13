@@ -11,9 +11,18 @@ use std::path::PathBuf;
 
 pub(super) enum Command {
     /// Open a file for editing, or start with an untitled buffer (`path = None`).
-    Edit { path: Option<PathBuf>, read_only: bool },
-    Init { shell: Option<String> },
+    Edit {
+        path: Option<PathBuf>,
+        read_only: bool,
+    },
+    Init {
+        shell: Option<String>,
+    },
     WriteConfig,
+    /// Render a file to stdout with ANSI colour codes (for file-manager previewers).
+    Preview {
+        path: PathBuf,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -104,7 +113,9 @@ pub(super) fn print_help() {
     println!();
     println!("USAGE");
     println!("  yame <file>           Open <file> for editing (created if it doesn't exist)");
+    println!("  yame                  Open an untitled buffer (save-as on first Ctrl+S)");
     println!("  yame -r <file>        Open <file> in read-only mode (no edits, no save)");
+    println!("  yame --preview <file> Render <file> to stdout with ANSI colours (for lf/etc)");
     println!("  yame init             Print shell integration function (eval in .bashrc/.zshrc)");
     println!("  yame write-config     Write default config to ~/.config/yame/config.toml");
     println!(
@@ -162,6 +173,9 @@ pub(super) fn parse_args() -> Result<Command, ()> {
             shell: Some(s.clone()),
         }),
         [a] if a == "write-config" => Ok(Command::WriteConfig),
+        [flag, path] if flag == "--preview" && !path.starts_with('-') => Ok(Command::Preview {
+            path: PathBuf::from(path),
+        }),
         [path] if !path.starts_with('-') => Ok(Command::Edit {
             path: Some(PathBuf::from(path)),
             read_only: false,

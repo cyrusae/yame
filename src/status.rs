@@ -16,6 +16,11 @@ pub enum StatusMode {
     GoToLine {
         input: String,
     },
+    /// Confirmation prompt shown by Ctrl+O when the current buffer is dirty.
+    ///
+    /// The user must choose to discard unsaved changes before the file picker
+    /// opens.  [Y] proceeds to the picker; [N] / Esc cancels.
+    SwitchFilePrompt,
     /// Save-as prompt for untitled buffers.  `input` accumulates the filename
     /// the user types; Enter confirms; Esc cancels.  When `then_exit` is true
     /// the editor exits immediately after a successful save (triggered by the
@@ -238,7 +243,13 @@ mod tests {
         let mut s = StatusLine::default();
         s.start_save_as(false);
         assert!(
-            matches!(s.mode, StatusMode::SaveAs { then_exit: false, .. }),
+            matches!(
+                s.mode,
+                StatusMode::SaveAs {
+                    then_exit: false,
+                    ..
+                }
+            ),
             "start_save_as(false) must set SaveAs mode with then_exit=false"
         );
     }
@@ -248,7 +259,13 @@ mod tests {
         let mut s = StatusLine::default();
         s.start_save_as(true);
         assert!(
-            matches!(s.mode, StatusMode::SaveAs { then_exit: true, .. }),
+            matches!(
+                s.mode,
+                StatusMode::SaveAs {
+                    then_exit: true,
+                    ..
+                }
+            ),
             "start_save_as(true) must set then_exit=true"
         );
     }
