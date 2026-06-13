@@ -9,6 +9,19 @@ use yame::status::StatusMode;
 
 #[mutants::skip] // Calls std::fs::write — I/O side effect.
 pub(super) fn handle_save(app: &mut App) -> io::Result<()> {
+    // `KeyOutcome::Save` is only emitted when `file_path.is_some()` (the untitled
+    // path branches to `start_save_as` in `handle_key_event` and returns `Continue`),
+    // so reaching here with `file_path = None` would be a logic error.
+    handle_save_to_path(app)
+}
+
+/// Write the buffer to `app.file_path` (which must be `Some`).
+///
+/// Separated from `handle_save` so `handle_save_as_confirm` can reuse the same
+/// write logic after the path has been set.
+#[mutants::skip] // Calls std::fs::write — I/O side effect.
+pub(super) fn handle_save_to_path(app: &mut App) -> io::Result<()> {
+    let path = app.file_path.as_ref().expect("file_path must be Some");
     let lines = app.textarea.lines();
     // Always write 0 bytes for an empty buffer — consistent regardless of whether
     // the file was empty at open time.  A non-empty save always gets a POSIX newline.
@@ -18,14 +31,14 @@ pub(super) fn handle_save(app: &mut App) -> io::Result<()> {
         lines.join("\n") + "\n"
     };
     // Create parent directories if they don't exist (e.g. `yame notes/new.md`).
-    if let Some(parent) = app.file_path.parent()
+    if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
         && let Err(e) = std::fs::create_dir_all(parent)
     {
         app.status.set_dismissible(format!("⚠ Save failed: {e}"));
         return Ok(());
     }
-    match std::fs::write(&app.file_path, &content) {
+    match std::fs::write(path, &content) {
         Ok(()) => {
             app.saved_content = Some(app.textarea.lines().to_vec());
             app.is_dirty = false;
@@ -148,7 +161,7 @@ mod tests {
     fn make_app(lines: Vec<&str>, content_width: usize) -> App {
         App {
             textarea: TextArea::new(lines.into_iter().map(String::from).collect()),
-            file_path: PathBuf::from("test.md"),
+            file_path: Some(PathBuf::from("test.md")),
             shortened_path: "test.md".to_string(),
             is_dirty: false,
             saved_content: None,

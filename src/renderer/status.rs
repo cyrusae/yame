@@ -87,6 +87,8 @@ pub fn render_status_bar(f: &mut Frame, area: Rect, app: &App) {
         StatusMode::Normal => build_normal_status_bar(app),
 
         StatusMode::GoToLine { input } => build_goto_line_bar(app, input),
+
+        StatusMode::SaveAs { input, .. } => build_save_as_bar(app, input),
     };
 
     let para = Paragraph::new(content).style(Style::default().bg(canvas_bg));
@@ -163,6 +165,25 @@ pub(super) fn build_goto_line_bar(app: &App, input: &str) -> Line<'static> {
     let accent_fg = theme.accent;
 
     let content = format!(" Go to line: {input}_ ");
+    Line::from(vec![Span::styled(
+        content,
+        Style::default()
+            .fg(accent_fg)
+            .bg(hints_bg)
+            .add_modifier(Modifier::BOLD),
+    )])
+}
+
+/// Build the status bar for the save-as prompt (untitled buffer first save).
+///
+/// Shows `" Save as: {input}_ "` in accent colour on `hints_bg`, matching the
+/// go-to-line prompt style so the two prompts feel visually consistent.
+pub(super) fn build_save_as_bar(app: &App, input: &str) -> Line<'static> {
+    let theme = &app.theme;
+    let hints_bg = theme.ui_bg;
+    let accent_fg = theme.accent;
+
+    let content = format!(" Save as: {input}_ ");
     Line::from(vec![Span::styled(
         content,
         Style::default()

@@ -79,7 +79,7 @@ mod tests {
     fn make_app() -> App {
         App {
             textarea: TextArea::default(),
-            file_path: PathBuf::from("test.md"),
+            file_path: Some(PathBuf::from("test.md")),
             shortened_path: "test.md".to_string(),
             is_dirty: false,
             saved_content: None,

@@ -43,6 +43,9 @@ pub(super) enum KeyOutcome {
     Exit,
     /// Ctrl+R: reload config from disk and redisplay a confirmation banner.
     ReloadConfig,
+    /// User confirmed a filename in the save-as prompt.  Carries the typed path
+    /// and whether to exit after saving (triggered by the exit-prompt Y path).
+    SaveAs { filename: String, then_exit: bool },
 }
 
 // ---------------------------------------------------------------------------
@@ -481,6 +484,47 @@ pub(super) fn handle_goto_line_key(app: &mut App, k: crossterm::event::KeyEvent)
 }
 
 // ---------------------------------------------------------------------------
+// Save-as key dispatcher
+// ---------------------------------------------------------------------------
+
+/// Handle a key event while the save-as prompt is active (untitled buffer).
+///
+/// Printable characters are appended to the filename buffer; Backspace edits
+/// it; Enter confirms (emitting `KeyOutcome::SaveAs`); Esc cancels and returns
+/// to `Normal` mode without saving.
+pub(super) fn handle_save_as_key(app: &mut App, k: crossterm::event::KeyEvent) -> KeyOutcome {
+    match (k.modifiers, k.code) {
+        (KeyModifiers::NONE, KeyCode::Esc) => {
+            app.status.mode = StatusMode::Normal;
+        }
+
+        (KeyModifiers::NONE, KeyCode::Enter) => {
+            if let Some((input, then_exit)) = app.status.save_as_state() {
+                let filename = input.trim().to_string();
+                if filename.is_empty() {
+                    // Nothing typed — stay in the prompt.
+                    return KeyOutcome::Continue;
+                }
+                app.status.mode = StatusMode::Normal;
+                return KeyOutcome::SaveAs { filename, then_exit };
+            }
+        }
+
+        (KeyModifiers::NONE, KeyCode::Backspace) => {
+            app.status.save_as_pop();
+        }
+
+        // Accept any printable character.
+        (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(c)) => {
+            app.status.save_as_push(c);
+        }
+
+        _ => {}
+    }
+    KeyOutcome::Continue
+}
+
+// ---------------------------------------------------------------------------
 // Key-event dispatcher (pure — no file I/O, no terminal I/O)
 // ---------------------------------------------------------------------------
 
@@ -516,7 +560,15 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
             return KeyOutcome::Continue;
         }
         return match k.code {
-            KeyCode::Char('y') | KeyCode::Char('Y') => KeyOutcome::SaveAndExit,
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                if app.file_path.is_none() {
+                    // Untitled buffer — prompt for a filename; exit after save.
+                    app.status.start_save_as(true);
+                    KeyOutcome::Continue
+                } else {
+                    KeyOutcome::SaveAndExit
+                }
+            }
             KeyCode::Char('n') | KeyCode::Char('N') => KeyOutcome::Exit,
             KeyCode::Esc
             | KeyCode::Char('c')
@@ -541,6 +593,11 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
         return KeyOutcome::Continue;
     }
 
+    // ── Save-as mode — intercepts all keys while the prompt is open ─────
+    if matches!(app.status.mode, StatusMode::SaveAs { .. }) {
+        return handle_save_as_key(app, k);
+    }
+
     // ── Go-to-line mode — intercepts all keys while the prompt is open ────
     if matches!(app.status.mode, StatusMode::GoToLine { .. }) {
         return handle_goto_line_key(app, k);
@@ -561,7 +618,13 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
     // ── Normal editing mode ─────────────────────────────────────────────────
     match (k.modifiers, k.code) {
         (KeyModifiers::CONTROL, KeyCode::Char('s')) | (KeyModifiers::SUPER, KeyCode::Char('s')) => {
-            KeyOutcome::Save
+            if app.file_path.is_none() {
+                // Untitled buffer — open the save-as prompt instead.
+                app.status.start_save_as(false);
+                KeyOutcome::Continue
+            } else {
+                KeyOutcome::Save
+            }
         }
 
         // Open search bar.
@@ -1140,12 +1203,25 @@ where
                                 ))
                             });
                             // Re-resolve file mode in case [filetype] config changed.
-                            app.file_mode = resolve_file_mode(&app.file_path, &new_config.filetype);
+                            // Untitled buffers stay in Markdown mode until saved.
+                            if let Some(p) = &app.file_path {
+                                app.file_mode = resolve_file_mode(p, &new_config.filetype);
+                            }
                             app.show_line_numbers = new_config.layout.line_numbers.unwrap_or(false);
                             app.config_warnings = warnings;
                             app.status
                                 .set_timed("Config reloaded.", Duration::from_millis(1500));
                             app.last_keystroke = Some(std::time::Instant::now());
+                        }
+                        KeyOutcome::SaveAs { filename, then_exit } => {
+                            let path = std::path::PathBuf::from(&filename);
+                            app.shortened_path = renderer::shorten_path(&path, 3);
+                            app.file_mode = resolve_file_mode(&path, &yame::config::FiletypeConfig::default());
+                            app.file_path = Some(path);
+                            super::commands::handle_save_to_path(app)?;
+                            if then_exit {
+                                break;
+                            }
                         }
                     }
                 }
@@ -1232,7 +1308,7 @@ mod tests {
     fn make_app() -> App {
         App {
             textarea: TextArea::default(),
-            file_path: PathBuf::from("test.md"),
+            file_path: Some(PathBuf::from("test.md")),
             shortened_path: "test.md".to_string(),
             is_dirty: false,
             saved_content: None,
@@ -2926,5 +3002,124 @@ mod tests {
         let l2 = app.textarea.lines()[2].len();
         assert_eq!(l0, l2, "Alt+T must reformat table rows to equal length");
         assert!(l0 > 0, "reformatted table must be non-empty");
+    }
+
+    // ── handle_save_as_key ───────────────────────────────────────────────────
+
+    fn make_untitled_app() -> App {
+        let mut app = make_app();
+        app.file_path = None;
+        app.shortened_path = "(untitled)".to_string();
+        app.status.start_save_as(false);
+        app
+    }
+
+    // Kills: delete the Char arm → typed chars are swallowed without being pushed.
+    #[test]
+    fn save_as_key_char_appends_to_buffer() {
+        let mut app = make_untitled_app();
+        handle_save_as_key(&mut app, KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
+        handle_save_as_key(&mut app, KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE));
+        handle_save_as_key(&mut app, KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE));
+        assert_eq!(
+            app.status.save_as_state().map(|(i, _)| i),
+            Some("foo"),
+            "typed characters must accumulate in the save-as buffer"
+        );
+    }
+
+    // Kills: delete the Backspace arm → pop becomes a no-op.
+    #[test]
+    fn save_as_key_backspace_removes_last_char() {
+        let mut app = make_untitled_app();
+        handle_save_as_key(&mut app, KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
+        handle_save_as_key(&mut app, KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE));
+        handle_save_as_key(&mut app, KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        assert_eq!(
+            app.status.save_as_state().map(|(i, _)| i),
+            Some("f"),
+            "Backspace must remove the last character from the save-as buffer"
+        );
+    }
+
+    // Kills: delete the Esc arm → Esc becomes a no-op and mode stays SaveAs.
+    #[test]
+    fn save_as_key_esc_cancels_prompt() {
+        let mut app = make_untitled_app();
+        handle_save_as_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(
+            matches!(app.status.mode, yame::status::StatusMode::Normal),
+            "Esc must cancel the save-as prompt and return to Normal mode"
+        );
+    }
+
+    // Kills: delete Enter arm → Enter becomes a no-op (no SaveAs outcome).
+    #[test]
+    fn save_as_key_enter_with_filename_emits_save_as_outcome() {
+        let mut app = make_untitled_app();
+        handle_save_as_key(&mut app, KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
+        handle_save_as_key(&mut app, KeyEvent::new(KeyCode::Char('.'), KeyModifiers::NONE));
+        handle_save_as_key(&mut app, KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
+        handle_save_as_key(&mut app, KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE));
+        let outcome =
+            handle_save_as_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(
+            matches!(outcome, KeyOutcome::SaveAs { ref filename, then_exit: false } if filename == "a.md"),
+            "Enter with a filename must emit SaveAs outcome with the typed path"
+        );
+    }
+
+    // Kills: invert `then_exit` when propagating from save_as_state → outcome.
+    #[test]
+    fn save_as_key_enter_propagates_then_exit_flag() {
+        let mut app = make_untitled_app();
+        app.status.start_save_as(true); // then_exit = true
+        handle_save_as_key(&mut app, KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE));
+        let outcome =
+            handle_save_as_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(
+            matches!(outcome, KeyOutcome::SaveAs { then_exit: true, .. }),
+            "then_exit=true must be propagated to the SaveAs outcome"
+        );
+    }
+
+    // Kills: delete the empty-filename guard → Enter on empty buffer emits SaveAs("").
+    #[test]
+    fn save_as_key_enter_on_empty_buffer_stays_in_prompt() {
+        let mut app = make_untitled_app();
+        // No chars typed — buffer is empty.
+        let outcome =
+            handle_save_as_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(
+            outcome,
+            KeyOutcome::Continue,
+            "Enter on an empty filename must be ignored and keep the prompt open"
+        );
+        assert!(
+            matches!(app.status.mode, yame::status::StatusMode::SaveAs { .. }),
+            "prompt must remain open when Enter is pressed with no filename"
+        );
+    }
+
+    // Untitled buffer: Ctrl+S must open the save-as prompt, not return Save.
+    // Kills: removing the `file_path.is_none()` guard → Ctrl+S returns Save on
+    // untitled buffers, which would call handle_save_to_path on a None path and panic.
+    #[test]
+    fn ctrl_s_on_untitled_buffer_opens_save_as_prompt() {
+        let mut app = make_app();
+        app.file_path = None;
+        let outcome = handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(
+            outcome,
+            KeyOutcome::Continue,
+            "Ctrl+S on untitled buffer must return Continue (save-as prompt, not Save)"
+        );
+        assert!(
+            matches!(app.status.mode, yame::status::StatusMode::SaveAs { then_exit: false, .. }),
+            "Ctrl+S on untitled buffer must open the save-as prompt"
+        );
     }
 }

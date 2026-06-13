@@ -10,7 +10,8 @@ use std::path::PathBuf;
 // ---------------------------------------------------------------------------
 
 pub(super) enum Command {
-    Edit { path: PathBuf, read_only: bool },
+    /// Open a file for editing, or start with an untitled buffer (`path = None`).
+    Edit { path: Option<PathBuf>, read_only: bool },
     Init { shell: Option<String> },
     WriteConfig,
 }
@@ -151,28 +152,29 @@ pub(super) fn parse_args() -> Result<Command, ()> {
     }
 
     match args.as_slice() {
-        [] => {
-            print_help();
-            std::process::exit(0);
-        }
+        // No arguments → open an untitled buffer.
+        [] => Ok(Command::Edit {
+            path: None,
+            read_only: false,
+        }),
         [a] if a == "init" => Ok(Command::Init { shell: None }),
         [a, s] if a == "init" => Ok(Command::Init {
             shell: Some(s.clone()),
         }),
         [a] if a == "write-config" => Ok(Command::WriteConfig),
         [path] if !path.starts_with('-') => Ok(Command::Edit {
-            path: PathBuf::from(path),
+            path: Some(PathBuf::from(path)),
             read_only: false,
         }),
         [flag, path] if (flag == "-r" || flag == "--read-only") && !path.starts_with('-') => {
             Ok(Command::Edit {
-                path: PathBuf::from(path),
+                path: Some(PathBuf::from(path)),
                 read_only: true,
             })
         }
         [path, flag] if (flag == "-r" || flag == "--read-only") && !path.starts_with('-') => {
             Ok(Command::Edit {
-                path: PathBuf::from(path),
+                path: Some(PathBuf::from(path)),
                 read_only: true,
             })
         }

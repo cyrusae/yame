@@ -26,7 +26,7 @@ fn setup_panic_hook() {
 }
 
 #[mutants::skip] // Full terminal I/O orchestration — not unit-testable.
-fn run(file_path: PathBuf, read_only: bool) -> io::Result<()> {
+fn run(file_path: Option<PathBuf>, read_only: bool) -> io::Result<()> {
     setup_panic_hook();
 
     let (config, config_warnings) = load_config();
@@ -53,14 +53,17 @@ fn run(file_path: PathBuf, read_only: bool) -> io::Result<()> {
             palette_theme,
         )
     });
-    let file_mode = resolve_file_mode(&file_path, &config.filetype);
+    let file_mode = match &file_path {
+        Some(p) => resolve_file_mode(p, &config.filetype),
+        // Untitled buffers default to Markdown; resolved again on first save-as.
+        None => yame::app::FileMode::Markdown,
+    };
 
     // Refuse to open binary files — null bytes would corrupt the editor buffer.
-    if is_likely_binary(&file_path) {
-        eprintln!(
-            "error: '{}' appears to be a binary file.",
-            file_path.display()
-        );
+    if let Some(p) = &file_path
+        && is_likely_binary(p)
+    {
+        eprintln!("error: '{}' appears to be a binary file.", p.display());
         eprintln!("yame can only open text files.");
         std::process::exit(1);
     }
@@ -112,7 +115,7 @@ fn main() {
     let command = cli::parse_args().unwrap_or_else(|_| std::process::exit(1));
     match command {
         cli::Command::Edit { path, read_only } => {
-            if let Err(e) = run(path, read_only) {
+            if let Err(e) = run(path, read_only) {  // path: Option<PathBuf>
                 eprintln!("error: {e}");
                 std::process::exit(1);
             }

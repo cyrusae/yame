@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 - feat: Ctrl+I insert fenced code block (#186)
+- feat: empty buffer mode — `yame` with no arguments opens an untitled buffer; Ctrl+S prompts for a filename (save-as); exit prompt also routes through save-as for untitled buffers (#152)
 
 ### Changed
 - chore: migrate tui-textarea → tui-textarea-2, bump crossterm 0.28 → 0.29 (#184)

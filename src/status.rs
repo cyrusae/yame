@@ -16,6 +16,14 @@ pub enum StatusMode {
     GoToLine {
         input: String,
     },
+    /// Save-as prompt for untitled buffers.  `input` accumulates the filename
+    /// the user types; Enter confirms; Esc cancels.  When `then_exit` is true
+    /// the editor exits immediately after a successful save (triggered by the
+    /// "save & exit" path of the exit prompt).
+    SaveAs {
+        input: String,
+        then_exit: bool,
+    },
 }
 
 /// All mutable state for the status bar / hint line.
@@ -39,6 +47,46 @@ impl StatusLine {
     pub fn dismiss(&mut self) {
         if matches!(self.mode, StatusMode::DismissibleMessage(_)) {
             self.mode = StatusMode::Normal;
+        }
+    }
+
+    /// Enter save-as prompt mode with an empty filename buffer.
+    ///
+    /// `then_exit` — when true, the editor exits immediately after a successful
+    /// save (used when save-as is triggered by the "save & exit" exit-prompt path).
+    pub fn start_save_as(&mut self, then_exit: bool) {
+        self.mode = StatusMode::SaveAs {
+            input: String::new(),
+            then_exit,
+        };
+    }
+
+    /// Append a character to the save-as filename buffer.
+    /// The buffer is capped at 255 characters (longest filename on most filesystems).
+    pub fn save_as_push(&mut self, c: char) {
+        if let StatusMode::SaveAs { input, .. } = &mut self.mode
+            && input.len() < 255
+        {
+            input.push(c);
+        }
+    }
+
+    /// Remove the last character from the save-as filename buffer.
+    pub fn save_as_pop(&mut self) {
+        if let StatusMode::SaveAs { input, .. } = &mut self.mode {
+            input.pop();
+        }
+    }
+
+    /// Return a snapshot of the current save-as state, if in that mode.
+    ///
+    /// Returns `(input, then_exit)` — the current filename buffer and whether
+    /// to exit after saving.
+    pub fn save_as_state(&self) -> Option<(&str, bool)> {
+        if let StatusMode::SaveAs { input, then_exit } = &self.mode {
+            Some((input, *then_exit))
+        } else {
+            None
         }
     }
 
@@ -183,5 +231,70 @@ mod tests {
             Some("config error"),
             "message() must return the DismissibleMessage text"
         );
+    }
+
+    #[test]
+    fn start_save_as_enters_save_as_mode() {
+        let mut s = StatusLine::default();
+        s.start_save_as(false);
+        assert!(
+            matches!(s.mode, StatusMode::SaveAs { then_exit: false, .. }),
+            "start_save_as(false) must set SaveAs mode with then_exit=false"
+        );
+    }
+
+    #[test]
+    fn start_save_as_then_exit_true() {
+        let mut s = StatusLine::default();
+        s.start_save_as(true);
+        assert!(
+            matches!(s.mode, StatusMode::SaveAs { then_exit: true, .. }),
+            "start_save_as(true) must set then_exit=true"
+        );
+    }
+
+    #[test]
+    fn save_as_push_appends_chars() {
+        let mut s = StatusLine::default();
+        s.start_save_as(false);
+        s.save_as_push('f');
+        s.save_as_push('o');
+        s.save_as_push('o');
+        assert_eq!(
+            s.save_as_state().map(|(i, _)| i),
+            Some("foo"),
+            "save_as_push must append characters to the input buffer"
+        );
+    }
+
+    #[test]
+    fn save_as_pop_removes_last_char() {
+        let mut s = StatusLine::default();
+        s.start_save_as(false);
+        s.save_as_push('f');
+        s.save_as_push('o');
+        s.save_as_pop();
+        assert_eq!(
+            s.save_as_state().map(|(i, _)| i),
+            Some("f"),
+            "save_as_pop must remove the last character"
+        );
+    }
+
+    #[test]
+    fn save_as_state_none_when_not_in_save_as_mode() {
+        let s = StatusLine::default();
+        assert_eq!(
+            s.save_as_state(),
+            None,
+            "save_as_state must return None in Normal mode"
+        );
+    }
+
+    #[test]
+    fn save_as_push_noop_outside_save_as_mode() {
+        let mut s = StatusLine::default();
+        s.save_as_push('x'); // should not panic or change mode
+        assert!(matches!(s.mode, StatusMode::Normal));
     }
 }

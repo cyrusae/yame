@@ -20,7 +20,7 @@ use yame::app::get_selection_text;
 fn make_app() -> App {
     App {
         textarea: TextArea::default(),
-        file_path: PathBuf::from("test.md"),
+        file_path: Some(PathBuf::from("test.md")),
         is_dirty: false,
         saved_content: None,
         theme: Theme::default_theme(),

@@ -976,7 +976,7 @@ mod tests {
     fn make_app() -> App {
         App {
             textarea: TextArea::default(),
-            file_path: PathBuf::from("notes/foo.md"),
+            file_path: Some(PathBuf::from("notes/foo.md")),
             is_dirty: false,
             saved_content: None,
             theme: Theme::default_theme(),

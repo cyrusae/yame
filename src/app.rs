@@ -121,10 +121,14 @@ pub enum ClipboardState {
 /// All mutable application state.
 pub struct App {
     pub textarea: TextArea<'static>,
-    pub file_path: PathBuf,
+    /// The path of the file being edited, or `None` for an untitled buffer
+    /// (launched with no arguments).  Set to `Some` on the first successful
+    /// save-as from an untitled buffer.
+    pub file_path: Option<PathBuf>,
     /// Pre-computed display string for the file path (shortened to 3 trailing
-    /// components).  Cached here so the render hot-path does not re-allocate on
-    /// every frame.  Updated whenever `file_path` changes.
+    /// components), or `"(untitled)"` when `file_path` is `None`.  Cached here
+    /// so the render hot-path does not re-allocate on every frame.  Updated
+    /// whenever `file_path` changes.
     pub shortened_path: String,
     pub is_dirty: bool,
     /// Snapshot of lines at last save, for dirty-flag recomputation after undo/redo.
@@ -204,7 +208,7 @@ impl App {
     #[mutants::skip] // Calls load_file (fs I/O) and returns a struct — mutations masked by I/O.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        file_path: PathBuf,
+        file_path: Option<PathBuf>,
         theme: Theme,
         italic_support: bool,
         powerline_glyphs: bool,
@@ -214,11 +218,17 @@ impl App {
         file_mode: FileMode,
         show_line_numbers: bool,
     ) -> io::Result<Self> {
-        let textarea = load_file(&file_path, tab_width)?;
+        let textarea = match &file_path {
+            Some(p) => load_file(p, tab_width)?,
+            None => TextArea::default(),
+        };
         // Snapshot the initial content so recompute_dirty() has a baseline for both
         // existing files (undo back to load state → clean) and new files (empty baseline).
         let saved_content = Some(textarea.lines().to_vec());
-        let shortened_path = shorten_path(&file_path, 3);
+        let shortened_path = match &file_path {
+            Some(p) => shorten_path(p, 3),
+            None => "(untitled)".to_string(),
+        };
 
         // Wrap the cache in Arc now so the background decoration worker can hold
         // a reference without cloning the expensive SyntaxSet/ThemeSet payloads.
@@ -247,7 +257,7 @@ impl App {
         Ok(Self {
             textarea,
             shortened_path,
-            file_path,
+            file_path,  // already Option<PathBuf>
             is_dirty: false,
             saved_content,
             theme,
@@ -435,7 +445,7 @@ mod tests {
     fn make_app() -> App {
         App {
             textarea: TextArea::default(),
-            file_path: PathBuf::from("test.md"),
+            file_path: Some(PathBuf::from("test.md")),
             shortened_path: "test.md".to_string(),
             is_dirty: false,
             saved_content: None,
