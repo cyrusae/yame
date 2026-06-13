@@ -10,13 +10,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
-- Integration test planning: catalogue scenarios from FEEDBACK-1 (#89)
-- triage v02-mutants-2: decoration/mod.rs + search surviving mutants (#180)
-- fix: 0611-mutants — End(List) test + search.rs rule pattern (#182)
-- docs: migrate ROADMAP decisions to DESIGN.md, delete ROADMAP.md (#183)
+### Fixed
+
+## [0.2.1] — 2026-06-13
+
+### Added
+
+- **`Ctrl+K` code block insertion** — inserts a fenced code block (` ``` `\n` ``` `) with the cursor placed immediately after the opening ticks so the language tag can be typed without a separate cursor move
 
 ### Fixed
-- fix: undo/redo keyboard shortcuts not working (Cmd/Ctrl+Z / Cmd/Ctrl+Y) (#185)
+
+- Clicking below the last line of text now places the cursor at end-of-line rather than col 0
+- Undo (`Ctrl+Z` / `Cmd+Z`) and redo (`Ctrl+Y` / `Cmd+Y` / `Cmd+Shift+Z`) were not functioning (#185)
 
 ## [0.2.0] — 2026-06-11
 
