@@ -7,10 +7,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 ### Added
+- feat: Ctrl+I insert fenced code block (#186)
 
 ### Changed
+- chore: migrate tui-textarea → tui-textarea-2, bump crossterm 0.28 → 0.29 (#184)
+- refactor: split decoration/mod.rs into focused submodules (#181)
+- chore: v0.2.1 version bump (#188)
 
 ### Fixed
+- fix: click below last line should land at end-of-line not col 0 (#187)
 
 ## [0.2.1] — 2026-06-13
 
