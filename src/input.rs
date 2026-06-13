@@ -161,7 +161,12 @@ pub(super) fn screen_to_doc(
         }
         vis += seg_count;
     }
-    Some((lines.len().saturating_sub(1) as u16, 0))
+    // Click fell below all rendered lines — land at the end of the last logical
+    // line so that clicking below-and-right of the text behaves like clicking past
+    // the end of the last line, not the beginning of it.
+    let last = lines.len().saturating_sub(1);
+    let end_col = lines.get(last).map_or(0, |l| l.chars().count());
+    Some((last as u16, end_col as u16))
 }
 
 /// Returns `true` if the key is a pure cursor-movement key that cannot change
@@ -672,6 +677,23 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
         // Alt+T: reflow the GFM table under the cursor to uniform column widths.
         (KeyModifiers::ALT, KeyCode::Char('t')) => {
             yame::table_format::handle_format_table(app);
+            KeyOutcome::Continue
+        }
+
+        // Ctrl+K: insert a fenced code block (```\n```) and position the cursor
+        // right after the opening ``` so the language tag can be typed immediately.
+        //
+        // Note: Ctrl+I cannot be used — terminals send it as ASCII 0x09 (Tab).
+        // Alt+` is unreliable on macOS because Option produces special characters
+        // unless the terminal is configured to use it as Meta.  Ctrl+K is a plain
+        // letter combo that every terminal delivers reliably.
+        (KeyModifiers::CONTROL, KeyCode::Char('k')) => {
+            let (row, col) = app.textarea.cursor();
+            app.textarea.insert_str("```\n```");
+            app.textarea
+                .move_cursor(CursorMove::Jump(row as u16, (col + 3) as u16));
+            app.force_redecorate = true;
+            app.mark_keystroke();
             KeyOutcome::Continue
         }
 
@@ -1786,6 +1808,43 @@ mod tests {
         );
     }
 
+    // A click below all content (vis_row > last logical line) must land at the
+    // END of the last line, not col 0.
+    //
+    // Old behaviour: fallback was `Some((last, 0))`.
+    // New behaviour: `Some((last, last_line.chars().count()))`.
+    //
+    // This matches every major text editor's convention: clicking in empty space
+    // below the text is treated as clicking past the end of the last line.
+    #[test]
+    fn screen_to_doc_click_below_all_content_lands_at_end_of_last_line() {
+        // Two lines, each one visual row.  screen_row=5 is below both lines
+        // (only rows 0 and 1 are occupied).
+        let area = editor_rect(12, 10);
+        let lines: Vec<String> = vec!["hello".into(), "world".into()];
+        let map = DecorationMap::default();
+        let result = screen_to_doc(5, 1, &area, 0, &lines, &map, false);
+        assert_eq!(
+            result,
+            Some((1, 5)),
+            "click below all content must land at end of last line (col 5 = len('world'))"
+        );
+    }
+
+    // Same fallback with an empty last line: end_col must be 0, not panic.
+    #[test]
+    fn screen_to_doc_click_below_content_with_empty_last_line() {
+        let area = editor_rect(12, 10);
+        let lines: Vec<String> = vec!["hello".into(), "".into()];
+        let map = DecorationMap::default();
+        let result = screen_to_doc(5, 1, &area, 0, &lines, &map, false);
+        assert_eq!(
+            result,
+            Some((1, 0)),
+            "click below content with empty last line must land at (last, 0)"
+        );
+    }
+
     // ── Navigation inertness ─────────────────────────────────────────────────
 
     // Navigation keys (Up/Down/Left/Right) must NOT set last_keystroke.
@@ -2771,6 +2830,78 @@ mod tests {
             app.search.as_ref().unwrap().query,
             before,
             "F5 (non-Char key) must be swallowed, not appended to the query"
+        );
+    }
+
+    // ── Ctrl+K: insert fenced code block ────────────────────────────────────────
+    //
+    // Note: Ctrl+I = Tab; Alt+` unreliable on macOS without Meta key config.
+
+    // Kills: delete match arm `(CONTROL, Char('k'))`.
+    // Without the arm, Ctrl+K falls into the `_` branch and the textarea receives
+    // a literal control character instead of ```\n```.
+    #[test]
+    fn ctrl_k_inserts_code_block_on_empty_line() {
+        let mut app = make_app();
+        handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL),
+        );
+        let lines = app.textarea.lines();
+        assert_eq!(lines[0], "```", "first line must be opening fence");
+        assert_eq!(lines[1], "```", "second line must be closing fence");
+    }
+
+    // Kills: `col + 3 → col + 0` (or any wrong offset) in the CursorMove::Jump.
+    // The cursor must land right after the opening ``` (col 3), not before or
+    // further away.
+    #[test]
+    fn ctrl_k_cursor_lands_after_opening_ticks() {
+        let mut app = make_app();
+        handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL),
+        );
+        let (row, col) = app.textarea.cursor();
+        assert_eq!(row, 0, "cursor must be on the opening fence line");
+        assert_eq!(col, 3, "cursor must be positioned after the opening ```");
+    }
+
+    // Cursor was mid-line before the insert — the block is injected at that point
+    // and the cursor returns to the same row, 3 columns past where it started.
+    //
+    // Kills: using the post-insert row instead of the pre-insert row in Jump, or
+    // using an absolute col=3 instead of col_before + 3.
+    #[test]
+    fn ctrl_k_cursor_offset_correct_when_not_at_col_zero() {
+        let mut app = make_app();
+        app.textarea.insert_str("lang: "); // cursor now at col 6
+        handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL),
+        );
+        let (row, col) = app.textarea.cursor();
+        assert_eq!(row, 0, "cursor must be on the opening fence row");
+        assert_eq!(
+            col, 9,
+            "cursor must be 3 past the pre-insert column (6 + 3 = 9)"
+        );
+    }
+
+    // force_redecorate must be set so the decoration pass picks up the new fences.
+    //
+    // Kills: removing `app.force_redecorate = true` from the Ctrl+K arm.
+    #[test]
+    fn ctrl_k_sets_force_redecorate() {
+        let mut app = make_app();
+        app.force_redecorate = false;
+        handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL),
+        );
+        assert!(
+            app.force_redecorate,
+            "Ctrl+K must set force_redecorate so decoration reruns"
         );
     }
 

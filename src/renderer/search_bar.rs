@@ -370,8 +370,8 @@ static SHORTCUTS: &[HelpRow] = &[
     HelpRow::Section("View"),
     HelpRow::Entry("Ctrl+T", "Typewriter", "Ctrl+D", "Focus mode"),
     HelpRow::Section("Markdown"),
-    HelpRow::Entry("Alt+T", "Format table", "()[]{}'\"*_``", "Auto-pair"),
-    HelpRow::Entry("F1 / Esc", "Close help", "", ""),
+    HelpRow::Entry("Ctrl+K", "Code block", "Alt+T", "Format table"),
+    HelpRow::Entry("()[]{}'\"*_``", "Auto-pair", "F1 / Esc", "Close help"),
 ];
 
 /// Column widths (terminal cells) for the four fields in each entry row.

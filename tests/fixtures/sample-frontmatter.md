@@ -29,3 +29,7 @@ Open `sample-frontmatter-toml.md` for the live TOML version.
 
 Horizontal rule above should **not** be styled as frontmatter — it appears
 mid-document, not at the top.
+
+```r
+h <- "ello world"
+```
