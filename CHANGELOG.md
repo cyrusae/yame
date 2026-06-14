@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - feat: `yame --preview <file>` — headless ANSI render for lf/file-manager previewers; respects `$COLUMNS`; full decoration and syntax-highlight pipeline; bg colours suppressed for clean integration (#190)
 
 ### Changed
+- feat: Alt+T toggle — second press on already-uniform table strips padding back to compact form (#199)
 - feat: list continuation — Enter after list item inserts prefix, second Enter on empty item exits list (#197)
 - feat: --preview feature parity — backgrounds, list indent, heading underline, frontmatter, inline code, Cmd+O (#203)
 - chore: bump fancy-regex 0.16→0.18 + patch lock updates (#201)
