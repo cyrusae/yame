@@ -31,6 +31,55 @@ fn setup_panic_hook() {
 fn run(file_path: Option<PathBuf>, read_only: bool) -> io::Result<()> {
     setup_panic_hook();
 
+    // Binary check before touching the terminal — the error goes to the
+    // normal terminal so it's visible regardless of TUI state.
+    if let Some(p) = &file_path
+        && is_likely_binary(p)
+    {
+        eprintln!("error: '{}' appears to be a binary file.", p.display());
+        eprintln!("yame can only open text files.");
+        std::process::exit(1);
+    }
+
+    // Enter the alternate screen *before* loading config / computing
+    // decorations.  This prevents the terminal from briefly showing
+    // scrollback or lf's UI during initialisation — the blank alternate
+    // screen is visually neutral, so the first draw lands on a clean slate.
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+
+    // All remaining initialisation + the event loop run inside the alternate
+    // screen.  We store the result and always clean up, even on error.
+    let result = init_and_run(&mut terminal, file_path, read_only);
+
+    // Best-effort cleanup — preserve the original error if cleanup also fails.
+    let _ = disable_raw_mode();
+    let _ = execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    );
+    let _ = terminal.show_cursor();
+
+    result
+}
+
+/// Load config, build the app, run the event loop.
+///
+/// Separated from `run` so the terminal is always cleaned up even when
+/// initialisation (config load, file parse, decoration build) fails.
+#[mutants::skip] // I/O orchestration — not unit-testable.
+fn init_and_run<B: ratatui::backend::Backend>(
+    terminal: &mut Terminal<B>,
+    file_path: Option<PathBuf>,
+    read_only: bool,
+) -> io::Result<()>
+where
+    io::Error: From<B::Error>,
+{
     let (config, config_warnings) = load_config();
     let italic_support = supports_italic();
     let mut warnings = config_warnings;
@@ -61,15 +110,6 @@ fn run(file_path: Option<PathBuf>, read_only: bool) -> io::Result<()> {
         None => yame::app::FileMode::Markdown,
     };
 
-    // Refuse to open binary files — null bytes would corrupt the editor buffer.
-    if let Some(p) = &file_path
-        && is_likely_binary(p)
-    {
-        eprintln!("error: '{}' appears to be a binary file.", p.display());
-        eprintln!("yame can only open text files.");
-        std::process::exit(1);
-    }
-
     let mut app = App::new(
         file_path,
         theme,
@@ -93,23 +133,7 @@ fn run(file_path: Option<PathBuf>, read_only: bool) -> io::Result<()> {
         );
     }
 
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
-
-    let result = input::event_loop(&mut terminal, &mut app, &config.layout);
-
-    disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture
-    )?;
-    terminal.show_cursor()?;
-
-    result
+    input::event_loop(terminal, &mut app, &config.layout)
 }
 
 #[mutants::skip] // Entry point — calls process::exit, not unit-testable.

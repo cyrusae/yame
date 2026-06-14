@@ -3,7 +3,7 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::Paragraph,
+    widgets::{Clear, Paragraph},
 };
 
 use crate::app::App;
@@ -211,14 +211,20 @@ const FOCUS_GLYPH: &str = "󰛐";
 const FOCUS_ASCII: &str = "[F]";
 
 /// Render the second-to-last row: cursor position, word count, and mode indicators.
+///
+/// Builds the entire row as a **single** `Line` covering the full `area` width so
+/// that every cell receives an explicit (char, style) pair in one pass.  Using
+/// multiple narrow `Paragraph` renders (clear + text + indicators) left gaps where
+/// only the style was set but no character was written, which could expose stale
+/// buffer content from the previous frame on certain terminals.
 #[mutants::skip] // Writes into ratatui Buffer — void, not testable via return value.
 pub fn render_info_line(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
 
-    f.render_widget(
-        Paragraph::new("").style(Style::default().bg(theme.bg)),
-        area,
-    );
+    // Hard-clear the row first so no stale cell content can survive from any
+    // prior frame.  `Clear` writes Cell::default() (space + default style) to
+    // every cell, giving us a clean slate before our spans land on top.
+    f.render_widget(Clear, area);
 
     let (row, col) = app.textarea.cursor();
     let text = format!(
@@ -227,19 +233,10 @@ pub fn render_info_line(f: &mut Frame, area: Rect, app: &App) {
         format_thousands(col + 1),
         format_thousands(app.word_count),
     );
-    let text_width = (text.chars().count() as u16).min(area.width);
-    let text_area = Rect {
-        width: text_width,
-        ..area
-    };
-    f.render_widget(
-        Paragraph::new(text).style(Style::default().fg(theme.muted).bg(theme.bg)),
-        text_area,
-    );
 
     // Mode indicators — right-aligned, accent coloured.
-    // Each active mode contributes a token; they are concatenated and rendered
-    // as a single right-aligned widget so they stack naturally.
+    // Each active mode contributes a token; they are concatenated into a single
+    // right-aligned span so they stack naturally.
     let mut indicators = String::new();
     if app.focus_mode {
         let icon = if app.powerline_glyphs {
@@ -257,18 +254,29 @@ pub fn render_info_line(f: &mut Frame, area: Rect, app: &App) {
         };
         indicators.push_str(&format!(" {icon} "));
     }
-    if !indicators.is_empty() {
-        let iw = indicators.chars().count() as u16;
-        if iw <= area.width {
-            let indicator_area = Rect {
-                x: area.x + area.width - iw,
-                width: iw,
-                ..area
-            };
-            f.render_widget(
-                Paragraph::new(indicators).style(Style::default().fg(theme.accent).bg(theme.bg)),
-                indicator_area,
-            );
-        }
-    }
+
+    let text_style = Style::default().fg(theme.muted).bg(theme.bg);
+    let ind_style = Style::default().fg(theme.accent).bg(theme.bg);
+    let bg_style = Style::default().bg(theme.bg);
+
+    // How many display columns are available for each zone.
+    let text_width = (text.chars().count() as u16).min(area.width);
+    let remaining = area.width.saturating_sub(text_width);
+    let ind_width = (indicators.chars().count() as u16).min(remaining);
+    let gap_width = remaining.saturating_sub(ind_width);
+
+    // Char-safe truncation (the widths above are in chars, not bytes).
+    let text_str: String = text.chars().take(text_width as usize).collect();
+    let ind_str: String = indicators.chars().take(ind_width as usize).collect();
+    let gap_str = " ".repeat(gap_width as usize);
+
+    // Render the entire row in one shot: [word-count][gap][indicators]
+    // Every cell in `area` gets an explicit character + style so the diff
+    // correctly replaces any previous content.
+    let line = Line::from(vec![
+        Span::styled(text_str, text_style),
+        Span::styled(gap_str, bg_style),
+        Span::styled(ind_str, ind_style),
+    ]);
+    f.render_widget(Paragraph::new(line).style(bg_style), area);
 }

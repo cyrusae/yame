@@ -12,8 +12,6 @@
 /// ```
 ///
 /// Width comes from `$COLUMNS` → `crossterm::terminal::size()` → 80 fallback.
-/// Background colours are intentionally suppressed so the preview integrates
-/// cleanly with the file-manager's own background.
 use std::io::{self, Write};
 use std::path::Path;
 use std::sync::Arc;
@@ -24,9 +22,10 @@ use ratatui::text::Span;
 use yame::app::{FileMode, is_likely_binary, load_file, resolve_file_mode};
 use yame::config::{Theme, load_config, supports_italic};
 use yame::decoration::{
-    DecorationMap, block_highlights_to_decoration_map, build_decoration_map, count_words,
+    DecorationMap, StyledSpan, block_highlights_to_decoration_map, build_decoration_map,
+    count_words,
 };
-use yame::renderer::split_into_spans;
+use yame::renderer::{split_into_spans, wrap_char_ranges, wrap_line_indented};
 
 // ---------------------------------------------------------------------------
 // Public entry point
@@ -117,7 +116,25 @@ pub(super) fn render_preview(path: &Path) -> io::Result<()> {
 
 /// Render every logical line to `out` using ANSI escape codes.
 ///
-/// Extracted from `render_preview` so it can be tested without real I/O.
+/// Supports the full set of decoration properties used by the interactive
+/// renderer, giving feature parity with the main editor:
+///
+/// - **`full_line_bg`** — heading / code-block / frontmatter background;
+///   emitted as a 24-bit ANSI bg sequence that extends to the end of each
+///   terminal line via `\x1b[K`.
+/// - **`border_bottom`** — H1–H3 heading underline; emitted as a full-width
+///   `─` separator rule in the border colour on the line immediately after
+///   the heading.
+/// - **`row_indent`** — visual offset for the first row of frontmatter
+///   content; emitted as leading spaces.
+/// - **`continuation_indent`** — left-margin for soft-wrapped continuation
+///   rows of list items and blockquotes; emitted as leading spaces, and the
+///   wrap width is narrowed by the same amount so content never overflows.
+/// - Inline **`style.bg`** (inline code, etc.) — included in the ANSI
+///   sequence emitted by [`style_open`] so each span carries its own bg.
+///
+/// A trailing newline is emitted after every logical line.  Rules and
+/// borders each occupy exactly one output line.
 pub(crate) fn render_lines(
     lines: &[String],
     decoration_map: &DecorationMap,
@@ -129,14 +146,14 @@ pub(crate) fn render_lines(
     for (line_idx, line) in lines.iter().enumerate() {
         let deco = decoration_map.get(&line_idx);
 
-        // Horizontal rule — replace content with a full-width `─` bar.
+        // ── Horizontal rule ──────────────────────────────────────────────────
         let is_rule = deco.map(|s| s.iter().any(|sp| sp.is_rule)).unwrap_or(false);
         if is_rule {
             let rule_style = deco
                 .and_then(|s| s.iter().find(|sp| sp.is_rule))
                 .map(|sp| sp.style)
                 .unwrap_or_else(|| Style::default().fg(theme.muted));
-            let rule = "─".repeat(term_width);
+            let rule = "─".repeat(term_width.max(1));
             let open = style_open(&rule_style);
             if open.is_empty() {
                 writeln!(out, "{rule}")?;
@@ -146,14 +163,108 @@ pub(crate) fn render_lines(
             continue;
         }
 
-        // Normal line — split at decoration boundaries and emit styled chunks.
-        let ratatui_spans: Vec<Span<'_>> = match deco {
-            Some(styled_spans) => split_into_spans(line, styled_spans, default_style),
-            None => vec![Span::styled(line.as_str().to_owned(), default_style)],
+        // ── Line-level decoration properties ────────────────────────────────
+        let full_line_bg: Option<Color> =
+            deco.and_then(|d| d.iter().find_map(|s| s.full_line_bg));
+        let border_bottom: Option<Color> =
+            deco.and_then(|d| d.iter().find_map(|s| s.border_bottom));
+        let cont_indent: usize = deco
+            .map(|d| d.iter().map(|s| s.continuation_indent).max().unwrap_or(0))
+            .unwrap_or(0) as usize;
+        let row_indent: usize = deco
+            .map(|d| d.iter().map(|s| s.row_indent).max().unwrap_or(0))
+            .unwrap_or(0) as usize;
+
+        // Blockquote lines use theme.blockquote_color as their default fg, just
+        // as the interactive renderer does (see renderer/mod.rs `row_default`).
+        // Must be read from all logical-line spans (not filtered per visual row)
+        // so continuation rows also inherit the colour.
+        let is_blockquote_line = deco
+            .map(|decs| decs.iter().any(|s| s.is_blockquote))
+            .unwrap_or(false);
+
+        // When a line has a background, incorporate it into the default style
+        // so that gap spans (plain text between decorations) also carry the
+        // line background.  This ensures `emit_spans` never produces a
+        // background-free gap even after a mid-line `\x1b[0m` reset.
+        let line_default_style = {
+            let base = if is_blockquote_line {
+                default_style.fg(theme.blockquote_color)
+            } else {
+                default_style
+            };
+            match full_line_bg {
+                Some(bg) => base.bg(bg),
+                None => base,
+            }
         };
 
-        emit_spans(&ratatui_spans, out)?;
-        writeln!(out)?;
+        // ── Word-wrap accounting for indentation ─────────────────────────────
+        // term_width == 0 is used in tests to disable wrapping entirely.
+        let (visual_rows, char_ranges): (Vec<&str>, Vec<(usize, usize)>) = if term_width == 0 {
+            (vec![line.as_str()], vec![(0, line.chars().count())])
+        } else {
+            let first_w = term_width.saturating_sub(row_indent).max(1);
+            let cont_w = term_width.saturating_sub(cont_indent).max(1);
+            let rows = wrap_line_indented(line, first_w, cont_w);
+            let ranges = wrap_char_ranges(line, &rows);
+            (rows, ranges)
+        };
+
+        // ── Emit each visual row ─────────────────────────────────────────────
+        for (wrap_idx, (&row_str, &(char_start, char_len))) in
+            visual_rows.iter().zip(char_ranges.iter()).enumerate()
+        {
+            let char_end = char_start + char_len;
+            // First row uses row_indent (frontmatter visual offset); subsequent
+            // rows use cont_indent (list / blockquote continuation alignment).
+            let indent = if wrap_idx == 0 { row_indent } else { cont_indent };
+
+            // Narrow decoration spans to this visual row's char range and
+            // adjust char positions to be relative to the row start — exactly
+            // the same transform used by the interactive renderer.
+            let row_spans: Vec<StyledSpan> = deco
+                .map(|decs| {
+                    decs.iter()
+                        .filter(|s| s.char_end > char_start && s.char_start < char_end)
+                        .map(|s| StyledSpan {
+                            char_start: s.char_start.saturating_sub(char_start),
+                            char_end: s.char_end.saturating_sub(char_start).min(char_len),
+                            style: s.style,
+                            ..Default::default()
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            let ratatui_spans = split_into_spans(row_str, &row_spans, line_default_style);
+
+            // Open line background (still active for the indent spaces below).
+            if let Some(Color::Rgb(r, g, b)) = full_line_bg {
+                write!(out, "\x1b[48;2;{r};{g};{b}m")?;
+            }
+            // Leading indent.
+            if indent > 0 {
+                write!(out, "{}", " ".repeat(indent))?;
+            }
+            // Styled content (each span manages its own open + close).
+            emit_spans(&ratatui_spans, out)?;
+            // Re-open line bg and clear to end-of-line to fill trailing space,
+            // then reset so the next line starts clean.
+            if let Some(Color::Rgb(r, g, b)) = full_line_bg {
+                write!(out, "\x1b[48;2;{r};{g};{b}m\x1b[K\x1b[0m")?;
+            }
+            writeln!(out)?;
+        }
+
+        // ── Heading bottom border ────────────────────────────────────────────
+        // Emitted as a full-width `─` separator immediately after the last
+        // visual row of the heading — equivalent to the underline the
+        // interactive renderer draws on heading cells.
+        if let Some(Color::Rgb(r, g, b)) = border_bottom {
+            let w = term_width.max(1);
+            writeln!(out, "\x1b[38;2;{r};{g};{b}m{}\x1b[0m", "─".repeat(w))?;
+        }
     }
     Ok(())
 }
@@ -196,10 +307,8 @@ pub(crate) fn preview_width() -> usize {
 
 /// Convert a ratatui [`Style`] to an ANSI SGR opening escape sequence.
 ///
-/// Only foreground colour and the four common text modifiers (bold, italic,
-/// underline, strikethrough) are emitted.  Background colour is deliberately
-/// suppressed so the preview integrates cleanly with the file-manager's own
-/// background colour.
+/// Emits foreground colour, background colour, and the four common text
+/// modifiers (bold, italic, underline, strikethrough).
 ///
 /// Returns an empty string when the style carries no visual information so
 /// callers can skip the reset too.
@@ -218,9 +327,11 @@ pub(crate) fn style_open(style: &Style) -> String {
     if style.add_modifier.contains(Modifier::CROSSED_OUT) {
         codes.push_str("9;");
     }
-
     if let Some(Color::Rgb(r, g, b)) = style.fg {
         codes.push_str(&format!("38;2;{r};{g};{b};"));
+    }
+    if let Some(Color::Rgb(r, g, b)) = style.bg {
+        codes.push_str(&format!("48;2;{r};{g};{b};"));
     }
 
     if codes.is_empty() {
@@ -241,7 +352,7 @@ mod tests {
     use ratatui::text::Span;
 
     use yame::config::Theme;
-    use yame::decoration::DecorationMap;
+    use yame::decoration::{DecorationMap, StyledSpan};
 
     use super::{emit_spans, render_lines, style_open};
 
@@ -295,28 +406,27 @@ mod tests {
         );
     }
 
-    // Kills: background colour leaking into output (it must be suppressed).
+    // Kills: background colour not emitted (48;2 sequence missing).
     #[test]
-    fn style_open_suppresses_background_colour() {
-        // Fg = None, Bg = something.  Must produce no sequence.
+    fn style_open_emits_background_colour() {
         let style = Style::default().bg(Color::Rgb(30, 30, 30));
         assert_eq!(
             style_open(&style),
-            "",
-            "background colour alone must produce no ANSI sequence"
+            "\x1b[48;2;30;30;30m",
+            "background colour must produce a 48;2 ANSI sequence"
         );
     }
 
-    // Kills: suppresses foreground when bg is also set (must still emit fg).
+    // Kills: fg suppressed when bg is also set, or bg suppressed when fg set.
     #[test]
-    fn style_open_emits_fg_even_when_bg_also_set() {
+    fn style_open_emits_both_fg_and_bg() {
         let style = Style::default()
             .fg(Color::Rgb(200, 100, 50))
             .bg(Color::Rgb(30, 30, 30));
+        let got = style_open(&style);
         assert_eq!(
-            style_open(&style),
-            "\x1b[38;2;200;100;50m",
-            "fg must still be emitted when bg is also set"
+            got, "\x1b[38;2;200;100;50;48;2;30;30;30m",
+            "both fg and bg must be emitted when both are set"
         );
     }
 
@@ -376,6 +486,178 @@ mod tests {
         let plain_lines: Vec<&str> = plain.lines().collect();
         assert_eq!(plain_lines[0], "# Heading");
         assert_eq!(plain_lines[1], "body text");
+    }
+
+    // Kills: cont_indent not applied, or applied on wrong rows.
+    // A list line with cont_indent=2 that soft-wraps must have the first row
+    // at column 0 and continuation rows indented by 2 spaces.
+    #[test]
+    fn render_lines_cont_indent_on_wrapped_list_item() {
+        // "- word1 word2 word3 word4" with term_width=12, cont_indent=2.
+        // "- word1 wor" fits in 12; "d2 word3 word4" continuation at 12-2=10.
+        // Simpler: "- aaa bbb" at term_width=8, cont_indent=2.
+        // first_w = 8, cont_w = 6.
+        // wrap_line_indented("- aaa bbb", 8, 6) → ["- aaa", "bbb"]
+        // (first row: "- aaa" = 5 chars ≤ 8; next word "bbb"=3 would give 5+1+3=9 > 8, wrap)
+        // Wait, let me think about what wrap_line_indented actually does here.
+        // It calls wrap_line("- aaa bbb", 8) = ["- aaa", "bbb"] since "- aaa bbb" = 9 > 8.
+        // Then for the continuation, it re-wraps "bbb" at cont_w=6 → ["bbb"].
+        // So visual_rows = ["- aaa", "bbb"], char_ranges = [(0,5),(6,3)].
+        let line = "- aaa bbb".to_string();
+        let mut map = DecorationMap::default();
+        // Bullet span at chars 0..1 carries cont_indent=2.
+        map.insert(0, vec![StyledSpan {
+            char_start: 0,
+            char_end: 1,
+            continuation_indent: 2,
+            ..Default::default()
+        }]);
+        let theme = Theme::default_theme();
+        let mut buf = Vec::new();
+        render_lines(&[line], &map, Style::default(), &theme, 8, &mut buf).unwrap();
+        let out = String::from_utf8(buf).unwrap();
+        let plain = strip_ansi(&out);
+        let rows: Vec<&str> = plain.lines().collect();
+        // First row: no indent.
+        assert_eq!(rows[0], "- aaa", "first row must not be indented");
+        // Continuation row: 2 spaces indent + "bbb".
+        assert_eq!(rows[1], "  bbb", "continuation row must have 2-space indent");
+    }
+
+    // Kills: row_indent not applied, or applied on wrong rows.
+    // Frontmatter content lines carry row_indent=3 to give a visual offset.
+    #[test]
+    fn render_lines_row_indent_on_frontmatter_content() {
+        let line = "title: Hello".to_string();
+        let mut map = DecorationMap::default();
+        // Frontmatter span with row_indent=3 and cont_indent=3.
+        map.insert(0, vec![StyledSpan {
+            char_start: 0,
+            char_end: 12,
+            row_indent: 3,
+            continuation_indent: 3,
+            ..Default::default()
+        }]);
+        let theme = Theme::default_theme();
+        let mut buf = Vec::new();
+        render_lines(&[line], &map, Style::default(), &theme, 40, &mut buf).unwrap();
+        let plain = strip_ansi(&String::from_utf8(buf).unwrap());
+        let rows: Vec<&str> = plain.lines().collect();
+        // First (only) row: 3 spaces + content.
+        assert!(
+            rows[0].starts_with("   "),
+            "first row must have 3-space row_indent; got: {:?}",
+            rows[0]
+        );
+        assert!(rows[0].contains("title: Hello"));
+    }
+
+    // Kills: full_line_bg 48;2 sequence missing or wrong channel order.
+    #[test]
+    fn render_lines_full_line_bg_sequence_present() {
+        let line = "# Heading".to_string();
+        let mut map = DecorationMap::default();
+        // Heading span with full_line_bg = RGB(20, 30, 40).
+        map.insert(0, vec![StyledSpan {
+            char_start: 0,
+            char_end: 9,
+            full_line_bg: Some(Color::Rgb(20, 30, 40)),
+            ..Default::default()
+        }]);
+        let theme = Theme::default_theme();
+        let mut buf = Vec::new();
+        render_lines(&[line], &map, Style::default(), &theme, 40, &mut buf).unwrap();
+        let raw = String::from_utf8(buf).unwrap();
+        assert!(
+            raw.contains("\x1b[48;2;20;30;40m"),
+            "full_line_bg must produce a 48;2 ANSI bg sequence; got: {raw:?}"
+        );
+        // `\x1b[K` must appear to fill trailing columns with the background.
+        assert!(
+            raw.contains("\x1b[K"),
+            "full_line_bg must include \\x1b[K to extend bg to EOL"
+        );
+    }
+
+    // Kills: border_bottom rule line missing or wrong colour.
+    #[test]
+    fn render_lines_border_bottom_emits_rule_line() {
+        let line = "# H1".to_string();
+        let mut map = DecorationMap::default();
+        map.insert(0, vec![StyledSpan {
+            char_start: 0,
+            char_end: 4,
+            border_bottom: Some(Color::Rgb(100, 150, 200)),
+            ..Default::default()
+        }]);
+        let theme = Theme::default_theme();
+        let mut buf = Vec::new();
+        // term_width=5: heading row + border row of 5 × '─'.
+        render_lines(&[line], &map, Style::default(), &theme, 5, &mut buf).unwrap();
+        let raw = String::from_utf8(buf).unwrap();
+        let plain = strip_ansi(&raw);
+        let rows: Vec<&str> = plain.lines().collect();
+        // rows[0] = "# H1", rows[1] = "─────" (5 chars).
+        assert_eq!(rows.len(), 2, "border_bottom must add a second output line");
+        assert_eq!(rows[1], "─────", "border row must be all ─ at term_width");
+        // The border colour must appear in the raw output.
+        assert!(
+            raw.contains("\x1b[38;2;100;150;200m"),
+            "border_bottom must use the specified fg colour"
+        );
+    }
+
+    // Kills: inline bg (48;2) missing from span-level style.
+    #[test]
+    fn render_lines_inline_bg_emitted_for_span() {
+        let line = "hello".to_string();
+        let mut map = DecorationMap::default();
+        // Span with only a bg colour (inline code style).
+        let span_style = Style::default().bg(Color::Rgb(50, 60, 70));
+        map.insert(0, vec![StyledSpan {
+            char_start: 0,
+            char_end: 5,
+            style: span_style,
+            ..Default::default()
+        }]);
+        let theme = Theme::default_theme();
+        let mut buf = Vec::new();
+        render_lines(&[line], &map, Style::default(), &theme, 40, &mut buf).unwrap();
+        let raw = String::from_utf8(buf).unwrap();
+        assert!(
+            raw.contains("\x1b[48;2;50;60;70m"),
+            "span with bg must emit a 48;2 sequence; got: {raw:?}"
+        );
+    }
+
+    // Kills: blockquote_color not applied as default fg for blockquote lines.
+    #[test]
+    fn render_lines_blockquote_uses_blockquote_color() {
+        // Real blockquote lines have a narrow indicator span covering the ">"
+        // marker (char 0 only, with is_blockquote=true).  The plain text after
+        // the indicator has no decoration span and falls through to the
+        // line_default_style, which is where blockquote_color must appear.
+        let line = "> plain text".to_string();
+        let mut map = DecorationMap::default();
+        // Indicator span: only covers the ">" character (char_start=0, char_end=1).
+        map.insert(0, vec![StyledSpan {
+            char_start: 0,
+            char_end: 1,
+            style: Style::default().fg(Color::Rgb(80, 80, 80)), // muted indicator
+            is_blockquote: true,
+            ..Default::default()
+        }]);
+        let mut theme = Theme::default_theme();
+        // Use a distinctive blockquote colour so we can detect it in the output.
+        theme.blockquote_color = Color::Rgb(100, 150, 200);
+        let mut buf = Vec::new();
+        render_lines(&[line], &map, Style::default(), &theme, 40, &mut buf).unwrap();
+        let raw = String::from_utf8(buf).unwrap();
+        // The blockquote fg colour must appear as a 38;2 sequence for the gap text.
+        assert!(
+            raw.contains("\x1b[38;2;100;150;200m"),
+            "blockquote line must emit blockquote_color as fg for undecorated gap; got: {raw:?}"
+        );
     }
 
     // ── preview_width ─────────────────────────────────────────────────────────

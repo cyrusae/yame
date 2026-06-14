@@ -648,9 +648,10 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
             }
         }
 
-        // Ctrl+O: open file picker.  If the current buffer is dirty, ask the
-        // user to confirm discarding changes before suspending the TUI.
-        (KeyModifiers::CONTROL, KeyCode::Char('o')) => {
+        // Ctrl+O / Cmd+O: open file picker.  If the current buffer is dirty,
+        // ask the user to confirm discarding changes before suspending the TUI.
+        (KeyModifiers::CONTROL, KeyCode::Char('o'))
+        | (KeyModifiers::SUPER, KeyCode::Char('o')) => {
             if app.is_dirty {
                 app.status.mode = StatusMode::SwitchFilePrompt;
                 KeyOutcome::Continue
@@ -839,6 +840,13 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
             KeyOutcome::Continue
         }
 
+        (KeyModifiers::NONE, KeyCode::Enter) => {
+            app.sticky_col = None;
+            app.status.dismiss();
+            app.config_warnings.clear();
+            handle_enter(app)
+        }
+
         _ => {
             // Any non-vertical-nav key ends the sticky-column gesture.
             app.sticky_col = None;
@@ -865,6 +873,115 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
             KeyOutcome::Continue
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// List continuation
+// ---------------------------------------------------------------------------
+
+/// Detect the list item prefix at the start of `line`.
+///
+/// Returns `(current_prefix, next_prefix)` where `current_prefix` is the
+/// exact prefix characters on this line (e.g., `"- "`, `"  1. "`, `"- [ ] "`)
+/// and `next_prefix` is the prefix to insert on the continuation line (same
+/// for unordered; incremented number for ordered; always unchecked for tasks).
+///
+/// Returns `None` if the line does not start with a list item marker.
+pub(super) fn detect_list_prefix(line: &str) -> Option<(String, String)> {
+    let indent_len = line.len() - line.trim_start_matches(' ').len();
+    let indent = &line[..indent_len];
+    let rest = &line[indent_len..];
+
+    // Task list (check before plain unordered to avoid `- [ ]` matching as `- `).
+    // Pattern: `[-*+] [ ] `, `[-*+] [x] `, `[-*+] [X] `
+    if let Some(bullet) = rest.chars().next().filter(|c| matches!(c, '-' | '*' | '+')) {
+        let after_bullet = &rest[1..]; // all are ASCII (len_utf8 == 1)
+        for mark in &[" [ ] ", " [x] ", " [X] "] {
+            if after_bullet.starts_with(mark) {
+                let current = format!("{indent}{bullet}{mark}");
+                let next = format!("{indent}{bullet} [ ] ");
+                return Some((current, next));
+            }
+        }
+        // Plain unordered.
+        if after_bullet.starts_with(' ') {
+            let prefix = format!("{indent}{bullet} ");
+            return Some((prefix.clone(), prefix));
+        }
+    }
+
+    // Ordered list: one or more digits, then '.' or ')', then a space.
+    let digit_end = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(0);
+    if digit_end > 0 {
+        let digits = &rest[..digit_end];
+        let after_digits = &rest[digit_end..];
+        if let Some(punct) = after_digits
+            .chars()
+            .next()
+            .filter(|p| matches!(p, '.' | ')') && after_digits[1..].starts_with(' '))
+        {
+            let num: u64 = digits.parse().unwrap_or(1);
+            let current = format!("{indent}{digits}{punct} ");
+            let next = format!("{indent}{}{punct} ", num + 1);
+            return Some((current, next));
+        }
+    }
+
+    None
+}
+
+/// Handle the Enter key in normal editing mode, with list continuation.
+///
+/// - If the cursor is on a list item whose content after the prefix is empty,
+///   the prefix is stripped from the current line (exit list).
+/// - If the cursor is on a list item with content, a newline is inserted
+///   followed by the continuation prefix (ordered numbers increment).
+/// - Otherwise falls through to a plain newline.
+fn handle_enter(app: &mut App) -> KeyOutcome {
+    // Don't intercept Enter while a selection is active — let tui-textarea
+    // handle the delete-selection-then-newline sequence normally.
+    if app.textarea.selection_range().is_some() {
+        app.textarea.insert_newline();
+        app.force_redecorate = true;
+        app.mark_keystroke();
+        return KeyOutcome::Continue;
+    }
+
+    let (row, _col) = app.textarea.cursor();
+    let line = app
+        .textarea
+        .lines()
+        .get(row)
+        .map(|s| s.as_str())
+        .unwrap_or("")
+        .to_owned();
+
+    if let Some((current_prefix, next_prefix)) = detect_list_prefix(&line) {
+        let content_after = &line[current_prefix.len()..];
+        if content_after.trim().is_empty() {
+            // Empty list item → exit list: remove the prefix, leave a blank line.
+            let prefix_char_count = current_prefix.chars().count();
+            app.textarea
+                .move_cursor(CursorMove::Jump(row as u16, prefix_char_count as u16));
+            app.textarea.delete_line_by_head();
+        } else {
+            // List item with content → insert newline then continuation prefix.
+            app.textarea.insert_newline();
+            app.textarea.insert_str(&next_prefix);
+        }
+        app.force_redecorate = true;
+        app.mark_keystroke();
+        return KeyOutcome::Continue;
+    }
+
+    // Plain Enter — same as the `_` arm for a non-nav key that doesn't pair-wrap.
+    let prev_line_count = app.textarea.lines().len();
+    app.textarea.insert_newline();
+    if app.textarea.lines().len() != prev_line_count {
+        app.force_redecorate = true;
+    }
+    app.mark_keystroke();
+    KeyOutcome::Continue
 }
 
 // ---------------------------------------------------------------------------
@@ -3366,5 +3483,142 @@ mod tests {
             matches!(app.status.mode, yame::status::StatusMode::Normal),
             "Esc must dismiss the SwitchFilePrompt"
         );
+    }
+
+    // ---------------------------------------------------------------------------
+    // detect_list_prefix
+    // ---------------------------------------------------------------------------
+
+    // Kills: delete the unordered-list arm → unordered lines return None.
+    #[test]
+    fn detect_list_prefix_unordered_dash() {
+        let (cur, next) = detect_list_prefix("- item text").unwrap();
+        assert_eq!(cur, "- ");
+        assert_eq!(next, "- ");
+    }
+
+    // Kills: delete the unordered-list arm → `*` returns None.
+    #[test]
+    fn detect_list_prefix_unordered_star() {
+        let (cur, next) = detect_list_prefix("* item").unwrap();
+        assert_eq!(cur, "* ");
+        assert_eq!(next, "* ");
+    }
+
+    // Kills: delete indent handling → indented prefix drops leading spaces.
+    #[test]
+    fn detect_list_prefix_indented_unordered() {
+        let (cur, next) = detect_list_prefix("  - nested").unwrap();
+        assert_eq!(cur, "  - ");
+        assert_eq!(next, "  - ");
+    }
+
+    // Kills: delete ordered-list arm → ordered lines return None.
+    #[test]
+    fn detect_list_prefix_ordered_dot() {
+        let (cur, next) = detect_list_prefix("1. first").unwrap();
+        assert_eq!(cur, "1. ");
+        assert_eq!(next, "2. ");
+    }
+
+    // Kills: replace num+1 with num → ordered continuation doesn't increment.
+    #[test]
+    fn detect_list_prefix_ordered_increments() {
+        let (_, next) = detect_list_prefix("5. fifth").unwrap();
+        assert_eq!(next, "6. ");
+    }
+
+    // Kills: delete ')' branch → ordered list with paren returns None.
+    #[test]
+    fn detect_list_prefix_ordered_paren() {
+        let (cur, next) = detect_list_prefix("3) third").unwrap();
+        assert_eq!(cur, "3) ");
+        assert_eq!(next, "4) ");
+    }
+
+    // Kills: delete task-list arm → task items return the plain unordered prefix.
+    #[test]
+    fn detect_list_prefix_task_unchecked() {
+        let (cur, next) = detect_list_prefix("- [ ] task item").unwrap();
+        assert_eq!(cur, "- [ ] ");
+        assert_eq!(next, "- [ ] ");
+    }
+
+    // Kills: delete checked-task branch → checked task returns unchecked next.
+    #[test]
+    fn detect_list_prefix_task_checked_continues_unchecked() {
+        let (_, next) = detect_list_prefix("- [x] done").unwrap();
+        assert_eq!(next, "- [ ] ");
+    }
+
+    // Kills: delete None branch → non-list lines return Some instead of None.
+    #[test]
+    fn detect_list_prefix_plain_text_returns_none() {
+        assert!(detect_list_prefix("just a sentence").is_none());
+        assert!(detect_list_prefix("").is_none());
+        assert!(detect_list_prefix("  ").is_none());
+    }
+
+    // Heading lines must not be detected as list prefixes.
+    #[test]
+    fn detect_list_prefix_heading_returns_none() {
+        assert!(detect_list_prefix("# heading").is_none());
+    }
+
+    // ---------------------------------------------------------------------------
+    // handle_enter — list continuation
+    // ---------------------------------------------------------------------------
+
+    // Kills: delete list-continuation arm → Enter on list line inserts plain newline (no prefix).
+    #[test]
+    fn enter_on_list_item_inserts_prefix() {
+        let mut app = make_app();
+        app.textarea = TextArea::new(vec!["- item".to_string()]);
+        app.textarea.move_cursor(tui_textarea::CursorMove::End);
+        handle_key_event(&mut app, key(KeyCode::Enter));
+        assert_eq!(app.textarea.lines()[1], "- ", "new line must start with list prefix");
+    }
+
+    // Kills: delete exit-list branch → Enter on empty item inserts another prefix instead of exiting.
+    #[test]
+    fn enter_on_empty_list_item_exits_list() {
+        let mut app = make_app();
+        app.textarea = TextArea::new(vec!["- ".to_string()]);
+        app.textarea.move_cursor(tui_textarea::CursorMove::End);
+        handle_key_event(&mut app, key(KeyCode::Enter));
+        // Line count unchanged: the prefix was stripped, no new line added.
+        assert_eq!(app.textarea.lines().len(), 1, "exit-list must not add a line");
+        assert_eq!(app.textarea.lines()[0], "", "prefix must be stripped from empty item");
+    }
+
+    // Kills: delete ordered increment → ordered continuation repeats the same number.
+    #[test]
+    fn enter_on_ordered_list_item_increments_number() {
+        let mut app = make_app();
+        app.textarea = TextArea::new(vec!["3. third".to_string()]);
+        app.textarea.move_cursor(tui_textarea::CursorMove::End);
+        handle_key_event(&mut app, key(KeyCode::Enter));
+        assert_eq!(app.textarea.lines()[1], "4. ", "ordered continuation must use next number");
+    }
+
+    // Kills: delete task-list branch → task item continuation uses wrong prefix.
+    #[test]
+    fn enter_on_task_item_continues_with_unchecked() {
+        let mut app = make_app();
+        app.textarea = TextArea::new(vec!["- [x] done".to_string()]);
+        app.textarea.move_cursor(tui_textarea::CursorMove::End);
+        handle_key_event(&mut app, key(KeyCode::Enter));
+        assert_eq!(app.textarea.lines()[1], "- [ ] ", "task continuation must be unchecked");
+    }
+
+    // Kills: delete plain-Enter fallback → Enter on non-list line does nothing.
+    #[test]
+    fn enter_on_plain_text_inserts_newline() {
+        let mut app = make_app();
+        app.textarea = TextArea::new(vec!["hello world".to_string()]);
+        app.textarea.move_cursor(tui_textarea::CursorMove::End);
+        handle_key_event(&mut app, key(KeyCode::Enter));
+        assert_eq!(app.textarea.lines().len(), 2, "Enter on plain text must add a new line");
+        assert_eq!(app.textarea.lines()[1], "", "new line must be empty");
     }
 }
