@@ -172,8 +172,7 @@ See [`_info/THEMES.md`](_info/THEMES.md) for the full preset list, override orde
 # warning = "#f38ba8"   # dirty flag, warnings
 ```
 
-Setting these six colors gives you a coherent theme. All other colors derive from
-them automatically. Individual fields override the preset when both are set.
+Setting these six colors gives you a coherent theme. All other colors derive from them automatically. Individual fields override the preset when both are set.
 
 ### Theme overrides
 

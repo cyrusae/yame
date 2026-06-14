@@ -370,7 +370,7 @@ static SHORTCUTS: &[HelpRow] = &[
     HelpRow::Section("View"),
     HelpRow::Entry("Ctrl+T", "Typewriter", "Ctrl+D", "Focus mode"),
     HelpRow::Section("Markdown"),
-    HelpRow::Entry("Ctrl+K", "Code block", "Alt+T", "Format table"),
+    HelpRow::Entry("Ctrl+K", "Code block", "Alt/Opt+T", "Format table"),
     HelpRow::Entry("()[]{}'\"*_``", "Auto-pair", "F1 / Esc", "Close help"),
 ];
 

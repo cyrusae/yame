@@ -152,9 +152,9 @@ pub(super) fn build_normal_status_bar(app: &App) -> Line<'static> {
     let cap1 = Span::styled(sep.clone(), Style::default().fg(pill_bg).bg(hints_bg));
 
     let hints_text = if app.read_only {
-        " ^E Unlock  ^Q Quit  ^F Search  F1 Keys "
+        " ^E Unlock  ^Q Quit  F1 Keys "
     } else {
-        " ^S Save  ^Q Quit  ^X Cut  ^F Search  F1 Keys "
+        " ^S Save  ^Q Quit  ^O Open  F1 Keys "
     };
     let hints = Span::styled(hints_text, Style::default().fg(muted_fg).bg(hints_bg));
     let cap2 = Span::styled(sep, Style::default().fg(hints_bg).bg(canvas_bg));

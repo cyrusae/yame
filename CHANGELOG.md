@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 ### Added
+- feat: Windows support (Git Bash / Windows Terminal) (#125)
 - feat: named palette presets — `preset = "dracula"` (or `catppuccin-latte`, `nord`, `gruvbox-dark`, `solarized-dark`, `solarized-light`, `tokyo-night`, `rose-pine`, `rose-pine-moon`, `rose-pine-dawn`, `github-light`, and all four Catppuccin variants) under `[palette]`; individual color fields still override the preset; append `-expanded` for rainbow headings and a per-theme italic tint (#150, #193)
 - feat: Ctrl+Q quit, Ctrl+X cut — full cut/copy/paste trio; Esc remains a secondary quit (#192)
 - feat: Ctrl+I insert fenced code block (#186)
@@ -15,6 +16,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - feat: `yame --preview <file>` — headless ANSI render for lf/file-manager previewers; respects `$COLUMNS`; full decoration and syntax-highlight pipeline; bg colours suppressed for clean integration (#190)
 
 ### Changed
+- chore: bump fancy-regex 0.16→0.18 + patch lock updates (#201)
+- docs: lf integration guide — lfrc config, $YAME_PICKER, recommended workflow (#191)
 - docs: remove bat companion — yame --preview covers all file types (#196)
 - docs: Windows install script (install.ps1) (#195)
 - docs: _info/ rewrite + README update (SETUP, FRIENDS, THEMES, SCRIPTS, NERD-FONTS, install.sh, README) (#194)
@@ -26,6 +29,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - chore: v0.2.1 version bump (#188)
 
 ### Fixed
+- fix: Alt+T table reformat macOS compat + trim bottom bar (#200)
 - fix: click below last line should land at end-of-line not col 0 (#187)
 
 ## [0.2.1] — 2026-06-13

@@ -776,8 +776,11 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
 
         (KeyModifiers::CONTROL, KeyCode::Char('r')) => KeyOutcome::ReloadConfig,
 
-        // Alt+T: reflow the GFM table under the cursor to uniform column widths.
-        (KeyModifiers::ALT, KeyCode::Char('t')) => {
+        // Alt+T / Option+T: reflow the GFM table under the cursor to uniform column widths.
+        // On macOS, most terminals (Ghostty, Terminal.app) send '†' (U+2020, DAGGER) when
+        // Option+T is pressed instead of a proper Alt sequence.  Both forms are caught here
+        // so the binding works regardless of whether the terminal is configured to send Meta.
+        (KeyModifiers::ALT, KeyCode::Char('t')) | (KeyModifiers::NONE, KeyCode::Char('†')) => {
             yame::table_format::handle_format_table(app);
             KeyOutcome::Continue
         }
