@@ -16,6 +16,33 @@ pub fn handle_copy(app: &mut App) {
     }
 }
 
+/// Cut selection (or current line) to the system clipboard, then delete it.
+///
+/// If a selection is active, copies the selected text; otherwise copies the
+/// current line (matching `handle_copy` / `get_copy_text`).  The content is
+/// then removed from the buffer via `textarea.cut()`, which deletes the
+/// selection or the entire current line and discards to its internal clipboard
+/// (we've already captured the text in arboard).
+#[mutants::skip] // Clipboard I/O.
+pub fn handle_cut(app: &mut App) {
+    let text = get_copy_text(app);
+    ensure_clipboard(app);
+    let err = match &mut app.clipboard {
+        ClipboardState::Ready(cb) => cb.set_text(text).err().map(|e| e.to_string()),
+        _ => Some("clipboard unavailable".to_string()),
+    };
+    if let Some(e) = err {
+        app.status
+            .set_dismissible(format!("⚠ Clipboard unavailable: {e}"));
+        return;
+    }
+    // tui_textarea::cut() deletes the selection (or current line if none) and
+    // yanks to its own internal clipboard — we don't need that yank, but the
+    // delete is exactly what we want.
+    app.textarea.cut();
+    app.mark_keystroke();
+}
+
 /// Paste from the system clipboard into the buffer.
 #[mutants::skip] // Clipboard I/O.
 pub fn handle_paste(app: &mut App) {

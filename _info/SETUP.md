@@ -1,55 +1,124 @@
-# Setting Up `yame`
+# Setting Up yame
 
-This guide walks you through installing `yame` and its optional additions.
+A complete walkthrough from a fresh machine to a fully configured editor.
 
 ---
 
 ## 1. Install Rust and Cargo
 
-`yame` is installed via Cargo, the Rust package manager. If you do not have Rust installed:
+yame is installed via Cargo, the Rust package manager. Skip this step if you already have Rust.
 
-### macOS and Linux
-Run the following command in your terminal:
+### macOS / Linux
+
 ```sh
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
-Follow the on-screen prompts. Once completed, restart your terminal or run:
+
+Follow the prompts. Restart your terminal or run:
+
 ```sh
 source "$HOME/.cargo/env"
 ```
 
 ### Windows
-Download and run the installer from:
-[rustup.rs](https://rustup.rs/)
+
+Download and run the installer from [rustup.rs](https://rustup.rs/). Or let `install.ps1` handle it — see [SCRIPTS.md](SCRIPTS.md).
 
 ---
 
-## 2. Install `yame`
+## 2. Install yame
 
-Run the following command to download, build, and install the latest version:
 ```sh
 cargo install yame
 ```
 
-Verify the installation succeeded by checking the version:
+Verify it worked:
+
 ```sh
 yame --version
 ```
 
 ---
 
-## 3. Recommended Font Configuration
+## 3. Generate a Config File (optional but recommended)
 
-By default, `yame` uses custom status bar arrow separators (Powerline glyphs) and checklist icons. If your terminal font does not support these, they will render as broken boxes.
+yame works without any config — it defaults to Catppuccin Mocha. To get a commented template you can edit:
 
-To fix this:
-* Install a Nerd Font. Read [NERD-FONTS.md](file:///Users/watcher/githere/yame/_info/NERD-FONTS.md) for download links and configuration guides.
-* Or, disable them by adding `powerline_glyphs = false` to your `~/.config/yame/config.toml` file.
+```sh
+yame write-config
+```
+
+This writes `~/.config/yame/config.toml` (respects `$XDG_CONFIG_HOME` if set; on Windows: `%APPDATA%\yame\config.toml`). The file explains every available option inline.
+
+See [THEMES.md](THEMES.md) for switching to a built-in palette preset.
 
 ---
 
-## 4. Optional Enhancements
+## 4. Font Setup (optional)
 
-You can expand `yame` to support fuzzy file opening and previewing.
-* For integrations with `fzf`, `fd`, `lf`, and `bat`, read [FRIENDS.md](file:///Users/watcher/githere/yame/_info/FRIENDS.md).
-* For a hands-off, automated setup of all tools, read [SCRIPTS.md](file:///Users/watcher/githere/yame/_info/SCRIPTS.md).
+yame uses Nerd Font / Powerline glyphs for the status bar arrows and todo checkboxes. If your font doesn't include them, they'll appear as boxes.
+
+**Two options:**
+- Install a patched font — see [NERD-FONTS.md](NERD-FONTS.md) for download links and terminal setup guides.
+- Disable glyphs by adding to your config:
+  ```toml
+  [layout]
+  powerline_glyphs = false
+  ```
+
+---
+
+## 5. Shell Integration (optional, recommended)
+
+`yame init` prints a shell wrapper function that adds fuzzy-file discovery. Add it to your shell startup file:
+
+```sh
+# Zsh
+echo 'eval "$(yame init)"' >> ~/.zshrc
+
+# Bash
+echo 'eval "$(yame init)"' >> ~/.bashrc
+```
+
+Then reload your shell (`exec zsh` / `exec bash` or open a new terminal).
+
+**What this enables:**
+
+| Command | Without integration | With integration |
+|---------|--------------------|-|
+| `yame` | Opens an untitled buffer | Fuzzy-finds Markdown files in the current directory |
+| `yame notes` | Error (no file named "notes") | Fuzzy-searches for files matching "notes" |
+| `yame path/to/file.md` | Opens that file | Same — direct paths pass through |
+
+**Requires [`fd`](https://github.com/sharkdp/fd) and [`fzf`](https://github.com/junegunn/fzf).** See [FRIENDS.md](FRIENDS.md) for install instructions.
+
+---
+
+## 6. File Picker Integration (optional)
+
+Once inside yame, `Ctrl+O` opens a file picker without leaving the editor. Picker resolution order:
+
+1. `$YAME_PICKER` (if set) — run as a shell command; must print the selected path to stdout
+2. `lf` — if installed, opens lf with `Enter` confirming the selection
+3. `fzf` — if installed, fuzzy-finds from the current directory
+
+If neither `lf` nor `fzf` is available, a status-bar message explains what to install.
+
+See [FRIENDS.md](FRIENDS.md) for lf install and lfrc config.
+
+---
+
+## 7. Quick Reference
+
+```
+yame <file>           Open file for editing (created if it doesn't exist)
+yame                  Open an untitled buffer (Ctrl+S prompts for a filename)
+yame -r <file>        Open in read-only mode
+yame --preview <file> Render to stdout with ANSI colour (for lf/file-manager previewers)
+yame init             Print shell integration function
+yame write-config     Write default config to ~/.config/yame/config.toml
+yame --version        Print version
+yame --help           Show help
+```
+
+Key bindings inside the editor — press `F1` for the full in-app reference.

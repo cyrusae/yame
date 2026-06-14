@@ -356,12 +356,12 @@ enum HelpRow {
 /// All shortcuts shown in the modal, in display order.
 static SHORTCUTS: &[HelpRow] = &[
     HelpRow::Section("File"),
-    HelpRow::Entry("Ctrl+S / ⌘S", "Save", "Ctrl+X / Esc", "Exit"),
+    HelpRow::Entry("Ctrl+S / ⌘S", "Save", "Ctrl+Q / Esc", "Quit"),
     HelpRow::Entry("Ctrl+O", "Open file", "Ctrl+R", "Reload config"),
     HelpRow::Section("Edit"),
     HelpRow::Entry("Ctrl+Z / ⌘Z", "Undo", "Ctrl+Y / ⌘Y / ⌘⇧Z", "Redo"),
     HelpRow::Entry("Ctrl+C / ⌘C", "Copy", "Ctrl+V / ⌘V", "Paste"),
-    HelpRow::Entry("Tab", "Indent", "", ""),
+    HelpRow::Entry("Ctrl+X / ⌘X", "Cut", "Tab", "Indent"),
     HelpRow::Section("Navigate"),
     HelpRow::Entry("↑ / ↓", "Move", "Shift+↑/↓", "Select"),
     HelpRow::Entry("Ctrl+↑/↓", "Scroll", "Ctrl+G", "Go to line"),

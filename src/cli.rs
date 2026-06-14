@@ -125,8 +125,8 @@ pub(super) fn print_help() {
     println!();
     println!("KEYBINDINGS");
     println!("  Ctrl+S  Save          Ctrl+Z  Undo        Ctrl+C  Copy selection");
-    println!("  Ctrl+X  Exit          Ctrl+Y  Redo        Ctrl+V  Paste");
-    println!("  Ctrl+R  Reload config");
+    println!("  Ctrl+Q  Quit          Ctrl+Y  Redo        Ctrl+V  Paste");
+    println!("  Ctrl+X  Cut           Ctrl+R  Reload config");
     println!("  Arrow keys · Home/End · PgUp/PgDn · mouse click / drag / scroll");
     println!();
     #[cfg(not(windows))]

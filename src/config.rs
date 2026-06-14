@@ -6,30 +6,28 @@ use std::path::PathBuf;
 // Raw config structs (deserialized from TOML)
 // ---------------------------------------------------------------------------
 
-/// Base color palette. Defaults to Catppuccin Mocha.
-#[derive(Debug, Deserialize)]
+/// Base color palette.
+///
+/// All fields are optional.  When a field is absent, its value is taken from
+/// the named `preset` (or from the built-in Catppuccin Mocha defaults when no
+/// preset is specified).  An explicit field always wins over the preset.
+#[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct Palette {
-    pub text: String,
-    pub accent: String,
-    pub muted: String,
-    pub code: String,
-    pub bg: String,
-    pub warning: String,
-}
-
-impl Default for Palette {
-    fn default() -> Self {
-        Self {
-            text: "#cdd6f4".into(),
-            accent: "#cba6f7".into(),
-            muted: "#585b70".into(),
-            code: "#a6e3a1".into(),
-            // Catppuccin Crust — near-black main canvas
-            bg: "#11111b".into(),
-            warning: "#f38ba8".into(),
-        }
-    }
+    /// Named preset (case-insensitive).  Sets all six base colors; individual
+    /// field overrides still win.  Unrecognised names fall back to Catppuccin
+    /// Mocha with a config warning.
+    ///
+    /// Available: `catppuccin-mocha` · `catppuccin-latte` ·
+    /// `catppuccin-frappe` · `catppuccin-macchiato` · `dracula` · `nord` ·
+    /// `gruvbox-dark` · `solarized-dark` · `solarized-light` · `tokyo-night`
+    pub preset: Option<String>,
+    pub text:    Option<String>,
+    pub accent:  Option<String>,
+    pub muted:   Option<String>,
+    pub code:    Option<String>,
+    pub bg:      Option<String>,
+    pub warning: Option<String>,
 }
 
 /// Optional per-field overrides for derived theme tokens.
@@ -296,6 +294,284 @@ fn parse_override(opt: &Option<String>, warnings: &mut Vec<String>) -> Option<(u
     })
 }
 
+// ---------------------------------------------------------------------------
+// Named palette presets
+// ---------------------------------------------------------------------------
+
+/// The six base colors that constitute a named palette preset.
+pub struct PaletteBase {
+    pub text:    &'static str,
+    pub accent:  &'static str,
+    pub muted:   &'static str,
+    pub code:    &'static str,
+    pub bg:      &'static str,
+    pub warning: &'static str,
+}
+
+// Catppuccin — https://github.com/catppuccin/catppuccin
+// Roles: text=Text · accent=Mauve · muted=Surface2 · code=Green · bg=Crust · warning=Red
+const CATPPUCCIN_MOCHA: PaletteBase = PaletteBase {
+    text: "#cdd6f4", accent: "#cba6f7", muted: "#585b70",
+    code: "#a6e3a1", bg: "#11111b",    warning: "#f38ba8",
+};
+const CATPPUCCIN_MACCHIATO: PaletteBase = PaletteBase {
+    text: "#cad3f5", accent: "#c6a0f6", muted: "#5b6078",
+    code: "#a6da95", bg: "#181926",     warning: "#ed8796",
+};
+const CATPPUCCIN_FRAPPE: PaletteBase = PaletteBase {
+    text: "#c6d0f5", accent: "#ca9ee6", muted: "#626880",
+    code: "#a6d189", bg: "#232634",     warning: "#e78284",
+};
+const CATPPUCCIN_LATTE: PaletteBase = PaletteBase {
+    text: "#4c4f69", accent: "#8839ef", muted: "#acb0be",
+    code: "#40a02b", bg: "#dce0e8",     warning: "#d20f39",
+};
+
+// Dracula — https://draculatheme.com/contribute
+// Roles: text=Foreground · accent=Purple · muted=Comment · code=Green · bg=Background · warning=Red
+const DRACULA: PaletteBase = PaletteBase {
+    text: "#f8f8f2", accent: "#bd93f9", muted: "#6272a4",
+    code: "#50fa7b", bg: "#282a36",     warning: "#ff5555",
+};
+
+// Nord — https://www.nordtheme.com/docs/colors-and-palettes
+// Roles: text=Snow3 · accent=Frost2 · muted=PolarNight4 · code=AuroraGreen · bg=PolarNight1 · warning=AuroraRed
+const NORD: PaletteBase = PaletteBase {
+    text: "#eceff4", accent: "#88c0d0", muted: "#4c566a",
+    code: "#a3be8c", bg: "#2e3440",     warning: "#bf616a",
+};
+
+// Gruvbox Dark — https://github.com/morhetz/gruvbox
+// Roles: text=fg1 · accent=purple · muted=gray · code=bright_green · bg=bg0_h · warning=bright_red
+const GRUVBOX_DARK: PaletteBase = PaletteBase {
+    text: "#ebdbb2", accent: "#d3869b", muted: "#928374",
+    code: "#b8bb26", bg: "#1d2021",     warning: "#fb4934",
+};
+
+// Solarized — https://ethanschoonover.com/solarized/
+// Roles: text=base0 · accent=blue · muted=base01 · code=green · bg=base03 · warning=red
+const SOLARIZED_DARK: PaletteBase = PaletteBase {
+    text: "#839496", accent: "#268bd2", muted: "#586e75",
+    code: "#859900", bg: "#002b36",     warning: "#dc322f",
+};
+const SOLARIZED_LIGHT: PaletteBase = PaletteBase {
+    text: "#657b83", accent: "#268bd2", muted: "#93a1a1",
+    code: "#859900", bg: "#fdf6e3",     warning: "#dc322f",
+};
+
+// Tokyo Night — https://github.com/folke/tokyonight.nvim
+// Roles: text=fg · accent=purple · muted=comment · code=green · bg=bg · warning=red
+const TOKYO_NIGHT: PaletteBase = PaletteBase {
+    text: "#a9b1d6", accent: "#bb9af7", muted: "#565f89",
+    code: "#9ece6a", bg: "#1a1b26",     warning: "#f7768e",
+};
+
+// Rosé Pine — https://rosepinetheme.com/palette/
+// Roles: text=Text · accent=Iris · muted=Muted · code=Foam · bg=Base · warning=Love
+const ROSE_PINE: PaletteBase = PaletteBase {
+    text: "#e0def4", accent: "#c4a7e7", muted: "#6e6a86",
+    code: "#9ccfd8", bg: "#191724",     warning: "#eb6f92",
+};
+const ROSE_PINE_MOON: PaletteBase = PaletteBase {
+    text: "#e0def4", accent: "#c4a7e7", muted: "#6e6a86",
+    code: "#9ccfd8", bg: "#232136",     warning: "#eb6f92",
+};
+const ROSE_PINE_DAWN: PaletteBase = PaletteBase {
+    text: "#575279", accent: "#907aa9", muted: "#9893a5",
+    code: "#56949f", bg: "#faf4ed",     warning: "#b4637a",
+};
+
+// GitHub — https://primer.style/foundations/color
+// Roles: text=fg.default · accent=accent.fg · muted=fg.muted · code=success.fg · bg=canvas.default · warning=danger.fg
+const GITHUB_LIGHT: PaletteBase = PaletteBase {
+    text: "#24292f", accent: "#0969da", muted: "#57606a",
+    code: "#116329", bg: "#ffffff",     warning: "#cf222e",
+};
+
+// ---------------------------------------------------------------------------
+// Preset expansions — rainbow headings + per-theme accent tints
+// ---------------------------------------------------------------------------
+
+/// Optional per-preset extra derived colors.
+///
+/// An *expanded* preset (e.g. `preset = "catppuccin-mocha-expanded"`) uses
+/// these values as the default for heading colors and italic color.
+/// User `[headings]` and `[theme]` overrides always win over the expansion.
+pub struct PaletteExpansion {
+    // Per-level heading colors (h1 → h6, warm-to-cool or theme-native order).
+    pub h1: &'static str,
+    pub h2: &'static str,
+    pub h3: &'static str,
+    pub h4: &'static str,
+    pub h5: &'static str,
+    pub h6: &'static str,
+    /// Italic text color (e.g. theme's Pink or Sky token).
+    pub italic_color: &'static str,
+}
+
+// Catppuccin expansions — rainbow order: Rosewater → Flamingo → Pink → Mauve → Red → Maroon
+const CATPPUCCIN_MOCHA_EXP: PaletteExpansion = PaletteExpansion {
+    h1: "#f5e0dc", h2: "#f2cdcd", h3: "#f5c2e7",
+    h4: "#cba6f7", h5: "#f38ba8", h6: "#eba0ac",
+    italic_color: "#f5e0dc", // Rosewater — warm warmth for emphasis
+};
+const CATPPUCCIN_MACCHIATO_EXP: PaletteExpansion = PaletteExpansion {
+    h1: "#f4dbd6", h2: "#f0c6c6", h3: "#f5bde6",
+    h4: "#c6a0f6", h5: "#ed8796", h6: "#ee99a0",
+    italic_color: "#f4dbd6",
+};
+const CATPPUCCIN_FRAPPE_EXP: PaletteExpansion = PaletteExpansion {
+    h1: "#f2d5cf", h2: "#eebebe", h3: "#f4b8e4",
+    h4: "#ca9ee6", h5: "#e78284", h6: "#ea999c",
+    italic_color: "#f2d5cf",
+};
+const CATPPUCCIN_LATTE_EXP: PaletteExpansion = PaletteExpansion {
+    h1: "#dc8a78", h2: "#dd7878", h3: "#ea76cb",
+    h4: "#8839ef", h5: "#d20f39", h6: "#e64553",
+    italic_color: "#dc8a78",
+};
+
+// Dracula expansion — rainbow from Dracula's full palette
+const DRACULA_EXP: PaletteExpansion = PaletteExpansion {
+    h1: "#ff79c6", h2: "#ffb86c", h3: "#f1fa8c",
+    h4: "#50fa7b", h5: "#8be9fd", h6: "#bd93f9",
+    italic_color: "#ff79c6", // Pink — traditional Dracula italic
+};
+
+// Nord expansion — Aurora palette (Red → Orange → Yellow → Green → Frost → Purple)
+const NORD_EXP: PaletteExpansion = PaletteExpansion {
+    h1: "#bf616a", h2: "#d08770", h3: "#ebcb8b",
+    h4: "#a3be8c", h5: "#88c0d0", h6: "#b48ead",
+    italic_color: "#81a1c1", // Frost1 — slightly softer than accent Frost2
+};
+
+// Gruvbox Dark expansion — bright palette (Red → Orange → Yellow → Green → Aqua → Blue)
+const GRUVBOX_DARK_EXP: PaletteExpansion = PaletteExpansion {
+    h1: "#fb4934", h2: "#fe8019", h3: "#fabd2f",
+    h4: "#b8bb26", h5: "#8ec07c", h6: "#83a598",
+    italic_color: "#fe8019", // bright orange
+};
+
+// Solarized expansions — full Solarized accent palette
+const SOLARIZED_DARK_EXP: PaletteExpansion = PaletteExpansion {
+    h1: "#dc322f", h2: "#cb4b16", h3: "#b58900",
+    h4: "#859900", h5: "#2aa198", h6: "#268bd2",
+    italic_color: "#2aa198", // cyan — Solarized's traditional italic/string color
+};
+const SOLARIZED_LIGHT_EXP: PaletteExpansion = PaletteExpansion {
+    h1: "#dc322f", h2: "#cb4b16", h3: "#b58900",
+    h4: "#859900", h5: "#2aa198", h6: "#268bd2",
+    italic_color: "#2aa198",
+};
+
+// Tokyo Night expansion — full accent palette
+const TOKYO_NIGHT_EXP: PaletteExpansion = PaletteExpansion {
+    h1: "#f7768e", h2: "#ff9e64", h3: "#e0af68",
+    h4: "#9ece6a", h5: "#73daca", h6: "#7dcfff",
+    italic_color: "#7dcfff", // sky blue
+};
+
+// Rosé Pine expansions — Love · Gold · Rose · Iris · Pine · Foam
+const ROSE_PINE_EXP: PaletteExpansion = PaletteExpansion {
+    h1: "#eb6f92", h2: "#f6c177", h3: "#ebbcba",
+    h4: "#c4a7e7", h5: "#31748f", h6: "#9ccfd8",
+    italic_color: "#ebbcba", // Rose — warm rosy emphasis
+};
+const ROSE_PINE_MOON_EXP: PaletteExpansion = PaletteExpansion {
+    h1: "#eb6f92", h2: "#f6c177", h3: "#ebbcba",
+    h4: "#c4a7e7", h5: "#3e8fb0", h6: "#9ccfd8",
+    italic_color: "#ebbcba",
+};
+const ROSE_PINE_DAWN_EXP: PaletteExpansion = PaletteExpansion {
+    h1: "#b4637a", h2: "#ea9d34", h3: "#d7827a",
+    h4: "#907aa9", h5: "#286983", h6: "#56949f",
+    italic_color: "#d7827a", // Rose (Dawn variant)
+};
+
+// GitHub Light expansion — GitHub's semantic color palette
+const GITHUB_LIGHT_EXP: PaletteExpansion = PaletteExpansion {
+    h1: "#cf222e", h2: "#953800", h3: "#9a6700",
+    h4: "#116329", h5: "#0550ae", h6: "#8250df",
+    italic_color: "#953800", // orange — GitHub attribute/annotation color
+};
+
+// ---------------------------------------------------------------------------
+// Preset lookup helpers
+// ---------------------------------------------------------------------------
+
+/// Strip a trailing `-expanded` suffix (case-insensitive), returning the base
+/// name slice and whether the suffix was present.
+fn strip_expanded_suffix(name: &str) -> (&str, bool) {
+    // Work in lowercase for comparison but return the original slice length.
+    let lower = name.to_ascii_lowercase();
+    if lower.ends_with("-expanded") {
+        (&name[..name.len() - "-expanded".len()], true)
+    } else {
+        (name, false)
+    }
+}
+
+/// Look up a named palette preset (case-insensitive).
+///
+/// The `-expanded` suffix is stripped before lookup so that both
+/// `"catppuccin-mocha"` and `"catppuccin-mocha-expanded"` resolve to the
+/// same six base colors.
+///
+/// Returns `None` for unrecognised names so callers can emit a config warning.
+pub fn palette_preset(name: &str) -> Option<&'static PaletteBase> {
+    let (base, _) = strip_expanded_suffix(name);
+    Some(match base.to_lowercase().as_str() {
+        "catppuccin-mocha"     | "mocha"          => &CATPPUCCIN_MOCHA,
+        "catppuccin-macchiato" | "macchiato"       => &CATPPUCCIN_MACCHIATO,
+        "catppuccin-frappe"    | "frappe"
+        | "catppuccin-frappé"  | "frappé"          => &CATPPUCCIN_FRAPPE,
+        "catppuccin-latte"     | "latte"           => &CATPPUCCIN_LATTE,
+        "dracula"                                  => &DRACULA,
+        "nord"                                     => &NORD,
+        "gruvbox-dark"         | "gruvbox"         => &GRUVBOX_DARK,
+        "solarized-dark"       | "solarized"       => &SOLARIZED_DARK,
+        "solarized-light"                          => &SOLARIZED_LIGHT,
+        "tokyo-night"          | "tokyonight"      => &TOKYO_NIGHT,
+        "rose-pine"            | "rosepine"        => &ROSE_PINE,
+        "rose-pine-moon"       | "rosepine-moon"   => &ROSE_PINE_MOON,
+        "rose-pine-dawn"       | "rosepine-dawn"   => &ROSE_PINE_DAWN,
+        "github-light"         | "github"          => &GITHUB_LIGHT,
+        _                                          => return None,
+    })
+}
+
+/// Look up the *expansion* for an expanded preset variant (case-insensitive).
+///
+/// An expansion provides rainbow heading colors and a theme-native italic tint.
+/// Returns `None` when the name has no `-expanded` suffix **or** when the base
+/// preset is not recognised.
+pub fn palette_expansion(name: &str) -> Option<&'static PaletteExpansion> {
+    let (base, is_expanded) = strip_expanded_suffix(name);
+    if !is_expanded {
+        return None;
+    }
+    Some(match base.to_lowercase().as_str() {
+        "catppuccin-mocha"     | "mocha"          => &CATPPUCCIN_MOCHA_EXP,
+        "catppuccin-macchiato" | "macchiato"       => &CATPPUCCIN_MACCHIATO_EXP,
+        "catppuccin-frappe"    | "frappe"
+        | "catppuccin-frappé"  | "frappé"          => &CATPPUCCIN_FRAPPE_EXP,
+        "catppuccin-latte"     | "latte"           => &CATPPUCCIN_LATTE_EXP,
+        "dracula"                                  => &DRACULA_EXP,
+        "nord"                                     => &NORD_EXP,
+        "gruvbox-dark"         | "gruvbox"         => &GRUVBOX_DARK_EXP,
+        "solarized-dark"       | "solarized"       => &SOLARIZED_DARK_EXP,
+        "solarized-light"                          => &SOLARIZED_LIGHT_EXP,
+        "tokyo-night"          | "tokyonight"      => &TOKYO_NIGHT_EXP,
+        "rose-pine"            | "rosepine"        => &ROSE_PINE_EXP,
+        "rose-pine-moon"       | "rosepine-moon"   => &ROSE_PINE_MOON_EXP,
+        "rose-pine-dawn"       | "rosepine-dawn"   => &ROSE_PINE_DAWN_EXP,
+        "github-light"         | "github"          => &GITHUB_LIGHT_EXP,
+        _                                          => return None,
+    })
+}
+
+// ---------------------------------------------------------------------------
+
 impl Theme {
     /// Build a `Theme` from raw config structs.
     /// Invalid color strings are skipped (defaults used) and warnings appended to `warnings`.
@@ -305,13 +581,40 @@ impl Theme {
         headings: &HeadingColors,
         warnings: &mut Vec<String>,
     ) -> Self {
-        // Parse base palette
-        let text = parse_or_warn(&palette.text, (205, 214, 244), warnings);
-        let accent = parse_or_warn(&palette.accent, (203, 166, 247), warnings);
-        let muted = parse_or_warn(&palette.muted, (88, 91, 112), warnings);
-        let code_rgb = parse_or_warn(&palette.code, (166, 227, 161), warnings);
-        let bg = parse_or_warn(&palette.bg, (30, 30, 46), warnings);
-        let warning_rgb = parse_or_warn(&palette.warning, (243, 139, 168), warnings);
+        // Resolve named preset (falls back to Catppuccin Mocha when absent or unknown).
+        let base = palette
+            .preset
+            .as_deref()
+            .and_then(|n| {
+                let p = palette_preset(n);
+                if p.is_none() {
+                    warnings.push(format!(
+                        "Config warning: unknown palette preset {n:?}; using Catppuccin Mocha"
+                    ));
+                }
+                p
+            })
+            .unwrap_or(&CATPPUCCIN_MOCHA);
+
+        // Resolve optional expansion (set by an `-expanded` preset suffix).
+        // Provides rainbow heading colors and a per-theme italic tint.
+        let expansion = palette.preset.as_deref().and_then(palette_expansion);
+
+        // Pre-parse the preset's six base colors (hardcoded strings — always valid).
+        let base_text    = parse_hex_color(base.text).unwrap_or((205, 214, 244));
+        let base_accent  = parse_hex_color(base.accent).unwrap_or((203, 166, 247));
+        let base_muted   = parse_hex_color(base.muted).unwrap_or((88, 91, 112));
+        let base_code    = parse_hex_color(base.code).unwrap_or((166, 227, 161));
+        let base_bg      = parse_hex_color(base.bg).unwrap_or((17, 17, 27));
+        let base_warning = parse_hex_color(base.warning).unwrap_or((243, 139, 168));
+
+        // Per-field palette overrides win over the preset; absent fields use preset.
+        let text       = parse_or_warn(palette.text.as_deref().unwrap_or(base.text),    base_text,    warnings);
+        let accent     = parse_or_warn(palette.accent.as_deref().unwrap_or(base.accent), base_accent, warnings);
+        let muted      = parse_or_warn(palette.muted.as_deref().unwrap_or(base.muted),  base_muted,  warnings);
+        let code_rgb   = parse_or_warn(palette.code.as_deref().unwrap_or(base.code),    base_code,   warnings);
+        let bg         = parse_or_warn(palette.bg.as_deref().unwrap_or(base.bg),        base_bg,     warnings);
+        let warning_rgb = parse_or_warn(palette.warning.as_deref().unwrap_or(base.warning), base_warning, warnings);
 
         // Helper: use override or derive
         let resolve = |opt: &Option<String>,
@@ -326,8 +629,13 @@ impl Theme {
         };
 
         let bold_color = resolve(&overrides.bold_color, text, warnings);
-        // Italic defaults to plain text color (same as bold) — independently overridable.
-        let italic_color = resolve(&overrides.italic_color, text, warnings);
+        // Italic: expansion provides a per-theme tint (e.g. Rosewater for Catppuccin,
+        // Pink for Dracula); plain text color when no expansion is active.
+        // [theme] italic_color always wins over the expansion default.
+        let italic_default = expansion
+            .and_then(|e| parse_hex_color(e.italic_color).ok())
+            .unwrap_or(text);
+        let italic_color = resolve(&overrides.italic_color, italic_default, warnings);
         let strikethrough_color = resolve(
             &overrides.strikethrough_color,
             blend(muted, text, 0.5),
@@ -387,37 +695,28 @@ impl Theme {
             warnings,
         );
 
-        // Per-level heading colors
+        // Per-level heading colors.
+        // Resolution order (last wins): blend default → expansion → [headings] override.
         let heading_default = |blend_t: f32| blend(accent, text, blend_t);
-        let h1_rgb = headings
-            .h1
-            .as_deref()
-            .and_then(|s| parse_hex_color(s).ok())
+        // Helper: parse one expansion heading field, used in the or_else chain below.
+        let exp_h = |s: &'static str| parse_hex_color(s).ok();
+        let h1_rgb = headings.h1.as_deref().and_then(|s| parse_hex_color(s).ok())
+            .or_else(|| expansion.and_then(|e| exp_h(e.h1)))
             .unwrap_or_else(|| heading_default(1.0));
-        let h2_rgb = headings
-            .h2
-            .as_deref()
-            .and_then(|s| parse_hex_color(s).ok())
+        let h2_rgb = headings.h2.as_deref().and_then(|s| parse_hex_color(s).ok())
+            .or_else(|| expansion.and_then(|e| exp_h(e.h2)))
             .unwrap_or_else(|| heading_default(1.0));
-        let h3_rgb = headings
-            .h3
-            .as_deref()
-            .and_then(|s| parse_hex_color(s).ok())
+        let h3_rgb = headings.h3.as_deref().and_then(|s| parse_hex_color(s).ok())
+            .or_else(|| expansion.and_then(|e| exp_h(e.h3)))
             .unwrap_or_else(|| heading_default(0.85));
-        let h4_rgb = headings
-            .h4
-            .as_deref()
-            .and_then(|s| parse_hex_color(s).ok())
+        let h4_rgb = headings.h4.as_deref().and_then(|s| parse_hex_color(s).ok())
+            .or_else(|| expansion.and_then(|e| exp_h(e.h4)))
             .unwrap_or_else(|| heading_default(0.7));
-        let h5_rgb = headings
-            .h5
-            .as_deref()
-            .and_then(|s| parse_hex_color(s).ok())
+        let h5_rgb = headings.h5.as_deref().and_then(|s| parse_hex_color(s).ok())
+            .or_else(|| expansion.and_then(|e| exp_h(e.h5)))
             .unwrap_or_else(|| heading_default(0.6));
-        let h6_rgb = headings
-            .h6
-            .as_deref()
-            .and_then(|s| parse_hex_color(s).ok())
+        let h6_rgb = headings.h6.as_deref().and_then(|s| parse_hex_color(s).ok())
+            .or_else(|| expansion.and_then(|e| exp_h(e.h6)))
             .unwrap_or_else(|| heading_default(0.5));
 
         Self {
@@ -481,26 +780,35 @@ impl Theme {
 
 /// Commented template written to the platform config directory on first run.
 ///
-/// All values shown are the Catppuccin Mocha defaults.  The `[theme]`,
-/// `[headings]`, and `[layout]` sections are fully commented out — uncomment
-/// any line to override the derived default.
+/// All palette fields are commented out; the built-in Catppuccin Mocha defaults
+/// apply.  The `[theme]`, `[headings]`, and `[layout]` sections are also fully
+/// commented out — uncomment any line to override the derived default.
 pub const DEFAULT_CONFIG_TEMPLATE: &str = r##"# yame configuration
 # Unix:    ~/.config/yame/config.toml  (respects $XDG_CONFIG_HOME)
 # Windows: %APPDATA%\yame\config.toml
 # Reload in-app at any time with Ctrl+R.
 #
-# All values shown are the Catppuccin Mocha defaults.
-# Uncomment and edit any line to override it.
+# Defaults are Catppuccin Mocha.  Uncomment any line to override it.
 
 # ── Base palette ──────────────────────────────────────────────────────────────
-# These six colors drive the entire theme.
+# Switch to a named preset, or override individual colors, or both
+# (individual fields always win over the preset).
+#
+# Available presets:
+#   catppuccin-mocha (default) · catppuccin-latte · catppuccin-frappe · catppuccin-macchiato
+#   dracula · nord · gruvbox-dark · solarized-dark · solarized-light · tokyo-night
+#   rose-pine · rose-pine-moon · rose-pine-dawn · github-light
+#
+# Append -expanded for rainbow headings + per-theme italic tint:
+#   e.g. "catppuccin-mocha-expanded", "dracula-expanded", "rose-pine-expanded"
 [palette]
-text    = "#cdd6f4"   # body text
-accent  = "#cba6f7"   # headings, links, bullets
-muted   = "#585b70"   # blockquotes, URLs, completed todos
-code    = "#a6e3a1"   # inline code and fenced blocks
-bg      = "#11111b"   # editor background
-warning = "#f38ba8"   # dirty flag, warnings
+# preset  = "catppuccin-mocha"   # switch to any preset above; add -expanded for rainbow headings
+# text    = "#cdd6f4"   # body text
+# accent  = "#cba6f7"   # headings, links, bullets
+# muted   = "#585b70"   # blockquotes, URLs, completed todos
+# code    = "#a6e3a1"   # inline code and fenced blocks
+# bg      = "#11111b"   # editor background
+# warning = "#f38ba8"   # dirty flag, warnings
 
 # ── Per-element overrides ─────────────────────────────────────────────────────
 # Uncomment any line to pin that value instead of deriving it from the palette.
@@ -625,14 +933,16 @@ pub fn load_config() -> (Config, Vec<String>) {
             // Validate individual color fields, collecting warnings.
             // Actual resolution happens in Theme::from_config.
             for (name, val) in [
-                ("palette.text", &cfg.palette.text),
-                ("palette.accent", &cfg.palette.accent),
-                ("palette.muted", &cfg.palette.muted),
-                ("palette.code", &cfg.palette.code),
-                ("palette.bg", &cfg.palette.bg),
+                ("palette.text",    &cfg.palette.text),
+                ("palette.accent",  &cfg.palette.accent),
+                ("palette.muted",   &cfg.palette.muted),
+                ("palette.code",    &cfg.palette.code),
+                ("palette.bg",      &cfg.palette.bg),
                 ("palette.warning", &cfg.palette.warning),
             ] {
-                if let Err(e) = parse_hex_color(val) {
+                if let Some(v) = val
+                    && let Err(e) = parse_hex_color(v)
+                {
                     warnings.push(format!("Config warning: Invalid color for {name}: {e}"));
                 }
             }
@@ -905,36 +1215,200 @@ mod tests {
         assert!(cfg.layout.powerline_glyphs.unwrap_or(true));
     }
 
-    /// The palette values embedded in the template must match Config::default()
-    /// so that scaffolded configs produce the same theme as no config at all.
+    /// The scaffold template must produce the same computed theme as no config at
+    /// all (Catppuccin Mocha).  All palette fields are commented out in the
+    /// template, so the preset/default resolution path is exercised end-to-end.
     #[test]
-    fn default_template_palette_matches_defaults() {
+    fn default_template_produces_mocha_theme() {
         let cfg: Config =
             toml::from_str(DEFAULT_CONFIG_TEMPLATE).expect("template must be valid TOML");
-        let defaults = Config::default();
-        assert_eq!(
-            cfg.palette.text, defaults.palette.text,
-            "template palette.text differs from Config::default()"
-        );
-        assert_eq!(
-            cfg.palette.accent, defaults.palette.accent,
-            "template palette.accent differs from Config::default()"
-        );
-        assert_eq!(
-            cfg.palette.bg, defaults.palette.bg,
-            "template palette.bg differs from Config::default()"
-        );
-        assert_eq!(
-            cfg.palette.muted, defaults.palette.muted,
-            "template palette.muted differs from Config::default()"
-        );
-        assert_eq!(
-            cfg.palette.code, defaults.palette.code,
-            "template palette.code differs from Config::default()"
-        );
-        assert_eq!(
-            cfg.palette.warning, defaults.palette.warning,
-            "template palette.warning differs from Config::default()"
-        );
+        // Template leaves all palette fields unset — preset = None, fields = None.
+        assert!(cfg.palette.preset.is_none(), "template must not set a preset");
+        assert!(cfg.palette.text.is_none(),   "template must not set palette.text");
+
+        let mut warnings = Vec::new();
+        let theme = Theme::from_config(&cfg.palette, &cfg.theme, &cfg.headings, &mut warnings);
+        assert!(warnings.is_empty(), "template must not produce config warnings: {warnings:?}");
+
+        // Compare against the well-known Mocha values.
+        assert_eq!(theme.bg,     Color::Rgb(17,  17,  27),  "bg must be Mocha crust #11111b");
+        assert_eq!(theme.accent, Color::Rgb(203, 166, 247), "accent must be Mocha mauve #cba6f7");
+        assert_eq!(theme.text,   Color::Rgb(205, 214, 244), "text must be Mocha text #cdd6f4");
+        // heading_bg is derived; if base colors are correct the derivation follows.
+        assert_eq!(theme.heading_bg, Theme::default_theme().heading_bg,
+            "heading_bg must match default_theme()");
+    }
+
+    // --- palette_preset ---
+
+    #[test]
+    fn palette_preset_mocha_aliases_resolve() {
+        assert!(palette_preset("catppuccin-mocha").is_some());
+        assert!(palette_preset("mocha").is_some());
+        assert!(palette_preset("Mocha").is_some()); // case-insensitive
+    }
+
+    #[test]
+    fn palette_preset_all_known_names_resolve() {
+        let known = [
+            "catppuccin-mocha", "catppuccin-latte", "catppuccin-frappe",
+            "catppuccin-macchiato", "dracula", "nord", "gruvbox-dark",
+            "solarized-dark", "solarized-light", "tokyo-night",
+            "rose-pine", "rose-pine-moon", "rose-pine-dawn", "github-light",
+            // short aliases
+            "mocha", "latte", "frappe", "macchiato", "gruvbox", "solarized",
+            "tokyonight", "rosepine", "github",
+            // -expanded variants resolve the same base colors
+            "catppuccin-mocha-expanded", "dracula-expanded", "rose-pine-expanded",
+        ];
+        for name in known {
+            assert!(palette_preset(name).is_some(), "preset {name:?} must resolve");
+        }
+    }
+
+    #[test]
+    fn palette_preset_unknown_returns_none() {
+        assert!(palette_preset("").is_none());
+        assert!(palette_preset("everforest").is_none());
+        assert!(palette_preset("one-dark").is_none());
+    }
+
+    #[test]
+    fn palette_preset_field_override_wins_over_preset() {
+        // Setting preset = "dracula" but overriding accent with red:
+        // the computed accent must be red, not Dracula purple.
+        let palette = Palette {
+            preset: Some("dracula".into()),
+            accent: Some("#ff0000".into()),
+            ..Default::default()
+        };
+        let mut warnings = Vec::new();
+        let theme = Theme::from_config(&palette, &ThemeOverrides::default(), &HeadingColors::default(), &mut warnings);
+        assert_eq!(theme.accent, Color::Rgb(255, 0, 0),
+            "explicit accent must override the preset value");
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn palette_preset_unknown_emits_warning_and_uses_mocha() {
+        let palette = Palette {
+            preset: Some("no-such-theme".into()),
+            ..Default::default()
+        };
+        let mut warnings = Vec::new();
+        let theme = Theme::from_config(&palette, &ThemeOverrides::default(), &HeadingColors::default(), &mut warnings);
+        assert!(!warnings.is_empty(), "unknown preset must push a warning");
+        // Falls back to Mocha bg
+        assert_eq!(theme.bg, Color::Rgb(17, 17, 27), "unknown preset must fall back to Mocha bg");
+    }
+
+    #[test]
+    fn palette_preset_latte_bg_is_light() {
+        let p = palette_preset("catppuccin-latte").expect("latte must resolve");
+        // Latte bg (Crust) is a very light gray — R,G,B all well above 200.
+        let (r, g, b) = parse_hex_color(p.bg).expect("preset bg must be valid hex");
+        assert!(r > 200 && g > 200 && b > 200, "Latte bg must be light, got ({r},{g},{b})");
+    }
+
+    #[test]
+    fn palette_preset_rose_pine_dawn_bg_is_light() {
+        let p = palette_preset("rose-pine-dawn").expect("rose-pine-dawn must resolve");
+        let (r, g, b) = parse_hex_color(p.bg).expect("preset bg must be valid hex");
+        assert!(r > 200 && g > 200 && b > 200, "Rose Pine Dawn bg must be light, got ({r},{g},{b})");
+    }
+
+    #[test]
+    fn palette_preset_github_light_bg_is_white() {
+        let p = palette_preset("github-light").expect("github-light must resolve");
+        assert_eq!(p.bg, "#ffffff");
+    }
+
+    // --- palette_expansion ---
+
+    #[test]
+    fn palette_expansion_requires_expanded_suffix() {
+        // Without -expanded: no expansion returned.
+        assert!(palette_expansion("catppuccin-mocha").is_none());
+        assert!(palette_expansion("dracula").is_none());
+        assert!(palette_expansion("rose-pine").is_none());
+    }
+
+    #[test]
+    fn palette_expansion_all_expanded_variants_resolve() {
+        let expanded = [
+            "catppuccin-mocha-expanded", "catppuccin-latte-expanded",
+            "catppuccin-frappe-expanded", "catppuccin-macchiato-expanded",
+            "dracula-expanded", "nord-expanded", "gruvbox-dark-expanded",
+            "solarized-dark-expanded", "solarized-light-expanded",
+            "tokyo-night-expanded", "rose-pine-expanded",
+            "rose-pine-moon-expanded", "rose-pine-dawn-expanded",
+            "github-light-expanded",
+            // short alias + expanded
+            "mocha-expanded", "latte-expanded", "dracula-expanded",
+            "tokyonight-expanded", "rosepine-expanded", "github-expanded",
+        ];
+        for name in expanded {
+            assert!(palette_expansion(name).is_some(), "expansion {name:?} must resolve");
+        }
+    }
+
+    #[test]
+    fn palette_expansion_unknown_base_returns_none() {
+        assert!(palette_expansion("everforest-expanded").is_none());
+        assert!(palette_expansion("-expanded").is_none());
+    }
+
+    #[test]
+    fn palette_expansion_mocha_headings_are_rainbow() {
+        // Mocha expansion h1=Rosewater, h6=Maroon — they must be different colors.
+        let exp = palette_expansion("catppuccin-mocha-expanded").expect("must resolve");
+        assert_ne!(exp.h1, exp.h6, "rainbow headings h1 and h6 must differ");
+        // h1 is Rosewater — pinkish, high R value
+        let (r, _, _) = parse_hex_color(exp.h1).expect("h1 must be valid hex");
+        assert!(r > 200, "Mocha h1 (Rosewater) must have high R, got {r}");
+    }
+
+    #[test]
+    fn palette_expansion_mocha_italic_is_not_text() {
+        // Expansion italic should differ from the plain Mocha text color.
+        let exp = palette_expansion("catppuccin-mocha-expanded").expect("must resolve");
+        assert_ne!(exp.italic_color, CATPPUCCIN_MOCHA.text,
+            "expanded italic_color must differ from base text");
+    }
+
+    #[test]
+    fn expanded_preset_headings_differ_from_non_expanded() {
+        // Non-expanded: all headings default to accent/text blend (same color for h1+h2).
+        let plain = Palette { preset: Some("catppuccin-mocha".into()), ..Default::default() };
+        let expanded = Palette { preset: Some("catppuccin-mocha-expanded".into()), ..Default::default() };
+        let mut w = Vec::new();
+        let t_plain    = Theme::from_config(&plain,    &ThemeOverrides::default(), &HeadingColors::default(), &mut w);
+        let t_expanded = Theme::from_config(&expanded, &ThemeOverrides::default(), &HeadingColors::default(), &mut w);
+        assert!(w.is_empty());
+        assert_ne!(t_plain.headings.h1, t_expanded.headings.h1,
+            "expanded h1 must differ from plain h1");
+        assert_ne!(t_plain.headings.h6, t_expanded.headings.h6,
+            "expanded h6 must differ from plain h6");
+    }
+
+    #[test]
+    fn expanded_preset_headings_user_override_still_wins() {
+        // [headings] h1 override must beat the expansion's rainbow value.
+        let palette = Palette { preset: Some("dracula-expanded".into()), ..Default::default() };
+        let headings = HeadingColors { h1: Some("#aabbcc".into()), ..Default::default() };
+        let mut w = Vec::new();
+        let theme = Theme::from_config(&palette, &ThemeOverrides::default(), &headings, &mut w);
+        assert_eq!(theme.headings.h1, Color::Rgb(0xaa, 0xbb, 0xcc),
+            "user [headings].h1 must override expansion h1");
+    }
+
+    #[test]
+    fn expanded_preset_italic_user_override_still_wins() {
+        let palette = Palette { preset: Some("catppuccin-mocha-expanded".into()), ..Default::default() };
+        let overrides = ThemeOverrides { italic_color: Some("#123456".into()), ..Default::default() };
+        let mut w = Vec::new();
+        let theme = Theme::from_config(&palette, &overrides, &HeadingColors::default(), &mut w);
+        assert_eq!(theme.italic_color, Color::Rgb(0x12, 0x34, 0x56),
+            "[theme] italic_color must override expansion italic");
     }
 }

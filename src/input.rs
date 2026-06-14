@@ -40,7 +40,7 @@ pub(super) enum KeyOutcome {
     Save,
     /// ExitPrompt Y: persist buffer to disk, then exit the loop.
     SaveAndExit,
-    /// ExitPrompt N / Ctrl+X on a clean buffer: exit without saving.
+    /// ExitPrompt N / Ctrl+Q on a clean buffer: exit without saving.
     Exit,
     /// Ctrl+R: reload config from disk and redisplay a confirmation banner.
     ReloadConfig,
@@ -219,7 +219,7 @@ pub(super) fn is_ro_allowed(mods: KeyModifiers, code: KeyCode) -> bool {
         )
         // ── Exit ─────────────────────────────────────────────────────────────
         | (KeyModifiers::NONE, KeyCode::Esc)
-        | (KeyModifiers::CONTROL, KeyCode::Char('x'))
+        | (KeyModifiers::CONTROL, KeyCode::Char('q'))
         // ── Copy (not paste) ─────────────────────────────────────────────────
         | (KeyModifiers::CONTROL, KeyCode::Char('c'))
         | (KeyModifiers::SUPER, KeyCode::Char('c'))
@@ -559,7 +559,7 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
     if matches!(app.status.mode, StatusMode::ExitPrompt) {
         // Guard the destructive y/n responses: Ctrl+Y must not trigger SaveAndExit
         // and Ctrl+N must not trigger Exit.  Other modifier+char combos (Ctrl+C,
-        // Ctrl+X …) still pass through so they continue to act as cancel shortcuts.
+        // Ctrl+Q …) still pass through so they continue to act as cancel shortcuts.
         if has_ctrl_alt_super(k.modifiers)
             && matches!(k.code, KeyCode::Char('y') | KeyCode::Char('n'))
         {
@@ -576,11 +576,7 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
                 }
             }
             KeyCode::Char('n') | KeyCode::Char('N') => KeyOutcome::Exit,
-            KeyCode::Esc
-            | KeyCode::Char('c')
-            | KeyCode::Char('C')
-            | KeyCode::Char('x')
-            | KeyCode::Char('X') => {
+            KeyCode::Esc | KeyCode::Char('c') | KeyCode::Char('C') => {
                 app.status.mode = StatusMode::Normal;
                 KeyOutcome::Continue
             }
@@ -636,7 +632,7 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
     // ── Read-only guard ─────────────────────────────────────────────────────
     if app.read_only && !is_ro_allowed(k.modifiers, k.code) {
         app.status
-            .set_timed("Read-only — ^X to exit", Duration::from_secs(2));
+            .set_timed("Read-only — ^Q to quit", Duration::from_secs(2));
         return KeyOutcome::Continue;
     }
 
@@ -685,7 +681,7 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
             KeyOutcome::Continue
         }
 
-        (KeyModifiers::CONTROL, KeyCode::Char('x')) | (KeyModifiers::NONE, KeyCode::Esc) => {
+        (KeyModifiers::CONTROL, KeyCode::Char('q')) | (KeyModifiers::NONE, KeyCode::Esc) => {
             if handle_exit(app) {
                 KeyOutcome::Exit
             } else {
@@ -695,6 +691,13 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
 
         (KeyModifiers::CONTROL, KeyCode::Char('c')) | (KeyModifiers::SUPER, KeyCode::Char('c')) => {
             yame::clipboard::handle_copy(app);
+            KeyOutcome::Continue
+        }
+
+        (KeyModifiers::CONTROL, KeyCode::Char('x')) | (KeyModifiers::SUPER, KeyCode::Char('x')) => {
+            yame::clipboard::handle_cut(app);
+            app.force_redecorate = true;
+            app.recompute_dirty();
             KeyOutcome::Continue
         }
 
@@ -2241,18 +2244,41 @@ mod tests {
         );
     }
 
-    // Kills :238:9 (delete Ctrl+X arm — falls to `_` → textarea input, Continue).
+    // Kills: delete Ctrl+Q arm — falls to `_` → textarea input, Continue.
     #[test]
-    fn ctrl_x_on_clean_file_returns_exit() {
+    fn ctrl_q_on_clean_file_returns_exit() {
         let mut app = make_app();
         // is_dirty=false (default make_app) → handle_exit returns true → Exit.
         assert_eq!(
             handle_key_event(
                 &mut app,
-                KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL)
+                KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL)
             ),
             KeyOutcome::Exit,
-            "Ctrl+X on a clean file must return Exit"
+            "Ctrl+Q on a clean file must return Exit"
+        );
+    }
+
+    // Kills: delete Ctrl+X cut arm — falls to `_` → textarea inserts 'x', Continue.
+    #[test]
+    fn ctrl_x_cuts_and_returns_continue() {
+        let mut app = make_app();
+        app.textarea = tui_textarea::TextArea::new(vec!["hello world".to_string()]);
+        // Select "hello".
+        app.textarea.move_cursor(CursorMove::Head);
+        app.textarea.start_selection();
+        for _ in 0..5 {
+            app.textarea.move_cursor(CursorMove::Forward);
+        }
+        let outcome = handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(outcome, KeyOutcome::Continue, "Ctrl+X cut must return Continue");
+        // The selection ("hello") should have been deleted.
+        assert!(
+            !app.textarea.lines()[0].contains("hello"),
+            "Ctrl+X must delete the selected text"
         );
     }
 
@@ -2679,19 +2705,19 @@ mod tests {
         );
     }
 
-    // Exit key (Ctrl+X) must still work in read-only mode.
+    // Quit key (Ctrl+Q) must still work in read-only mode.
     #[test]
-    fn read_only_allows_exit_key() {
+    fn read_only_allows_quit_key() {
         let mut app = make_app();
         app.read_only = true;
         let outcome = handle_key_event(
             &mut app,
-            KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL),
+            KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL),
         );
         assert_eq!(
             outcome,
             KeyOutcome::Exit,
-            "Ctrl+X must still exit in read-only mode"
+            "Ctrl+Q must still quit in read-only mode"
         );
     }
 

@@ -7,12 +7,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 ### Added
+- feat: named palette presets — `preset = "dracula"` (or `catppuccin-latte`, `nord`, `gruvbox-dark`, `solarized-dark`, `solarized-light`, `tokyo-night`, `rose-pine`, `rose-pine-moon`, `rose-pine-dawn`, `github-light`, and all four Catppuccin variants) under `[palette]`; individual color fields still override the preset; append `-expanded` for rainbow headings and a per-theme italic tint (#150, #193)
+- feat: Ctrl+Q quit, Ctrl+X cut — full cut/copy/paste trio; Esc remains a secondary quit (#192)
 - feat: Ctrl+I insert fenced code block (#186)
 - feat: empty buffer mode — `yame` with no arguments opens an untitled buffer; Ctrl+S prompts for a filename (save-as); exit prompt also routes through save-as for untitled buffers (#152)
 - feat: Ctrl+O file picker — suspends TUI, runs `$YAME_PICKER` (or auto-detects lf / fzf), loads selected file; dirty-buffer guard asks before discarding; file switching resets all per-file state (#151, #189)
 - feat: `yame --preview <file>` — headless ANSI render for lf/file-manager previewers; respects `$COLUMNS`; full decoration and syntax-highlight pipeline; bg colours suppressed for clean integration (#190)
 
 ### Changed
+- docs: remove bat companion — yame --preview covers all file types (#196)
+- docs: Windows install script (install.ps1) (#195)
+- docs: _info/ rewrite + README update (SETUP, FRIENDS, THEMES, SCRIPTS, NERD-FONTS, install.sh, README) (#194)
+- feat: palette preset expansions (rainbow headings, italic) + Rose Pine + GitHub Light (#193)
+- Theme system: named preset themes (Catppuccin variants, Solarized, Dracula, etc.) (#150)
+- refactor: Ctrl+Q quit, Ctrl+X cut — free Ctrl+X from exit for standard cut/copy/paste trio (#192)
 - chore: migrate tui-textarea → tui-textarea-2, bump crossterm 0.28 → 0.29 (#184)
 - refactor: split decoration/mod.rs into focused submodules (#181)
 - chore: v0.2.1 version bump (#188)

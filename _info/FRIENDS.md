@@ -1,21 +1,16 @@
-# Friends of `yame`
+# Friends of yame
 
-While `yame` works perfectly fine on its own, it integrates with several optional terminal tools.
+yame works on its own, but several terminal tools expand what it can do. None of these are required.
 
 ---
 
-## 1. `fd` and `fzf` (Fuzzy Search & File Opening)
+## fd and fzf — Fuzzy File Finding
 
-### Why you want this:
-`yame` can use `fd` (a fast directory search tool) and `fzf` (a command-line fuzzy finder). 
+**What they add:** The `yame init` shell wrapper (see [SETUP.md](SETUP.md)) uses `fd` and `fzf` so that `yame <term>` fuzzy-searches by filename and `yame` (no argument) fuzzy-finds Markdown files in the current directory.
 
-When these tools are installed:
+Without the shell wrapper, `yame` with no argument opens an untitled buffer instead.
 
-* Running `yame` with no arguments opens a list of all Markdown files in the current folder.
-* Typing `yame my-file` searches for files containing "my-file" and opens the closest match.
-* You can fuzzy-filter through your files interactively inside the terminal.
-
-### How to install:
+### Install
 
 #### macOS (Homebrew)
 
@@ -23,13 +18,19 @@ When these tools are installed:
 brew install fd fzf
 ```
 
-#### Linux (Debian/Ubuntu)
+#### Linux (Debian / Ubuntu)
 
 ```sh
 sudo apt install fd-find fzf
 ```
 
-*(Note: Debian-based systems install `fd` as `fdfind`. The shell integration automatically handles this mapping.)*
+> **Note:** Debian-based systems install `fd` as `fdfind`. The `yame init` shell wrapper handles this automatically — you don't need to alias it yourself.
+
+#### Linux (Arch)
+
+```sh
+sudo pacman -S fd fzf
+```
 
 #### Windows (Winget)
 
@@ -40,13 +41,14 @@ winget install junegunn.fzf
 
 ---
 
-## 2. `lf` (File Manager)
+## lf — File Manager + Ctrl+O Picker
 
-### Why you want this:
+**What it adds:** `lf` is a fast terminal file manager. yame integrates with it in two ways:
 
-`lf` (List Files) is a fast, terminal-based file manager. Since `yame` does not include a built-in file tree or directory sidebar, running `lf` as a file manager allows `yame` to browse and open files interactively.
+1. **`Ctrl+O` inside yame** — if lf is installed, pressing `Ctrl+O` suspends the editor, opens lf, and loads the file you select. No config needed; it just works.
+2. **`yame --preview` in lf** — yame serves as lf's file previewer for all file types: Markdown gets full live decoration, and everything else gets syntect syntax highlighting (150+ languages). No separate previewer tool needed.
 
-### How to install:
+### Install
 
 #### macOS (Homebrew)
 
@@ -54,10 +56,16 @@ winget install junegunn.fzf
 brew install lf
 ```
 
-#### Linux (Debian/Ubuntu)
+#### Linux (Debian / Ubuntu)
 
 ```sh
 sudo apt install lf
+```
+
+#### Linux (Arch)
+
+```sh
+sudo pacman -S lf
 ```
 
 #### Windows (Winget)
@@ -66,27 +74,35 @@ sudo apt install lf
 winget install gokcehan.lf
 ```
 
----
+### Configure lf to use yame
 
-## 3. `bat` (Syntax-Highlighting File Previewer)
+Add to `~/.config/lf/lfrc`:
 
-### Why you want this:
-
-`bat` is a clone of the classic `cat` command that supports syntax highlighting, Git modifications, and automatic paging. `yame` uses it with `lf` to make the file previews while you're browsing pretty!
-
-### How to install:
-
-#### macOS (Homebrew)
 ```sh
-brew install bat
+# Open files with yame
+cmd open $yame "$f"
+
+# Use yame --preview for all files
+set previewer ~/.config/lf/preview
 ```
 
-#### Linux (Debian/Ubuntu)
+Create `~/.config/lf/preview` (make it executable with `chmod +x`):
+
 ```sh
-sudo apt install bat
+#!/usr/bin/env bash
+COLUMNS="$2" yame --preview "$1"
 ```
 
-#### Windows (Winget)
-```powershell
-winget install sharkdp.bat
+> `$2` passes lf's preview pane width to yame so it wraps at the right column.
+
+### Custom picker via $YAME_PICKER
+
+If you want `Ctrl+O` to use something other than lf or fzf, set `YAME_PICKER` to a shell command that prints a file path to stdout:
+
+```sh
+# In your .zshrc / .bashrc
+export YAME_PICKER='fzf --preview "head -20 {}"'
 ```
+
+The command runs in a subshell (`sh -c`). Whatever it prints on the first non-empty line becomes the path yame opens.
+
