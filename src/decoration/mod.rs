@@ -958,12 +958,7 @@ mod tests {
         let map = build_map(text, &theme, true);
         let spans = map.get(&0).expect("line 0 should have spans");
         let has_delim = spans.iter().any(|s| s.char_start == 0 && s.char_end == 2);
-        let has_content = spans.iter().any(|s| s.char_start == 2);
         assert!(has_delim, "H1 should have a delimiter span at 0..2");
-        assert!(
-            has_content,
-            "H1 should have a content span starting at char 2"
-        );
         let delim_span = spans
             .iter()
             .find(|s| s.char_start == 0 && s.char_end == 2)
@@ -1047,6 +1042,8 @@ mod tests {
 
     #[test]
     fn heading_delimiter_style_differs_from_content() {
+        // The wide content span was removed (fix for #206); heading content color
+        // now lives in `line_default_style` on the delimiter span.
         let text = "# Hello";
         let theme = make_theme();
         let map = build_map(text, &theme, true);
@@ -1055,12 +1052,14 @@ mod tests {
             .iter()
             .find(|s| s.char_start == 0 && s.char_end == 2)
             .expect("H1 delimiter span (0..2) must exist");
-        let content = spans
+        let content_fg = spans
             .iter()
-            .find(|s| s.char_start == 2)
-            .expect("H1 content span must start at char 2");
+            .find_map(|s| s.line_default_style)
+            .and_then(|s| s.fg)
+            .expect("H1 must have line_default_style with fg set");
         assert_ne!(
-            delim.style.fg, content.style.fg,
+            delim.style.fg,
+            Some(content_fg),
             "delimiter fg must be blended (different from content fg)"
         );
         assert!(
@@ -1070,29 +1069,111 @@ mod tests {
     }
 
     #[test]
-    fn heading_content_span_char_end_reaches_line_end() {
+    fn heading_h1_line_default_style_fg_is_h1_color() {
+        // Wide content span removed (#206); heading fg lives in line_default_style
+        // on the delimiter span so the renderer can colour unstyled heading text
+        // without blocking inline decorations.
         let text = "# Hello";
-        let map = build_map(text, &make_theme(), true);
+        let theme = make_theme();
+        let map = build_map(text, &theme, true);
         let spans = map.get(&0).expect("line 0 should have spans");
-        let content = spans
+        let lds = spans
             .iter()
-            .find(|s| s.char_start == 2)
-            .expect("H1 content span must start at char 2");
-        assert_eq!(content.char_end, 7, "H1 content span char_end must reach 7");
+            .find_map(|s| s.line_default_style)
+            .expect("H1 delimiter span must carry line_default_style");
+        assert_eq!(
+            lds.fg,
+            Some(theme.headings.h1),
+            "H1 line_default_style.fg must be headings.h1 color"
+        );
     }
 
     #[test]
-    fn heading_content_span_has_own_border_bottom() {
+    fn heading_h1_line_default_style_is_bold() {
+        // H1 and H2 content is bold; line_default_style must carry BOLD so that
+        // the renderer applies it to unstyled heading text.
         let text = "# Hello";
         let map = build_map(text, &make_theme(), true);
         let spans = map.get(&0).expect("line 0 should have spans");
-        let content = spans
+        let lds = spans
             .iter()
-            .find(|s| s.char_start == 2)
-            .expect("H1 content span must start at char 2");
+            .find_map(|s| s.line_default_style)
+            .expect("H1 delimiter span must carry line_default_style");
         assert!(
-            content.border_bottom.is_some(),
-            "H1 content span must have border_bottom set"
+            lds.add_modifier.contains(Modifier::BOLD),
+            "H1 line_default_style must carry BOLD modifier"
+        );
+    }
+
+    // ---- Heading span structure (post-#206 fix) ----
+    //
+    // The wide heading content span (char delim_end..line_len) was removed so
+    // inline decorations (code, bold, italic, links) can emit their own spans
+    // inside headings without being blocked.  The heading color + BOLD live in
+    // `line_default_style` on the delimiter span; the renderer uses it as the
+    // default style for unstyled gaps on the line.
+
+    #[test]
+    fn heading_h1_no_wide_content_span() {
+        // No span starting at char 2 (the old content span start for H1).
+        // Its absence is what allows inline decorations to show through.
+        let text = "# Hello";
+        let map = build_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        assert!(
+            !spans.iter().any(|s| s.char_start == 2),
+            "H1 must not have a wide content span starting at char 2 (would block inline decs)"
+        );
+    }
+
+    #[test]
+    fn heading_inline_code_uses_code_color() {
+        // Regression guard for #206: inline code inside a heading must produce a
+        // span with code_color.  Before the fix the wide content span blocked all
+        // code spans, making backtick code render identically to plain heading text.
+        let text = "# Heading with `code` inside";
+        let theme = make_theme();
+        let map = build_map(text, &theme, true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        assert!(
+            spans.iter().any(|s| s.style.fg == Some(theme.code_color)),
+            "inline code inside a heading must produce a span with code_color; \
+             got: {spans:?}"
+        );
+    }
+
+    #[test]
+    fn heading_inline_bold_uses_bold_color() {
+        // Regression guard for #206: bold inside a heading must produce a span with
+        // bold_color + BOLD.  The wide content span previously blocked it.
+        let text = "# Heading **bold** text";
+        let theme = make_theme();
+        let map = build_map(text, &theme, true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        assert!(
+            spans.iter().any(|s| s.style.fg == Some(theme.bold_color)
+                && s.style.add_modifier.contains(Modifier::BOLD)),
+            "bold inside a heading must produce a bold_color + BOLD span; got: {spans:?}"
+        );
+    }
+
+    #[test]
+    fn heading_inline_code_uses_heading_bg_not_code_bg() {
+        // Inline code inside a heading should use heading_bg as its cell background
+        // (from in_heading_bg context), not code_bg, so it doesn't punch through
+        // the heading stripe.
+        let text = "# Heading with `code`";
+        let theme = make_theme();
+        let map = build_map(text, &theme, true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        assert!(
+            !spans.iter().any(|s| s.style.bg == Some(theme.code_bg)),
+            "code inside a heading must not use code_bg; got: {spans:?}"
+        );
+        assert!(
+            spans.iter().any(|s| s.style.fg == Some(theme.code_color)
+                && s.style.bg == Some(theme.heading_bg)),
+            "code inside a heading must use code_color fg and heading_bg bg; got: {spans:?}"
         );
     }
 
@@ -2408,12 +2489,12 @@ mod tests {
         let theme = make_theme();
         let map = build_map(text, &theme, false);
         let spans = map.get(&0).expect("line 0 must have spans");
-        let content = spans
+        let lds = spans
             .iter()
-            .find(|s| s.char_start == 2)
-            .expect("H1 content span must start at char 2");
+            .find_map(|s| s.line_default_style)
+            .expect("H1 must have line_default_style");
         assert_eq!(
-            content.style.fg,
+            lds.fg,
             Some(theme.headings.h1),
             "H1 content must use headings.h1 color"
         );
@@ -2425,12 +2506,12 @@ mod tests {
         let theme = make_theme();
         let map = build_map(text, &theme, false);
         let spans = map.get(&0).expect("line 0 must have spans");
-        let content = spans
+        let lds = spans
             .iter()
-            .find(|s| s.char_start == 3)
-            .expect("H2 content span must start at char 3");
+            .find_map(|s| s.line_default_style)
+            .expect("H2 must have line_default_style");
         assert_eq!(
-            content.style.fg,
+            lds.fg,
             Some(theme.headings.h2),
             "H2 content must use headings.h2 color"
         );
@@ -2442,12 +2523,12 @@ mod tests {
         let theme = make_theme();
         let map = build_map(text, &theme, false);
         let spans = map.get(&0).expect("line 0 must have spans");
-        let content = spans
+        let lds = spans
             .iter()
-            .find(|s| s.char_start == 4)
-            .expect("H3 content span must start at char 4");
+            .find_map(|s| s.line_default_style)
+            .expect("H3 must have line_default_style");
         assert_eq!(
-            content.style.fg,
+            lds.fg,
             Some(theme.headings.h3),
             "H3 content must use headings.h3 color"
         );
@@ -2618,27 +2699,19 @@ mod tests {
     // ---- T-1: Heading content span carries full_line_bg ----
 
     #[test]
-    fn heading_content_span_has_full_line_bg() {
-        // Kills: line 350 `delete field full_line_bg from struct StyledSpan`
-        // The content span after the `# ` prefix must carry heading_bg so the
-        // rest of the line gets the heading background in the renderer.
-        let text = "# Hello";
-        let theme = make_theme();
-        let map = build_map(text, &theme, false);
+    fn heading_h3_line_default_style_not_bold() {
+        // H3–H6 content is not bold; line_default_style must NOT carry BOLD.
+        // Also verifies that line_default_style is set for all heading levels.
+        let text = "### Hello";
+        let map = build_map(text, &make_theme(), false);
         let spans = map.get(&0).expect("line 0 must have spans");
-        // The content span starts at char 2 (after "# ").
-        let content = spans
+        let lds = spans
             .iter()
-            .find(|s| s.char_start == 2)
-            .expect("heading content span must start at char 2");
+            .find_map(|s| s.line_default_style)
+            .expect("H3 must have line_default_style");
         assert!(
-            content.full_line_bg.is_some(),
-            "heading content span must carry full_line_bg; got: {content:?}"
-        );
-        assert_eq!(
-            content.full_line_bg,
-            Some(theme.heading_bg),
-            "heading content full_line_bg must equal theme.heading_bg"
+            !lds.add_modifier.contains(Modifier::BOLD),
+            "H3 line_default_style must NOT carry BOLD modifier; got: {lds:?}"
         );
     }
 

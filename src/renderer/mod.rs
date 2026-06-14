@@ -412,6 +412,7 @@ impl Widget for MarkdownView<'_> {
                                 full_line_bg: s.full_line_bg,
                                 border_bottom: s.border_bottom,
                                 is_rule: s.is_rule,
+                                line_default_style: s.line_default_style,
                             })
                             .collect()
                     })
@@ -523,8 +524,15 @@ impl Widget for MarkdownView<'_> {
                     let is_blockquote_line = line_decs
                         .map(|decs| decs.iter().any(|s| s.is_blockquote))
                         .unwrap_or(false);
+                    // Heading lines carry `line_default_style` on their delimiter span
+                    // instead of emitting a wide content span that would block inline
+                    // decorations.  Read from `line_decs` so continuation rows inherit it.
+                    let heading_default = line_decs
+                        .and_then(|decs| decs.iter().find_map(|s| s.line_default_style));
                     let row_default = if is_blockquote_line {
                         Style::default().fg(self.theme.blockquote_color).bg(line_bg)
+                    } else if let Some(hd) = heading_default {
+                        hd.bg(line_bg)
                     } else {
                         default_style.bg(line_bg)
                     };

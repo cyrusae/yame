@@ -32,6 +32,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - chore: v0.2.1 version bump (#188)
 
 ### Fixed
+- fix: wide heading content span blocks all inline decorations (code, bold, italic, links) (#206)
+- fix: inline code in headings should use code color but heading background, not code background (#198)
 - fix: blockquote default fg color missing in --preview (#205)
 - fix: backtick appears in info line wordcount area at position 0,0 (#204)
 - fix: --preview COLUMNS wrap + startup flash on lf open (#202)

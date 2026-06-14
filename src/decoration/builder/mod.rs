@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag, TagEnd};
+use ratatui::style::Color;
 
 use crate::config::Theme;
 use crate::decoration::frontmatter::{apply_frontmatter_spans, detect_frontmatter};
@@ -41,6 +42,7 @@ pub(crate) struct BuildState<'a> {
     pub in_emphasis: Option<std::ops::Range<usize>>,
     pub in_table_head: Option<std::ops::Range<usize>>,
     pub code_block_lines: HashSet<usize>,
+    pub in_heading_bg: Option<Color>,
 }
 
 impl<'a> BuildState<'a> {
@@ -63,6 +65,7 @@ impl<'a> BuildState<'a> {
             in_emphasis: None,
             in_table_head: None,
             code_block_lines: HashSet::new(),
+            in_heading_bg: None,
         }
     }
 }
@@ -94,6 +97,9 @@ pub fn build_decoration_map(
             // ---- a. Headings ----
             Event::Start(Tag::Heading { level, .. }) => {
                 headings::on_start(&mut s, level, range);
+            }
+            Event::End(TagEnd::Heading(_)) => {
+                headings::on_end(&mut s);
             }
 
             // ---- b. Bold ----

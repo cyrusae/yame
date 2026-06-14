@@ -55,7 +55,10 @@ pub(super) fn on_start(s: &mut BuildState, level: HeadingLevel, range: std::ops:
     let line_len = line_char_len(&s.line_starts, s.text, start_line);
     let delim_end = (start_char + delim_chars).min(line_len);
 
-    // Delimiter span (`#`s + space).
+    // Delimiter span (`#`s + space).  Carries `full_line_bg`, `border_bottom`,
+    // and `line_default_style` so the renderer can correctly colour unstyled
+    // heading text without emitting a wide content span that would block inline
+    // decorations (code, bold, italic, links) from rendering.
     push_heading_delimiter_span(
         &mut s.map,
         start_line,
@@ -64,23 +67,14 @@ pub(super) fn on_start(s: &mut BuildState, level: HeadingLevel, range: std::ops:
         delim_style,
         s.theme.heading_bg,
         border_bottom,
+        content_style,
     );
 
-    // Content span (heading text after the `# ` prefix).
-    if delim_end < line_len {
-        push_span(
-            &mut s.map,
-            start_line,
-            StyledSpan {
-                char_start: delim_end,
-                char_end: line_len,
-                style: content_style,
-                full_line_bg: Some(s.theme.heading_bg),
-                border_bottom,
-                ..Default::default()
-            },
-        );
-    }
+    s.in_heading_bg = Some(s.theme.heading_bg);
+}
+
+pub(super) fn on_end(s: &mut BuildState) {
+    s.in_heading_bg = None;
 }
 
 /// Push the heading `#`-delimiter span, guarding against zero-length spans.
@@ -92,6 +86,7 @@ pub(super) fn on_start(s: &mut BuildState, level: HeadingLevel, range: std::ops:
 /// - `char_start: start_char` delete is skipped: for all standard headings
 ///   `start_char == 0`, equalling `Default::default()`, so the mutation is
 ///   behaviourally undetectable.
+#[allow(clippy::too_many_arguments)]
 #[mutants::skip]
 fn push_heading_delimiter_span(
     map: &mut DecorationMap,
@@ -101,6 +96,7 @@ fn push_heading_delimiter_span(
     style: Style,
     heading_bg: Color,
     border_bottom: Option<Color>,
+    line_default_style: Style,
 ) {
     if delim_end > start_char {
         push_span(
@@ -112,6 +108,7 @@ fn push_heading_delimiter_span(
                 style,
                 full_line_bg: Some(heading_bg),
                 border_bottom,
+                line_default_style: Some(line_default_style),
                 ..Default::default()
             },
         );

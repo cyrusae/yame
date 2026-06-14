@@ -193,7 +193,8 @@ pub(super) fn on_code(s: &mut BuildState, val: &CowStr, range: std::ops::Range<u
     s.word_count += val.split_whitespace().count();
     let (start_line, start_char) = byte_to_line_char(&s.line_starts, s.text, range.start);
     let (end_line, end_char_excl) = byte_to_line_char(&s.line_starts, s.text, range.end);
-    let code_style = Style::default().fg(s.theme.code_color).bg(s.theme.code_bg);
+    let bg = s.in_heading_bg.unwrap_or(s.theme.code_bg);
+    let code_style = Style::default().fg(s.theme.code_color).bg(bg);
     // Backtick delimiters blend toward muted (same standard as `*`, `[]()` etc.)
     let delim_style = Style::default()
         .fg(blend_colors(
@@ -201,7 +202,7 @@ pub(super) fn on_code(s: &mut BuildState, val: &CowStr, range: std::ops::Range<u
             s.theme.muted,
             s.theme.delimiter_blend,
         ))
-        .bg(s.theme.code_bg);
+        .bg(bg);
 
     if start_line == end_line {
         // Count the opening backtick run so we can split delimiters from content.
