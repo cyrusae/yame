@@ -2,7 +2,7 @@
 
 **Yet Another Markdown Editor** — a lightweight terminal editor for Markdown files.
 
-The goal is something meaningfully lighter than VS Code for editing READMEs, notes, and CLAUDE.mds, while being more capable than nano for Markdown specifically. 
+The goal is something meaningfully lighter than VS Code for editing READMEs, notes, and documentation, while being more capable than nano for Markdown specifically. 
 
 It can also be used as a distraction-free text editor!
 
@@ -53,7 +53,7 @@ cargo install --path .
 
 ### Platform support
 
-Tested on macOS. Should work on Linux and Windows; untested. Issues and pull requests welcome.
+Tested on macOS and Linux. Should work on Windows; untested. Issues and pull requests welcome.
 
 ---
 
@@ -109,7 +109,7 @@ Without `fd`, replace `fd --type f --extension md` with `find . -name "*.md"`.
 ## Keybindings
 
 | Key | Action |
-|-----|--------|
+| --- | --- |
 | `Ctrl+S` | Save |
 | `Ctrl+Q` · `Esc` | Quit (prompts if unsaved changes) |
 | `Ctrl+Z` | Undo |

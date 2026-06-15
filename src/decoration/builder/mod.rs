@@ -124,6 +124,9 @@ pub fn build_decoration_map(
             // ---- g. Links ----
             Event::Start(Tag::Link { .. }) => misc::on_link(&mut s, range),
 
+            // ---- h. Images ----
+            Event::Start(Tag::Image { .. }) => misc::on_image(&mut s, range),
+
             // ---- h. List items ----
             Event::Start(Tag::List(kind)) => blocks::on_list_start(&mut s, kind),
             Event::End(TagEnd::List(_)) => blocks::on_list_end(&mut s),

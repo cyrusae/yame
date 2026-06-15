@@ -2332,6 +2332,109 @@ mod tests {
         );
     }
 
+    // ---- Image ASCII exact span positions ----
+    //
+    // `![hi](img)` — chars: ! [ h i ] ( i m g )
+    //                idx:   0 1 2 3 4 5 6 7 8 9
+    // split_idx = 4 (position of `]`).
+    //
+    // Kills the arithmetic in Event::Start(Tag::Image{..}):
+    //   · `start_char + 2`         → alt text start (after ![)
+    //   · `start_char + split_idx` → ]( start
+    //   · `+ 2` in path_start      → path start (after ](])
+    //   · `end_char_excl - 1`      → closing ) start
+
+    #[test]
+    fn image_ascii_bang_bracket_delimiter_is_at_zero_to_two() {
+        // "![hi](img)" — opening ![ at chars 0..2.
+        let text = "![hi](img)";
+        let map = build_map(text, &make_theme(), false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        assert!(
+            spans.iter().any(|s| s.char_start == 0 && s.char_end == 2),
+            "opening ![ must be at chars 0..2; got: {spans:?}"
+        );
+    }
+
+    #[test]
+    fn image_ascii_alt_span_is_link_text_color_at_two_to_four() {
+        // "![hi](img)" — alt text "hi" at chars 2..4 with link_text color.
+        let text = "![hi](img)";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        let alt_span = spans
+            .iter()
+            .find(|s| s.char_start == 2 && s.char_end == 4)
+            .expect("alt text 'hi' must be at chars 2..4");
+        assert_eq!(
+            alt_span.style.fg,
+            Some(theme.link_text),
+            "alt text must use link_text color; got: {alt_span:?}"
+        );
+    }
+
+    #[test]
+    fn image_ascii_bracket_paren_delimiter_is_at_four_to_six() {
+        // "![hi](img)" — ]( delimiter at chars 4..6.
+        let text = "![hi](img)";
+        let map = build_map(text, &make_theme(), false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        assert!(
+            spans.iter().any(|s| s.char_start == 4 && s.char_end == 6),
+            "]( delimiter must be at chars 4..6; got: {spans:?}"
+        );
+    }
+
+    #[test]
+    fn image_ascii_path_span_is_underlined_at_six_to_nine() {
+        // "![hi](img)" — path "img" at chars 6..9 with UNDERLINED.
+        let text = "![hi](img)";
+        let theme = make_theme();
+        let map = build_map(text, &theme, false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        let path_span = spans
+            .iter()
+            .find(|s| s.char_start == 6 && s.char_end == 9)
+            .expect("path 'img' must be at chars 6..9");
+        assert!(
+            path_span.style.add_modifier.contains(Modifier::UNDERLINED),
+            "path span must be UNDERLINED; got: {path_span:?}"
+        );
+        assert_eq!(
+            path_span.style.fg,
+            Some(theme.link_url),
+            "path span must use link_url color; got: {path_span:?}"
+        );
+    }
+
+    #[test]
+    fn image_ascii_closing_paren_is_at_nine_to_ten() {
+        // "![hi](img)" — closing ) at chars 9..10.
+        let text = "![hi](img)";
+        let map = build_map(text, &make_theme(), false);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        assert!(
+            spans.iter().any(|s| s.char_start == 9 && s.char_end == 10),
+            "closing ) must be at chars 9..10; got: {spans:?}"
+        );
+    }
+
+    #[test]
+    fn image_path_has_italic_when_italic_support_enabled() {
+        // "![hi](img)" — path must be ITALIC when italic_support is true.
+        let text = "![hi](img)";
+        let map = build_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 must have spans");
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.char_start == 6 && s.char_end == 9
+                    && s.style.add_modifier.contains(Modifier::ITALIC)),
+            "path must be ITALIC when italic_support=true; got: {spans:?}"
+        );
+    }
+
     // ---- Ordered list bullet char_end ----
     //
     // "1. item" — bullet spans chars 0..2 covering "1."
