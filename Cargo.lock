@@ -237,29 +237,8 @@ dependencies = [
 [[package]]
 name = "critical-section"
 version = "1.2.0"
-<<<<<<< HEAD
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
-=======
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
-
-[[package]]
-name = "crossterm"
-version = "0.28.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "829d955a0bb380ef178a640b91779e3987da38c9aea133b20614cfed8cdea9c6"
-dependencies = [
- "bitflags 2.13.0",
- "crossterm_winapi",
- "mio",
- "parking_lot",
- "rustix 0.38.44",
- "signal-hook",
- "signal-hook-mio",
- "winapi",
-]
->>>>>>> origin/main
 
 [[package]]
 name = "crossterm"
@@ -430,7 +409,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -470,7 +449,6 @@ dependencies = [
 ]
 
 [[package]]
-<<<<<<< HEAD
 name = "fancy-regex"
 version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -482,8 +460,6 @@ dependencies = [
 ]
 
 [[package]]
-=======
->>>>>>> origin/main
 name = "fast-srgb8"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -847,18 +823,6 @@ version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a860605968fce16869fd239cf4237a82f3ac470723415db603b0e8b6c8d4fb9"
 dependencies = [
-<<<<<<< HEAD
-=======
- "hashbrown 0.15.5",
-]
-
-[[package]]
-name = "lru"
-version = "0.18.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a860605968fce16869fd239cf4237a82f3ac470723415db603b0e8b6c8d4fb9"
-dependencies = [
->>>>>>> origin/main
  "hashbrown 0.17.1",
 ]
 
@@ -1351,30 +1315,6 @@ checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
 name = "ratatui"
 version = "0.30.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-<<<<<<< HEAD
-=======
-checksum = "eabd94c2f37801c20583fc49dd5cd6b0ba68c716787c2dd6ed18571e1e63117b"
-dependencies = [
- "bitflags 2.13.0",
- "cassowary",
- "compact_str 0.8.2",
- "crossterm 0.28.1",
- "indoc",
- "instability",
- "itertools 0.13.0",
- "lru 0.12.5",
- "paste",
- "strum 0.26.3",
- "unicode-segmentation",
- "unicode-truncate 1.1.0",
- "unicode-width 0.2.0",
-]
-
-[[package]]
-name = "ratatui"
-version = "0.30.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
->>>>>>> origin/main
 checksum = "1695748e3a735b34968c887ceea5a380b43545903868ae8f5b666593100f6b68"
 dependencies = [
  "instability",
@@ -1393,27 +1333,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42d3603f354bba8c595fa47860e60142d7372b7210c27044c6a7d0e1a4336b44"
 dependencies = [
  "bitflags 2.13.0",
-<<<<<<< HEAD
  "compact_str",
-=======
- "compact_str 0.9.1",
->>>>>>> origin/main
  "critical-section",
  "hashbrown 0.17.1",
  "indoc",
  "itertools",
  "kasuari",
-<<<<<<< HEAD
  "lru",
  "palette",
  "serde",
  "strum",
-=======
- "lru 0.18.0",
- "palette",
- "serde",
- "strum 0.28.0",
->>>>>>> origin/main
  "thiserror 2.0.18",
  "unicode-segmentation",
  "unicode-truncate",
@@ -1466,11 +1395,7 @@ dependencies = [
  "line-clipping",
  "ratatui-core",
  "serde",
-<<<<<<< HEAD
  "strum",
-=======
- "strum 0.28.0",
->>>>>>> origin/main
  "time",
  "unicode-segmentation",
  "unicode-width",
@@ -1525,22 +1450,6 @@ dependencies = [
 
 [[package]]
 name = "rustix"
-<<<<<<< HEAD
-=======
-version = "0.38.44"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fdb5bc1ae2baa591800df16c9ca78619bf65c0488b41b96ccec5d11220d8c154"
-dependencies = [
- "bitflags 2.13.0",
- "errno",
- "libc",
- "linux-raw-sys 0.4.15",
- "windows-sys 0.59.0",
-]
-
-[[package]]
-name = "rustix"
->>>>>>> origin/main
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6fe4565b9518b83ef4f91bb47ce29620ca828bd32cb7e408f0062e9930ba190"
@@ -1548,13 +1457,8 @@ dependencies = [
  "bitflags 2.13.0",
  "errno",
  "libc",
-<<<<<<< HEAD
  "linux-raw-sys",
  "windows-sys 0.61.2",
-=======
- "linux-raw-sys 0.12.1",
- "windows-sys 0.59.0",
->>>>>>> origin/main
 ]
 
 [[package]]
@@ -1726,42 +1630,13 @@ version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9628de9b8791db39ceda2b119bbe13134770b56c138ec1d3af810d045c04f9bd"
 dependencies = [
-<<<<<<< HEAD
  "strum_macros",
-=======
- "strum_macros 0.26.4",
-]
-
-[[package]]
-name = "strum"
-version = "0.28.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9628de9b8791db39ceda2b119bbe13134770b56c138ec1d3af810d045c04f9bd"
-dependencies = [
- "strum_macros 0.28.0",
->>>>>>> origin/main
 ]
 
 [[package]]
 name = "strum_macros"
 version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-<<<<<<< HEAD
-=======
-checksum = "4c6bee85a5a24955dc440386795aa378cd9cf82acd5f764469152d2270e581be"
-dependencies = [
- "heck",
- "proc-macro2",
- "quote",
- "rustversion",
- "syn 2.0.117",
-]
-
-[[package]]
-name = "strum_macros"
-version = "0.28.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
->>>>>>> origin/main
 checksum = "ab85eea0270ee17587ed4156089e10b9e6880ee688791d45a905f5b1ca36f664"
 dependencies = [
  "heck",
@@ -2311,7 +2186,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2535,11 +2410,7 @@ dependencies = [
  "fancy-regex 0.18.0",
  "mutants",
  "pulldown-cmark",
-<<<<<<< HEAD
  "ratatui",
-=======
- "ratatui 0.30.1",
->>>>>>> origin/main
  "serde",
  "syntect",
  "toml",

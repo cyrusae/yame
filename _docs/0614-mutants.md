@@ -7,3 +7,5 @@ TIMEOUT  src/renderer/mod.rs:89:22: replace == with != in wrap_line in 2s build 
 TIMEOUT  src/renderer/mod.rs:98:24: replace += with *= in wrap_line in 2s build + 60s test
 TIMEOUT  src/renderer/mod.rs:104:33: replace + with - in wrap_line in 3s build + 60s test
 TIMEOUT  src/renderer/mod.rs:104:33: replace + with * in wrap_line in 3s build + 60s test
+MISSED   src/search.rs:183:19: replace < with <= in SearchState::apply_replace_all in 2s build + 10s test
+MISSED   src/status.rs:73:28: replace < with <= in StatusLine::save_as_push in 2s build + 11s test
