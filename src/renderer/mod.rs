@@ -568,17 +568,19 @@ impl Widget for MarkdownView<'_> {
                 }
 
                 // Bottom border (H1–H3 heading underline, last visual row only).
-                // Starts after the gutter so the underline never bleeds into the
-                // line-number column.
+                // With line numbers: start after the gutter so the underline
+                // never bleeds into the number column.  Without line numbers:
+                // start at column 0 so the underline matches the heading bg.
                 if let Some(bc) = border_color
                     && is_last_wrap
                 {
                     use ratatui::layout::Rect as R;
+                    let ul_offset = if self.show_line_numbers { left_gutter } else { 0 };
                     buf.set_style(
                         R {
-                            x: area.x + left_gutter,
+                            x: area.x + ul_offset,
                             y,
-                            width: self.column_width.saturating_sub(left_gutter),
+                            width: self.column_width.saturating_sub(ul_offset),
                             height: 1,
                         },
                         Style::default()
