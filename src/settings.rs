@@ -63,13 +63,14 @@ pub const UNKNOWN_AS_OPTIONS: &[&str] = &["markdown", "plain"];
 // ---------------------------------------------------------------------------
 
 pub const APPEARANCE_CORE: &[FieldDef] = &[
-    FieldDef { label: "Preset",     kind: FieldKind::Cycler { options: PRESET_OPTIONS } },
-    FieldDef { label: "Text",       kind: FieldKind::HexColor },
-    FieldDef { label: "Accent",     kind: FieldKind::HexColor },
-    FieldDef { label: "Muted",      kind: FieldKind::HexColor },
-    FieldDef { label: "Code",       kind: FieldKind::HexColor },
-    FieldDef { label: "Background", kind: FieldKind::HexColor },
-    FieldDef { label: "Warning",    kind: FieldKind::HexColor },
+    FieldDef { label: "Preset",           kind: FieldKind::Cycler { options: PRESET_OPTIONS } },
+    FieldDef { label: "Rainbow headings", kind: FieldKind::Toggle },
+    FieldDef { label: "Text",             kind: FieldKind::HexColor },
+    FieldDef { label: "Accent",           kind: FieldKind::HexColor },
+    FieldDef { label: "Muted",            kind: FieldKind::HexColor },
+    FieldDef { label: "Code",             kind: FieldKind::HexColor },
+    FieldDef { label: "Background",       kind: FieldKind::HexColor },
+    FieldDef { label: "Warning",          kind: FieldKind::HexColor },
 ];
 
 // sentinel index: the "Show more…" / "Show less…" row
@@ -253,7 +254,21 @@ impl SettingsModal {
     /// boolean was toggled (i.e. the field is a `Toggle` kind).
     pub fn toggle_current(&mut self) -> bool {
         match self.tab {
-            0 => false, // no toggles in Appearance
+            0 => match self.field {
+                1 => {
+                    if let Some(preset) = &self.config.palette.preset.clone() {
+                        self.config.palette.preset = if preset.ends_with("-expanded") {
+                            Some(preset.trim_end_matches("-expanded").to_string())
+                        } else {
+                            Some(format!("{preset}-expanded"))
+                        };
+                        true
+                    } else {
+                        false // no preset active — nothing to expand
+                    }
+                }
+                _ => false,
+            }
             1 => {
                 match self.field {
                     0 => {
@@ -414,27 +429,8 @@ pub fn handle_settings_key(
     k: crossterm::event::KeyEvent,
     visible_rows: usize,
 ) -> SettingsOutcome {
-    // ── While editing / cycling a field ────────────────────────────────────
+    // ── While editing a text / number / color field ────────────────────────
     if modal.editing {
-        // Cycler activation mode: ←/→ step through options, anything else exits.
-        if modal.is_cycler_field() {
-            match (k.modifiers, k.code) {
-                (KeyModifiers::NONE, KeyCode::Left) => {
-                    let ok = modal.cycle_current(false);
-                    return if ok { SettingsOutcome::Committed } else { SettingsOutcome::Continue };
-                }
-                (KeyModifiers::NONE, KeyCode::Right) => {
-                    let ok = modal.cycle_current(true);
-                    return if ok { SettingsOutcome::Committed } else { SettingsOutcome::Continue };
-                }
-                _ => {
-                    modal.editing = false;
-                    return SettingsOutcome::Continue;
-                }
-            }
-        }
-
-        // Normal text / number / color edit mode.
         match (k.modifiers, k.code) {
             (KeyModifiers::NONE, KeyCode::Esc) => {
                 modal.cancel_editing();
@@ -466,16 +462,30 @@ pub fn handle_settings_key(
         (KeyModifiers::NONE, KeyCode::Esc)
         | (KeyModifiers::NONE, KeyCode::F(2)) => SettingsOutcome::Close,
 
-        // Tab navigation — Tab/←/→ cycle through tabs.
-        (KeyModifiers::NONE, KeyCode::Tab)
-        | (KeyModifiers::NONE, KeyCode::Right) => {
+        // Tab navigation — Tab always switches; ←/→ cycle on cycler fields, switch tab otherwise.
+        (KeyModifiers::NONE, KeyCode::Tab) => {
             modal.next_tab();
             SettingsOutcome::Continue
         }
-        (KeyModifiers::SHIFT, KeyCode::Tab)
-        | (KeyModifiers::NONE, KeyCode::Left) => {
+        (KeyModifiers::SHIFT, KeyCode::Tab) => {
             modal.prev_tab();
             SettingsOutcome::Continue
+        }
+        (KeyModifiers::NONE, KeyCode::Right) => {
+            if modal.is_cycler_field() {
+                if modal.cycle_current(true) { SettingsOutcome::Committed } else { SettingsOutcome::Continue }
+            } else {
+                modal.next_tab();
+                SettingsOutcome::Continue
+            }
+        }
+        (KeyModifiers::NONE, KeyCode::Left) => {
+            if modal.is_cycler_field() {
+                if modal.cycle_current(false) { SettingsOutcome::Committed } else { SettingsOutcome::Continue }
+            } else {
+                modal.prev_tab();
+                SettingsOutcome::Continue
+            }
         }
 
         // Field navigation
@@ -500,10 +510,13 @@ pub fn handle_settings_key(
                 return SettingsOutcome::Continue;
             }
 
-            // Cycler fields — Enter activates cycling mode (editing = true).
+            // Cycler fields — Enter/Space advance to next option.
             if modal.is_cycler_field() {
-                modal.editing = true;
-                return SettingsOutcome::Continue;
+                return if modal.cycle_current(true) {
+                    SettingsOutcome::Committed
+                } else {
+                    SettingsOutcome::Continue
+                };
             }
 
             // Boolean toggle fields
@@ -549,13 +562,17 @@ fn opt_or_resolved(v: &Option<String>, resolved: Color) -> String {
 
 fn appearance_core_value(cfg: &Config, resolved: &Theme, field: usize) -> String {
     match field {
-        0 => cfg.palette.preset.clone().unwrap_or_default(),
-        1 => opt_or_resolved(&cfg.palette.text,    resolved.text),
-        2 => opt_or_resolved(&cfg.palette.accent,  resolved.accent),
-        3 => opt_or_resolved(&cfg.palette.muted,   resolved.muted),
-        4 => opt_or_resolved(&cfg.palette.code,    resolved.code_color),
-        5 => opt_or_resolved(&cfg.palette.bg,      resolved.bg),
-        6 => opt_or_resolved(&cfg.palette.warning, resolved.warning),
+        0 => cfg.palette.preset.clone()
+                .map(|p| p.trim_end_matches("-expanded").to_string())
+                .unwrap_or_default(),
+        1 => bool_str(cfg.palette.preset.as_deref()
+                .is_some_and(|p| p.ends_with("-expanded"))),
+        2 => opt_or_resolved(&cfg.palette.text,    resolved.text),
+        3 => opt_or_resolved(&cfg.palette.accent,  resolved.accent),
+        4 => opt_or_resolved(&cfg.palette.muted,   resolved.muted),
+        5 => opt_or_resolved(&cfg.palette.code,    resolved.code_color),
+        6 => opt_or_resolved(&cfg.palette.bg,      resolved.bg),
+        7 => opt_or_resolved(&cfg.palette.warning, resolved.warning),
         _ => String::new(),
     }
 }
@@ -648,13 +665,27 @@ fn set_opt_hex(field: &mut Option<String>, v: &str) -> bool {
 
 fn commit_appearance_core(cfg: &mut Config, field: usize, v: &str) -> bool {
     match field {
-        0 => { cfg.palette.preset = if v.is_empty() { None } else { Some(v.to_string()) }; true }
-        1 => set_opt_hex(&mut cfg.palette.text, v),
-        2 => set_opt_hex(&mut cfg.palette.accent, v),
-        3 => set_opt_hex(&mut cfg.palette.muted, v),
-        4 => set_opt_hex(&mut cfg.palette.code, v),
-        5 => set_opt_hex(&mut cfg.palette.bg, v),
-        6 => set_opt_hex(&mut cfg.palette.warning, v),
+        0 => {
+            cfg.palette.preset = if v.is_empty() { None } else { Some(v.to_string()) };
+            // When a preset is chosen, clear individual overrides so the preset colors apply.
+            // (Individual fields win over the preset, so keeping them would make the cycle a no-op.)
+            if cfg.palette.preset.is_some() {
+                cfg.palette.text    = None;
+                cfg.palette.accent  = None;
+                cfg.palette.muted   = None;
+                cfg.palette.code    = None;
+                cfg.palette.bg      = None;
+                cfg.palette.warning = None;
+            }
+            true
+        }
+        1 => false, // Toggle — handled by toggle_current
+        2 => set_opt_hex(&mut cfg.palette.text, v),
+        3 => set_opt_hex(&mut cfg.palette.accent, v),
+        4 => set_opt_hex(&mut cfg.palette.muted, v),
+        5 => set_opt_hex(&mut cfg.palette.code, v),
+        6 => set_opt_hex(&mut cfg.palette.bg, v),
+        7 => set_opt_hex(&mut cfg.palette.warning, v),
         _ => false,
     }
 }
@@ -812,7 +843,7 @@ mod tests {
     fn commit_valid_hex_color_stores_value() {
         let mut m = make_modal();
         m.tab = 0;
-        m.field = 1; // text color
+        m.field = 2; // text color
         m.input_buf = "#ff0000".to_string();
         assert!(m.commit_input());
         assert_eq!(m.config.palette.text, Some("#ff0000".to_string()));
@@ -822,7 +853,7 @@ mod tests {
     fn commit_invalid_hex_color_returns_false() {
         let mut m = make_modal();
         m.tab = 0;
-        m.field = 1;
+        m.field = 2;
         m.input_buf = "notacolor".to_string();
         assert!(!m.commit_input());
         assert!(m.config.palette.text.is_none());
@@ -832,7 +863,7 @@ mod tests {
     fn commit_empty_hex_clears_option() {
         let mut m = make_modal();
         m.tab = 0;
-        m.field = 1;
+        m.field = 2;
         m.config.palette.text = Some("#ffffff".to_string());
         m.input_buf = String::new();
         assert!(m.commit_input());
@@ -865,7 +896,7 @@ mod tests {
     fn field_rgb_returns_resolved_default_when_config_unset() {
         let m = make_modal();
         // palette.text is None → falls back to resolved theme (Mocha text #cdd6f4)
-        let rgb = m.field_rgb(1);
+        let rgb = m.field_rgb(2);
         assert!(rgb.is_some(), "should show resolved default color");
         assert_eq!(rgb, Some((0xcd, 0xd6, 0xf4))); // Catppuccin Mocha text
     }
@@ -874,7 +905,7 @@ mod tests {
     fn field_rgb_returns_tuple_for_set_value() {
         let mut m = make_modal();
         m.config.palette.text = Some("#ff0000".to_string());
-        assert_eq!(m.field_rgb(1), Some((255, 0, 0)));
+        assert_eq!(m.field_rgb(2), Some((255, 0, 0)));
     }
 
     #[test]
@@ -1005,8 +1036,48 @@ mod tests {
     fn is_cycler_field_false_for_hex() {
         let mut m = make_modal();
         m.tab = 0;
-        m.field = 1; // Text color (HexColor)
+        m.field = 2; // Text color (HexColor)
         assert!(!m.is_cycler_field());
+    }
+
+    #[test]
+    fn rainbow_toggle_adds_expanded_suffix() {
+        let mut m = make_modal();
+        m.tab = 0;
+        m.field = 1;
+        m.config.palette.preset = Some("dracula".to_string());
+        assert!(m.toggle_current());
+        assert_eq!(m.config.palette.preset, Some("dracula-expanded".to_string()));
+    }
+
+    #[test]
+    fn rainbow_toggle_removes_expanded_suffix() {
+        let mut m = make_modal();
+        m.tab = 0;
+        m.field = 1;
+        m.config.palette.preset = Some("dracula-expanded".to_string());
+        assert!(m.toggle_current());
+        assert_eq!(m.config.palette.preset, Some("dracula".to_string()));
+    }
+
+    #[test]
+    fn rainbow_toggle_noop_when_no_preset() {
+        let mut m = make_modal();
+        m.tab = 0;
+        m.field = 1;
+        m.config.palette.preset = None;
+        assert!(!m.toggle_current());
+        assert_eq!(m.config.palette.preset, None);
+    }
+
+    #[test]
+    fn preset_cycler_strips_expanded_for_display() {
+        let mut m = make_modal();
+        m.tab = 0;
+        m.config.palette.preset = Some("nord-expanded".to_string());
+        assert_eq!(m.field_value(0), "nord");
+        // Rainbow toggle should read as on
+        assert_eq!(m.field_value(1), "on");
     }
 
     #[test]

@@ -1468,8 +1468,18 @@ where
                                     app.focus_mode = new_fm;
                                     app.read_only = new_ro;
                                     app.config_warnings = warnings;
-                                    app.last_keystroke = Some(std::time::Instant::now());
-                                    app.force_redecorate = true;
+                                    // Send a fresh decoration request immediately so the new
+                                    // theme is applied without waiting for the DEBOUNCE timer.
+                                    // We do NOT clear decoration_map or drain deco_rx — the
+                                    // worker's own "latest wins" drain handles rapid cycling,
+                                    // and clearing would cause a visible flash to unstyled text.
+                                    let _ = deco_tx.send(DecorateRequest {
+                                        text: app.textarea.lines().join("\n"),
+                                        mode: app.file_mode.clone(),
+                                        theme: app.theme.clone(),
+                                        italic_support: app.italic_support,
+                                        cache: app.highlight_cache.clone(),
+                                    });
                                     // Refresh the modal's resolved theme so derived defaults update.
                                     if let Some(modal) = app.settings.as_mut() {
                                         modal.resolved = app.theme.clone();

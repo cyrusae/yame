@@ -105,28 +105,17 @@ pub fn render_settings_modal(f: &mut Frame, editor_area: Rect, app: &App) {
         let value_w = (MODAL_W as usize).saturating_sub(2 + 2 + VALUE_X_OFFSET as usize + 3);
 
         if selected && modal.editing {
-            if modal.is_cycler_field() {
-                // Cycling mode: show value with arrows, highlighted to signal ←/→ active.
-                let value = modal.field_value(field_idx);
-                let display = if value.is_empty() {
-                    "‹ (default) ›".to_string()
-                } else {
-                    format!("‹ {} ›", value)
-                };
-                put_str_clipped(buf, inner_x, ry, &display, value_w as u16, active_tab_fg, row_bg);
-            } else {
-                // Normal text edit: show input buffer with cursor block.
-                let display = format!("{}█", modal.input_buf);
-                let max_chars = value_w.saturating_sub(3);
-                put_str_clipped(buf, inner_x, ry, &display, max_chars as u16, value_fg, row_bg);
-                // Live swatch for hex color fields.
-                if def.kind == FieldKind::HexColor
-                    && let Some((r, g, b)) = modal.input_rgb()
-                {
-                    let swatch_x = inner_x
-                        + (max_chars as u16).min(display.chars().count() as u16 + 1);
-                    put_swatch(buf, swatch_x, ry, Color::Rgb(r, g, b), row_bg);
-                }
+            // Text / number / color edit: show input buffer with cursor block.
+            let display = format!("{}█", modal.input_buf);
+            let max_chars = value_w.saturating_sub(3);
+            put_str_clipped(buf, inner_x, ry, &display, max_chars as u16, value_fg, row_bg);
+            // Live swatch for hex color fields.
+            if def.kind == FieldKind::HexColor
+                && let Some((r, g, b)) = modal.input_rgb()
+            {
+                let swatch_x = inner_x
+                    + (max_chars as u16).min(display.chars().count() as u16 + 1);
+                put_swatch(buf, swatch_x, ry, Color::Rgb(r, g, b), row_bg);
             }
         } else {
             let value = modal.field_value(field_idx);
