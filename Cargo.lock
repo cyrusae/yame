@@ -2610,7 +2610,7 @@ name = "yame"
 version = "0.2.1"
 dependencies = [
  "arboard",
- "crossterm 0.28.1",
+ "crossterm 0.29.0",
  "fancy-regex 0.16.2",
  "mutants",
  "pulldown-cmark",
