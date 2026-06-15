@@ -46,9 +46,13 @@ pub const PRESET_OPTIONS: &[&str] = &[
     "dracula",
     "nord",
     "gruvbox-dark",
+    "rose-pine",
+    "rose-pine-moon",
+    "rose-pine-dawn",
     "solarized-dark",
     "solarized-light",
     "tokyo-night",
+    "github-light",
 ];
 
 pub const BLEND_OPTIONS: &[&str] = &[

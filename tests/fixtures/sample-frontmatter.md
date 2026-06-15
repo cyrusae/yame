@@ -8,7 +8,7 @@ draft: false
 
 # Heading one
 
-This paragraph follows the frontmatter block. The key/value pairs above should render with **accent-coloured keys**, muted separators, and body-text values — all on the subtle heading background tint.
+This paragraph follows the frontmatter block. The key/value pairs above should render with **accent-coloured keys**, muted separators, and body-text values — all on the subtle code background tint.
 
 ## TOML variant
 
@@ -20,6 +20,7 @@ Open `sample-frontmatter-toml.md` for the live TOML version.
 
 - Normal list item
 - Another item
+- Yet another item
 - [ ] Todo item
 - [x] Done item
 

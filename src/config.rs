@@ -658,7 +658,6 @@ impl Theme {
         // Fenced block background: lift bg slightly toward text (neutral) so the
         // panel reads as a distinct surface without inheriting code_color's hue.
         let fenced_bg_rgb = resolve(&overrides.fenced_bg, blend(text, bg, 0.08), warnings);
-        let heading_bg_rgb = resolve(&overrides.heading_bg, blend(accent, bg, 0.15), warnings);
         let selection_bg_rgb = resolve(&overrides.selection_bg, blend(accent, bg, 0.6), warnings);
         let selection_fg_rgb = resolve(&overrides.selection_fg, bg, warnings);
         // Hints-pill bg: canvas blended 10% toward text — subtly lifted off the canvas.
@@ -718,6 +717,14 @@ impl Theme {
         let h6_rgb = headings.h6.as_deref().and_then(|s| parse_hex_color(s).ok())
             .or_else(|| expansion.and_then(|e| exp_h(e.h6)))
             .unwrap_or_else(|| heading_default(0.5));
+
+        // heading_bg follows h1 when expanded (rainbow) so the bg tint matches the
+        // heading color rather than defaulting to the accent hue.
+        let heading_bg_rgb = resolve(
+            &overrides.heading_bg,
+            blend(if expansion.is_some() { h1_rgb } else { accent }, bg, 0.15),
+            warnings,
+        );
 
         Self {
             text: to_color(text),
@@ -1099,6 +1106,32 @@ mod tests {
             matches!(theme.heading_bg, Color::Rgb(r, g, b) if r == 45 && g == 39 && b == 60),
             "heading_bg was {:?}",
             theme.heading_bg
+        );
+    }
+
+    #[test]
+    fn expanded_heading_bg_follows_h1_not_accent() {
+        // catppuccin-mocha-expanded: h1 = #f5e0dc (rosewater), bg = #11111b
+        // heading_bg should blend from h1 (#f5e0dc), NOT accent (#cba6f7)
+        // blend((245,224,220), (17,17,27), 0.15)
+        // r = 17 + (245-17)*0.15 = 17 + 34.2 = 51
+        // g = 17 + (224-17)*0.15 = 17 + 31.05 = 48
+        // b = 27 + (220-27)*0.15 = 27 + 28.95 = 55.95 → 56
+        let palette = Palette { preset: Some("catppuccin-mocha-expanded".into()), ..Default::default() };
+        let mut w = Vec::new();
+        let theme = Theme::from_config(&palette, &ThemeOverrides::default(), &HeadingColors::default(), &mut w);
+        assert!(
+            matches!(theme.heading_bg, Color::Rgb(r, g, b) if r == 51 && g == 48 && b == 56),
+            "expanded heading_bg was {:?}, want blend of h1 rosewater",
+            theme.heading_bg
+        );
+        // Verify non-expanded mocha still uses accent
+        let palette_plain = Palette { preset: Some("catppuccin-mocha".into()), ..Default::default() };
+        let theme_plain = Theme::from_config(&palette_plain, &ThemeOverrides::default(), &HeadingColors::default(), &mut w);
+        assert!(
+            matches!(theme_plain.heading_bg, Color::Rgb(r, g, b) if r == 45 && g == 39 && b == 60),
+            "plain heading_bg was {:?}, want blend of accent",
+            theme_plain.heading_bg
         );
     }
 
