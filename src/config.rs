@@ -1,5 +1,5 @@
 use ratatui::style::Color;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 // ---------------------------------------------------------------------------
@@ -11,7 +11,7 @@ use std::path::PathBuf;
 /// All fields are optional.  When a field is absent, its value is taken from
 /// the named `preset` (or from the built-in Catppuccin Mocha defaults when no
 /// preset is specified).  An explicit field always wins over the preset.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Palette {
     /// Named preset (case-insensitive).  Sets all six base colors; individual
@@ -31,7 +31,7 @@ pub struct Palette {
 }
 
 /// Optional per-field overrides for derived theme tokens.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct ThemeOverrides {
     pub bold_color: Option<String>,
@@ -68,7 +68,7 @@ pub struct ThemeOverrides {
 }
 
 /// Per-level heading color overrides (all optional).
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct HeadingColors {
     pub h1: Option<String>,
@@ -79,7 +79,7 @@ pub struct HeadingColors {
     pub h6: Option<String>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct LayoutConfig {
     /// Minimum editing-column width in terminal columns.  The column expands to
@@ -108,7 +108,7 @@ pub struct LayoutConfig {
 }
 
 /// Configuration for syntax highlighting of fenced code blocks.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct HighlightingConfig {
     /// Enable syntect syntax highlighting for fenced code blocks. Default true.
@@ -136,7 +136,7 @@ impl Default for HighlightingConfig {
 }
 
 /// Configuration for file-type detection and editing mode selection.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct FiletypeConfig {
     /// Additional file extensions (without the leading dot, case-insensitive)
@@ -159,7 +159,7 @@ impl Default for FiletypeConfig {
     }
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Config {
     pub palette: Palette,
@@ -953,6 +953,21 @@ pub fn load_config() -> (Config, Vec<String>) {
             (Config::default(), warnings)
         }
     }
+}
+
+/// Serialize `config` to TOML and write it to the platform config path.
+///
+/// Creates parent directories if they do not exist.  Called by the settings
+/// modal when the user commits a field change.
+#[mutants::skip] // fs::write I/O — mutations masked by filesystem state.
+pub fn write_config(config: &Config) -> std::io::Result<()> {
+    let path = config_path();
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let text = toml::to_string_pretty(config)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    std::fs::write(&path, text)
 }
 
 /// Returns true if the given `term` string indicates italic support.

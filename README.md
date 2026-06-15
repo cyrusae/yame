@@ -8,7 +8,7 @@ It can also be used as a distraction-free text editor!
 
 > **v0.3.** Core editing, decoration, and theming are solid. Keybindings and config keys are stable. Active development — check in for new features!
 
-<!-- screenshot or demo GIF goes here -->
+![A screenshot of this README shown in yame.](./_info/readme-screenshot.png)
 
 ---
 
@@ -32,6 +32,8 @@ It can also be used as a distraction-free text editor!
 ## What it doesn't do yet
 
 - No tab completion or split panes
+
+![A screenshot demonstrating frontmatter highlighting in yame.](./_info/frontmatter-screenshot.png)
 
 ---
 
@@ -173,6 +175,8 @@ See [`_info/THEMES.md`](_info/THEMES.md) for the full preset list, override orde
 ```
 
 Setting these six colors gives you a coherent theme. All other colors derive from them automatically. Individual fields override the preset when both are set.
+
+![Screenshot of yame's settings modal.](./_info/settings-modal-screenshot.png)
 
 ### Theme overrides
 

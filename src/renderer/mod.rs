@@ -8,12 +8,14 @@ use ratatui::{
 use crate::decoration::{DecorationMap, StyledSpan};
 use crate::search::Match as SearchMatch;
 
+pub(crate) mod settings_modal;
 mod status;
 mod utils;
 
 pub use self::search_bar::{
     render_search_bar, render_search_help_modal, render_shortcuts_modal, search_bar_height,
 };
+pub use self::settings_modal::{render_settings_modal, VISIBLE_FIELDS};
 pub use status::{render_info_line, render_status_bar};
 pub use utils::{format_thousands, shorten_path, split_into_spans};
 
@@ -1011,6 +1013,7 @@ mod tests {
             focus_mode: false,
             show_shortcuts: false,
             read_only: false,
+            settings: None,
         }
     }
 

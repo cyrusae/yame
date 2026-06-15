@@ -328,7 +328,7 @@ pub fn render_search_help_modal(f: &mut Frame, editor_area: Rect, app: &App) {
 ///
 /// This must be called before drawing any border or content in a modal overlay.
 #[mutants::skip] // Writes into ratatui Buffer — void, not testable via return value.
-fn flood_reset(buf: &mut Buffer, area: Rect, fg: Color, bg: Color) {
+pub(crate) fn flood_reset(buf: &mut Buffer, area: Rect, fg: Color, bg: Color) {
     // Style::new() has empty add_modifier; remove_modifier(all) sets sub_modifier
     // to Modifier::all(), which clears every modifier bit when patched onto the
     // existing cell style via Cell::set_style → Style::patch.
@@ -369,6 +369,7 @@ static SHORTCUTS: &[HelpRow] = &[
     HelpRow::Entry("Ctrl+F", "Search", "Ctrl+H", "Find & replace"),
     HelpRow::Section("View"),
     HelpRow::Entry("Ctrl+T", "Typewriter", "Ctrl+D", "Focus mode"),
+    HelpRow::Entry("F2", "Settings", "", ""),
     HelpRow::Section("Markdown"),
     HelpRow::Entry("Ctrl+K", "Code block", "Alt/Opt+T", "Format table"),
     HelpRow::Entry("()[]{}'\"*_``", "Auto-pair", "F1 / Esc", "Close help"),

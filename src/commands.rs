@@ -188,6 +188,7 @@ mod tests {
             focus_mode: false,
             show_shortcuts: false,
             read_only: false,
+            settings: None,
         }
     }
 

@@ -11,7 +11,8 @@ use ratatui::{Terminal, layout::Rect, style::Style, widgets::Paragraph};
 use tui_textarea::CursorMove;
 
 use yame::app::{App, FileMode, get_selection_text, resolve_file_mode};
-use yame::config::{LayoutConfig, Theme, load_config};
+use yame::config::{LayoutConfig, Theme, load_config, write_config};
+use yame::settings::{SettingsModal, SettingsOutcome, handle_settings_key};
 use yame::decoration::{
     DecorationMap, block_highlights_to_decoration_map, build_decoration_map, count_words,
 };
@@ -49,6 +50,10 @@ pub(super) enum KeyOutcome {
     SaveAs { filename: String, then_exit: bool },
     /// Ctrl+O: suspend TUI, run the file picker, load the selected file.
     OpenPicker,
+    /// F2: open the settings modal, loading current config from disk.
+    OpenSettings,
+    /// Settings field committed — write config to disk and apply it.
+    CommitSettings,
 }
 
 // ---------------------------------------------------------------------------
@@ -233,8 +238,9 @@ pub(super) fn is_ro_allowed(mods: KeyModifiers, code: KeyCode) -> bool {
         | (KeyModifiers::CONTROL, KeyCode::Char('t'))
         | (KeyModifiers::CONTROL, KeyCode::Char('d'))
         | (KeyModifiers::CONTROL, KeyCode::Char('e'))
-        // ── Shortcuts modal ───────────────────────────────────────────────────
+        // ── Shortcuts / settings modals ────────────────────────────────────────
         | (KeyModifiers::NONE, KeyCode::F(1))
+        | (KeyModifiers::NONE, KeyCode::F(2))
     )
 }
 
@@ -595,6 +601,23 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
         return KeyOutcome::Continue;
     }
 
+    // ── Settings modal — delegate to settings key handler ────────────────────
+    if app.settings.is_some() {
+        use yame::renderer::VISIBLE_FIELDS;
+        let outcome = {
+            let modal = app.settings.as_mut().unwrap();
+            handle_settings_key(modal, k, VISIBLE_FIELDS)
+        };
+        return match outcome {
+            SettingsOutcome::Continue => KeyOutcome::Continue,
+            SettingsOutcome::Close => {
+                app.settings = None;
+                KeyOutcome::Continue
+            }
+            SettingsOutcome::Committed => KeyOutcome::CommitSettings,
+        };
+    }
+
     // ── Save-as mode — intercepts all keys while the prompt is open ─────
     if matches!(app.status.mode, StatusMode::SaveAs { .. }) {
         return handle_save_as_key(app, k);
@@ -774,6 +797,9 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
             app.show_shortcuts = true;
             KeyOutcome::Continue
         }
+
+        // F2: open the settings modal.
+        (KeyModifiers::NONE, KeyCode::F(2)) => KeyOutcome::OpenSettings,
 
         (KeyModifiers::CONTROL, KeyCode::Char('r')) => KeyOutcome::ReloadConfig,
 
@@ -1312,6 +1338,9 @@ where
             if app.show_shortcuts {
                 renderer::render_shortcuts_modal(f, editor_area, app);
             }
+            if app.settings.is_some() {
+                renderer::render_settings_modal(f, editor_area, app);
+            }
             renderer::render_status_bar(f, layout.status_bar, app);
             renderer::render_info_line(f, layout.info_line, app);
 
@@ -1384,6 +1413,71 @@ where
                             handle_save_to_path(app)?;
                             if then_exit {
                                 break;
+                            }
+                        }
+                        KeyOutcome::OpenSettings => {
+                            let (config, _) = load_config();
+                            let mut warnings = Vec::new();
+                            let resolved = Theme::from_config(
+                                &config.palette,
+                                &config.theme,
+                                &config.headings,
+                                &mut warnings,
+                            );
+                            app.settings = Some(SettingsModal::new(
+                                config,
+                                resolved,
+                                app.typewriter_mode,
+                                app.focus_mode,
+                            ));
+                        }
+                        KeyOutcome::CommitSettings => {
+                            // Extract what we need before releasing the borrow on app.settings.
+                            let (cfg, new_tw, new_fm) = match &app.settings {
+                                Some(m) => (m.config.clone(), m.typewriter_mode, m.focus_mode),
+                                None => continue,
+                            };
+                            match write_config(&cfg) {
+                                Ok(()) => {
+                                    let mut warnings = Vec::new();
+                                    app.theme = Theme::from_config(
+                                        &cfg.palette,
+                                        &cfg.theme,
+                                        &cfg.headings,
+                                        &mut warnings,
+                                    );
+                                    app.highlight_cache = cfg.highlighting.enabled.then(|| {
+                                        let palette_theme = cfg
+                                            .highlighting
+                                            .use_palette_colors
+                                            .then(|| yame::highlighting::build_palette_theme(&app.theme));
+                                        Arc::new(yame::highlighting::HighlightCache::new(
+                                            true,
+                                            cfg.highlighting.syntect_theme.clone(),
+                                            palette_theme,
+                                        ))
+                                    });
+                                    if let Some(p) = &app.file_path {
+                                        app.file_mode = resolve_file_mode(p, &cfg.filetype);
+                                    }
+                                    app.show_line_numbers = cfg.layout.line_numbers.unwrap_or(false);
+                                    app.powerline_glyphs = cfg.layout.powerline_glyphs.unwrap_or(true);
+                                    app.tab_width = cfg.layout.tab_width.unwrap_or(4) as usize;
+                                    app.typewriter_mode = new_tw;
+                                    app.focus_mode = new_fm;
+                                    app.config_warnings = warnings;
+                                    app.last_keystroke = Some(std::time::Instant::now());
+                                    // Refresh the modal's resolved theme so derived defaults update.
+                                    if let Some(modal) = app.settings.as_mut() {
+                                        modal.resolved = app.theme.clone();
+                                    }
+                                }
+                                Err(e) => {
+                                    app.status.set_timed(
+                                        format!("⚠ Settings error: {e}"),
+                                        Duration::from_secs(3),
+                                    );
+                                }
                             }
                         }
                         KeyOutcome::OpenPicker => {
@@ -1529,6 +1623,7 @@ mod tests {
             focus_mode: false,
             show_shortcuts: false,
             read_only: false,
+            settings: None,
         }
     }
 

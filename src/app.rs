@@ -6,6 +6,7 @@ use std::time::Instant;
 use tui_textarea::TextArea;
 
 use crate::config::{FiletypeConfig, Theme};
+use crate::settings::SettingsModal;
 use crate::decoration::{
     DecorationMap, block_highlights_to_decoration_map, build_decoration_map, count_words,
 };
@@ -201,6 +202,8 @@ pub struct App {
     /// Set at startup via the `-r` / `--read-only` CLI flag; never toggled at
     /// runtime.
     pub read_only: bool,
+    /// Open settings modal (F2).  `None` when the modal is closed.
+    pub settings: Option<SettingsModal>,
 }
 
 impl App {
@@ -283,6 +286,7 @@ impl App {
             focus_mode: false,
             show_shortcuts: false,
             read_only: false, // set by caller via app.read_only = read_only after new()
+            settings: None,
         })
     }
 
@@ -500,6 +504,7 @@ mod tests {
             focus_mode: false,
             show_shortcuts: false,
             read_only: false,
+            settings: None,
         }
     }
 

@@ -47,6 +47,7 @@ fn make_app() -> App {
         focus_mode: false,
         show_shortcuts: false,
         read_only: false,
+        settings: None,
     }
 }
 
