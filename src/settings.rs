@@ -114,6 +114,7 @@ pub const EDITOR_FIELDS: &[FieldDef] = &[
     FieldDef { label: "Powerline glyphs",kind: FieldKind::Toggle },
     FieldDef { label: "Typewriter mode", kind: FieldKind::Toggle },
     FieldDef { label: "Focus mode",      kind: FieldKind::Toggle },
+    FieldDef { label: "Read-only",       kind: FieldKind::Toggle },
     FieldDef { label: "Min columns",     kind: FieldKind::Number { allow_none: false } },
     FieldDef { label: "Max columns",     kind: FieldKind::Number { allow_none: true  } },
     FieldDef { label: "Tab width",       kind: FieldKind::Number { allow_none: false } },
@@ -145,6 +146,7 @@ pub struct SettingsModal {
     /// Snapshot of runtime toggles so the Editor tab can show/edit them.
     pub typewriter_mode: bool,
     pub focus_mode: bool,
+    pub read_only: bool,
     /// The working config being edited.  Committed to disk on each field change.
     pub config: Config,
     /// Resolved theme computed from `config` — used to show derived defaults for
@@ -156,7 +158,7 @@ pub struct SettingsModal {
 }
 
 impl SettingsModal {
-    pub fn new(config: Config, resolved: Theme, typewriter_mode: bool, focus_mode: bool) -> Self {
+    pub fn new(config: Config, resolved: Theme, typewriter_mode: bool, focus_mode: bool, read_only: bool) -> Self {
         Self {
             tab: 0,
             field: 0,
@@ -165,6 +167,7 @@ impl SettingsModal {
             expanded: false,
             typewriter_mode,
             focus_mode,
+            read_only,
             config,
             resolved,
             scroll: 0,
@@ -265,6 +268,7 @@ impl SettingsModal {
                     }
                     2 => { self.typewriter_mode = !self.typewriter_mode; true }
                     3 => { self.focus_mode = !self.focus_mode; true }
+                    4 => { self.read_only = !self.read_only; true }
                     _ => false,
                 }
             }
@@ -410,8 +414,27 @@ pub fn handle_settings_key(
     k: crossterm::event::KeyEvent,
     visible_rows: usize,
 ) -> SettingsOutcome {
-    // ── While editing a field ───────────────────────────────────────────────
+    // ── While editing / cycling a field ────────────────────────────────────
     if modal.editing {
+        // Cycler activation mode: ←/→ step through options, anything else exits.
+        if modal.is_cycler_field() {
+            match (k.modifiers, k.code) {
+                (KeyModifiers::NONE, KeyCode::Left) => {
+                    let ok = modal.cycle_current(false);
+                    return if ok { SettingsOutcome::Committed } else { SettingsOutcome::Continue };
+                }
+                (KeyModifiers::NONE, KeyCode::Right) => {
+                    let ok = modal.cycle_current(true);
+                    return if ok { SettingsOutcome::Committed } else { SettingsOutcome::Continue };
+                }
+                _ => {
+                    modal.editing = false;
+                    return SettingsOutcome::Continue;
+                }
+            }
+        }
+
+        // Normal text / number / color edit mode.
         match (k.modifiers, k.code) {
             (KeyModifiers::NONE, KeyCode::Esc) => {
                 modal.cancel_editing();
@@ -423,7 +446,6 @@ pub fn handle_settings_key(
                 if ok {
                     return SettingsOutcome::Committed;
                 }
-                // invalid input — stay, don't commit
             }
             (KeyModifiers::NONE, KeyCode::Backspace) => {
                 modal.input_buf.pop();
@@ -444,31 +466,16 @@ pub fn handle_settings_key(
         (KeyModifiers::NONE, KeyCode::Esc)
         | (KeyModifiers::NONE, KeyCode::F(2)) => SettingsOutcome::Close,
 
-        // Tab navigation
-        (KeyModifiers::NONE, KeyCode::Tab) => {
+        // Tab navigation — Tab/←/→ cycle through tabs.
+        (KeyModifiers::NONE, KeyCode::Tab)
+        | (KeyModifiers::NONE, KeyCode::Right) => {
             modal.next_tab();
             SettingsOutcome::Continue
         }
-        (KeyModifiers::SHIFT, KeyCode::Tab) => {
+        (KeyModifiers::SHIFT, KeyCode::Tab)
+        | (KeyModifiers::NONE, KeyCode::Left) => {
             modal.prev_tab();
             SettingsOutcome::Continue
-        }
-        // Right/Left: cycle on cycler fields, switch tab otherwise
-        (KeyModifiers::NONE, KeyCode::Right) => {
-            if modal.is_cycler_field() {
-                if modal.cycle_current(true) { SettingsOutcome::Committed } else { SettingsOutcome::Continue }
-            } else {
-                modal.next_tab();
-                SettingsOutcome::Continue
-            }
-        }
-        (KeyModifiers::NONE, KeyCode::Left) => {
-            if modal.is_cycler_field() {
-                if modal.cycle_current(false) { SettingsOutcome::Committed } else { SettingsOutcome::Continue }
-            } else {
-                modal.prev_tab();
-                SettingsOutcome::Continue
-            }
         }
 
         // Field navigation
@@ -487,20 +494,16 @@ pub fn handle_settings_key(
             // Expand toggle row
             if modal.tab == 0 && modal.field == APPEARANCE_EXPAND_IDX {
                 modal.expanded = !modal.expanded;
-                // If collapsing and cursor is in extended section, pull it back.
                 if !modal.expanded && modal.field > APPEARANCE_EXPAND_IDX {
                     modal.field = APPEARANCE_EXPAND_IDX;
                 }
                 return SettingsOutcome::Continue;
             }
 
-            // Cycler fields — advance to next option
+            // Cycler fields — Enter activates cycling mode (editing = true).
             if modal.is_cycler_field() {
-                return if modal.cycle_current(true) {
-                    SettingsOutcome::Committed
-                } else {
-                    SettingsOutcome::Continue
-                };
+                modal.editing = true;
+                return SettingsOutcome::Continue;
             }
 
             // Boolean toggle fields
@@ -597,13 +600,14 @@ fn editor_value(modal: &SettingsModal, field: usize) -> String {
         1 => bool_str(cfg.layout.powerline_glyphs.unwrap_or(true)),
         2 => bool_str(modal.typewriter_mode),
         3 => bool_str(modal.focus_mode),
-        4 => cfg.layout.min_cols
+        4 => bool_str(modal.read_only),
+        5 => cfg.layout.min_cols
                 .map(|n| n.to_string())
                 .unwrap_or_else(|| "60".to_string()),
-        5 => cfg.layout.max_cols
+        6 => cfg.layout.max_cols
                 .map(|n| n.to_string())
                 .unwrap_or_else(|| "none (≤50% of terminal)".to_string()),
-        6 => cfg.layout.tab_width
+        7 => cfg.layout.tab_width
                 .map(|n| n.to_string())
                 .unwrap_or_else(|| "4".to_string()),
         _ => String::new(),
@@ -697,14 +701,14 @@ fn commit_appearance_extended(cfg: &mut Config, idx: usize, v: &str) -> bool {
 fn commit_editor(modal: &mut SettingsModal, v: &str) -> bool {
     match modal.field {
         // toggles handled by toggle_current; shouldn't reach here
-        0..=3 => false,
-        4 => {
+        0..=4 => false,
+        5 => {
             if let Ok(n) = v.parse::<u16>() {
                 modal.config.layout.min_cols = Some(n);
                 true
             } else { false }
         }
-        5 => {
+        6 => {
             if v == "unlimited" || v.is_empty() {
                 modal.config.layout.max_cols = None;
                 true
@@ -713,7 +717,7 @@ fn commit_editor(modal: &mut SettingsModal, v: &str) -> bool {
                 true
             } else { false }
         }
-        6 => {
+        7 => {
             if let Ok(n) = v.parse::<u16>() {
                 modal.config.layout.tab_width = Some(n.max(1));
                 true
@@ -757,7 +761,7 @@ mod tests {
     use crate::config::Config;
 
     fn make_modal() -> SettingsModal {
-        SettingsModal::new(Config::default(), Theme::default_theme(), false, false)
+        SettingsModal::new(Config::default(), Theme::default_theme(), false, false, false)
     }
 
     #[test]
@@ -839,7 +843,7 @@ mod tests {
     fn commit_max_cols_unlimited_clears_option() {
         let mut m = make_modal();
         m.tab = 1;
-        m.field = 5;
+        m.field = 6;
         m.config.layout.max_cols = Some(80);
         m.input_buf = "unlimited".to_string();
         assert!(m.commit_input());
@@ -850,7 +854,7 @@ mod tests {
     fn commit_tab_width_min_one() {
         let mut m = make_modal();
         m.tab = 1;
-        m.field = 6;
+        m.field = 7;
         m.input_buf = "0".to_string();
         // 0 parses as u16 but max(1) clamps to 1
         assert!(m.commit_input());
@@ -921,6 +925,16 @@ mod tests {
     }
 
     #[test]
+    fn toggle_read_only_flips() {
+        let mut m = make_modal();
+        m.tab = 1;
+        m.field = 4;
+        assert!(!m.read_only);
+        m.toggle_current();
+        assert!(m.read_only);
+    }
+
+    #[test]
     fn cycle_preset_forward_from_default() {
         let mut m = make_modal();
         m.tab = 0;
@@ -972,7 +986,7 @@ mod tests {
         let mut m = make_modal();
         m.tab = 0;
         m.expanded = true;
-        // extended idx 16 = APPEARANCE_EXPAND_IDX + 1 + 16
+        // Delimiter blend is extended idx 16 → absolute field = APPEARANCE_EXPAND_IDX + 1 + 16
         m.field = APPEARANCE_EXPAND_IDX + 1 + 16;
         // default blend is 0.4 → next step is 0.5
         assert!(m.cycle_current(true));

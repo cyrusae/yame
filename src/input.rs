@@ -1429,12 +1429,13 @@ where
                                 resolved,
                                 app.typewriter_mode,
                                 app.focus_mode,
+                                app.read_only,
                             ));
                         }
                         KeyOutcome::CommitSettings => {
                             // Extract what we need before releasing the borrow on app.settings.
-                            let (cfg, new_tw, new_fm) = match &app.settings {
-                                Some(m) => (m.config.clone(), m.typewriter_mode, m.focus_mode),
+                            let (cfg, new_tw, new_fm, new_ro) = match &app.settings {
+                                Some(m) => (m.config.clone(), m.typewriter_mode, m.focus_mode, m.read_only),
                                 None => continue,
                             };
                             match write_config(&cfg) {
@@ -1465,8 +1466,10 @@ where
                                     app.tab_width = cfg.layout.tab_width.unwrap_or(4) as usize;
                                     app.typewriter_mode = new_tw;
                                     app.focus_mode = new_fm;
+                                    app.read_only = new_ro;
                                     app.config_warnings = warnings;
                                     app.last_keystroke = Some(std::time::Instant::now());
+                                    app.force_redecorate = true;
                                     // Refresh the modal's resolved theme so derived defaults update.
                                     if let Some(modal) = app.settings.as_mut() {
                                         modal.resolved = app.theme.clone();
