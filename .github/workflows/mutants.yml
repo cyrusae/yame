@@ -63,7 +63,7 @@ jobs:
       # Always upload the mutants output so it's inspectable even on failure.
       - name: Upload mutants output
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mutants-out
           path: mutants.out/
