@@ -37,53 +37,46 @@ exclude_re = [
     # difference, so this mutant is structurally unkillable.
     "replace \\| with \\^ in handle_pair_wrap",
 
-    # `chunk_end = char_start + ci + 1` in wrap_line's inner for-loop (renderer/mod.rs:75).
+    # `chunk_end = char_start + ci + 1` in wrap_line's inner for-loop (renderer/mod.rs:83).
     # The `+→*` mutations on this line are structurally unkillable: whenever
     # `remaining_display > width` (the invariant for entering the inner loop) the
-    # break at line 71 (`chunk_end = char_start + ci`) always fires first and
-    # overwrites whatever line 75 last wrote.  The intermediate updates are dead.
-    "renderer/mod\\.rs:75:.*replace \\+ with \\*",
+    # break at line 79 (`chunk_end = char_start + ci`) always fires first and
+    # overwrites whatever line 83 last wrote.  The intermediate updates are dead.
+    "renderer/mod\\.rs:83:.*replace \\+ with \\*",
 
-    # `last_space = Some(char_start + ci)` on wrap_line's space-tracking line (renderer/mod.rs:77).
+    # `last_space = Some(char_start + ci)` on wrap_line's space-tracking line (renderer/mod.rs:85).
     # `+→*`: when the first char of a chunk (ci=0) is a space, `char_start * 0 = 0` →
     # next_start = 1, but char_start was already > 1 → walks backward → infinite loop.
-    "renderer/mod\\.rs:77:.*replace \\+ with \\*",
+    "renderer/mod\\.rs:85:.*replace \\+ with \\*",
 
-    # `chunk_end = char_start + ci + 1` — two + operators, both cause backward-walk (renderer/mod.rs:79).
+    # `chunk_end = char_start + ci` on the break-path (renderer/mod.rs:79).
     # col 36 (`char_start + ci` → `char_start * ci`): for char_start > 0 on subsequent outer
-    # iterations, ci = 0 on first inner step → chunk_end = 0 + 1 = 1; next outer start becomes
-    # 1 < char_start → walks backward → infinite loop.
-    # col 41 (`ci + 1` → `ci * 1 = ci`): chunk_end is one short; outer loop re-enters the same
-    # character position → infinite loop.
+    # iterations, ci = 0 on first inner step → chunk_end = 0; next outer start becomes
+    # 0 < char_start → walks backward → infinite loop.
+    # col 41 (`ci + 1` → `ci * 1 = ci`): same backward-walk on the `+ 1` form.
+    # col 46: break-exit variant — same backward-walk when ci = 0 and char_start > 0.
     "renderer/mod\\.rs:79:36:.*replace \\+ with \\* in wrap_line",
     "renderer/mod\\.rs:79:41:.*replace \\+ with \\* in wrap_line",
+    "renderer/mod\\.rs:79:46:.*replace \\+ with \\* in wrap_line",
 
-    # `chunk_end = char_start + ci` on the break-path (renderer/mod.rs:81, col 46).
-    # `+→*`: same backward-walk as 79:36 — when break fires with ci = 0 and char_start > 0,
-    # chunk_end becomes 0, forcing next outer iteration backward.
-    "renderer/mod\\.rs:81:46:.*replace \\+ with \\* in wrap_line",
-
-    # `if chunk_end == char_start` pathological-wide-char guard (renderer/mod.rs:85).
-    # Source line shifted from old :81 after Phase-12 additions.
+    # `if chunk_end == char_start` pathological-wide-char guard (renderer/mod.rs:89).
     # `==→!=` inverts the guard: pathological CJK chars (wider than width) fall into
     # the normal path where break_at may equal char_start → chunk never advances →
     # infinite loop.
-    "renderer/mod\\.rs:85:22:.*replace == with != in wrap_line",
+    "renderer/mod\\.rs:89:22:.*replace == with != in wrap_line",
 
-    # `char_start += 1` in wrap_line's pathological CJK path (renderer/mod.rs:94).
-    # Source line shifted from old :90 after Phase-12 additions.
+    # `char_start += 1` in wrap_line's pathological CJK path (renderer/mod.rs:98).
     # The `*= 1` mutation is a no-op that leaves char_start at the same position
     # forever → infinite loop / timeout.  The `-= 1` mutation IS caught by the
     # wrap_cjk_pathological_single_col test (usize underflow → panic in debug).
-    "renderer/mod\\.rs:94:24:.*replace \\+= with \\*= in wrap_line",
+    "renderer/mod\\.rs:98:24:.*replace \\+= with \\*= in wrap_line",
 
-    # `next_start = sp + 1` in the soft-wrap break logic (renderer/mod.rs:100).
-    # Source line shifted from old :96 after Phase-12 additions.
+    # `next_start = sp + 1` in the soft-wrap break logic (renderer/mod.rs:104).
     # `+→-`: when sp equals char_start, next_start = sp-1 < char_start → walks
     # backward through previously consumed chars → infinite loop.
     # `+→*`: sp*1 = sp → next_start = sp = char_start of same break → re-processes
     # the same chunk forever → infinite loop.
-    "renderer/mod\\.rs:100:33:.*replace \\+ with [-*] in wrap_line",
+    "renderer/mod\\.rs:104:33:.*replace \\+ with [-*] in wrap_line",
 
     # `cursor_row < app.scroll_top` scroll-up guard (commands.rs, col 19).
     # `replace < with <=`: when cursor_row == scroll_top the mutation executes
@@ -281,12 +274,12 @@ exclude_re = [
     # the inconsistent half-state is unreachable.
     "search\\.rs:185:36:.*replace \\|\\| with \\&\\& in apply_replace_all",
 
-    # `apply_replace_all` per-match bounds check (search.rs:190, col 19).
+    # `apply_replace_all` per-match bounds check (search.rs:183, col 19).
     # `<→<=` admits ml == result.len() → OOB.  ml comes from find_all_matches which only
     # yields valid line indices; ml == len is unreachable for valid state.
     # Note: cargo-mutants includes the qualified path `SearchState::apply_replace_all`
     # in the description, so we need `.*` between `in ` and `apply_replace_all`.
-    "search\\.rs:190:19:.*replace < with <= in.*apply_replace_all",
+    "search\\.rs:183:19:.*replace < with <= in.*apply_replace_all",
 
     # ---------------------------------------------------------------------------
     # table_format.rs — infinite-loop and unreachable mutations

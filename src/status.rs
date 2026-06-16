@@ -314,4 +314,21 @@ mod tests {
         s.save_as_push('x'); // should not panic or change mode
         assert!(matches!(s.mode, StatusMode::Normal));
     }
+
+    #[test]
+    fn save_as_push_caps_at_255_chars() {
+        // Kills: `replace < with <=` in `input.len() < 255` — the mutation
+        // would allow a 256th character through.
+        let mut s = StatusLine::default();
+        s.start_save_as(false);
+        for _ in 0..255 {
+            s.save_as_push('a');
+        }
+        s.save_as_push('z'); // must be rejected: buffer already at limit
+        assert_eq!(
+            s.save_as_state().map(|(i, _)| i.len()),
+            Some(255),
+            "save_as_push must not grow input beyond 255 chars"
+        );
+    }
 }

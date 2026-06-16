@@ -824,6 +824,62 @@ mod tests {
     }
 
     #[test]
+    fn field_count_file_tab() {
+        // Kills: `delete match arm 2` in field_count — tab=2 would return 0.
+        let mut m = make_modal();
+        m.tab = 2;
+        assert_eq!(m.field_count(), FILE_FIELDS.len());
+    }
+
+    #[test]
+    fn field_def_editor_tab_returns_some() {
+        // Kills: `delete match arm 1` in field_def — tab=1 would return None.
+        let mut m = make_modal();
+        m.tab = 1;
+        assert!(
+            m.field_def(0).is_some(),
+            "tab=1 field 0 must return Some from field_def"
+        );
+    }
+
+    #[test]
+    fn field_def_expand_row_returns_none() {
+        // Kills: `replace < with <=` in field_def — the mutation would try
+        // APPEARANCE_CORE[APPEARANCE_CORE.len()] → out-of-bounds panic.
+        let m = make_modal(); // tab=0
+        assert!(
+            m.field_def(APPEARANCE_EXPAND_IDX).is_none(),
+            "expand row must return None from field_def"
+        );
+    }
+
+    #[test]
+    fn field_value_editor_tab_returns_nonempty() {
+        // Kills: `delete match arm 1` in field_value — tab=1 would return "".
+        // field 5 = min_cols, defaults to "60" so we get a concrete non-empty value.
+        let mut m = make_modal();
+        m.tab = 1;
+        assert_eq!(
+            m.field_value(5),
+            "60",
+            "tab=1 field 5 (min_cols default) must return \"60\""
+        );
+    }
+
+    #[test]
+    fn field_value_expand_row_returns_empty() {
+        // Kills: `replace < with <=` in field_value — the mutation would call
+        // appearance_core_value with an out-of-bounds index, producing a panic or
+        // wrong string instead of the expected empty string.
+        let m = make_modal(); // tab=0
+        assert_eq!(
+            m.field_value(APPEARANCE_EXPAND_IDX),
+            String::new(),
+            "expand row must return empty string from field_value"
+        );
+    }
+
+    #[test]
     fn toggle_line_numbers_flips() {
         let mut m = make_modal();
         m.tab = 1;
