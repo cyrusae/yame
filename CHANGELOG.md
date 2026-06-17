@@ -4,9 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## Unreleased
+## [1.0.0] — 2026-06-16
 
 ### Added
+- Extend heading underline to match background width (#217)
+- Style image embeds: italicize+underline path, accent-color alt text (#223)
 - Expose rose-pine/moon/dawn in PRESET_OPTIONS cycler (#216)
 - Add rainbow headings toggle for expanded preset variants (#214)
 - Settings modal: cycler UI for fixed-option fields + bottom bar hint (#208)
@@ -20,6 +22,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - feat: `yame --preview <file>` — headless ANSI render for lf/file-manager previewers; respects `$COLUMNS`; full decoration and syntax-highlight pipeline; bg colours suppressed for clean integration (#190)
 
 ### Changed
+- Create CLAUDE.md with build commands and architecture overview (#218)
+- Set up Renovate for automated dependency management (#219)
+- Document recommended GitHub branch protection rules for main (#220)
+- Sanity-check Cargo.toml and Cargo.lock restoration (#222)
+- Fix missed mutants and add timeout exclusions from 0614 mutants run (#225)
+- Research: assess mouse click support for settings modal (#226)
 - Remove 1/2/3 tab switch keys from settings modal (#210)
 - Settings modal: show resolved defaults for derived fields + clarify column width labels (#207)
 - feat: Alt+T toggle — second press on already-uniform table strips padding back to compact form (#199)
@@ -38,6 +46,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - chore: v0.2.1 version bump (#188)
 
 ### Fixed
+- Investigate crossterm 0.28→0.29 breaking change causing test failures (#221)
 - Fix: heading_bg not updating when rainbow headings enabled (#215)
 - Debug: preset cycling has no visual effect (#213)
 - Settings: discard stale decoration results when force_redecorate is set (#212)

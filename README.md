@@ -2,11 +2,11 @@
 
 **Yet Another Markdown Editor** — a lightweight terminal editor for Markdown files.
 
-The goal is something meaningfully lighter than VS Code for editing READMEs, notes, and documentation, while being more capable than nano for Markdown specifically. 
+The goal is something meaningfully lighter than VS Code for editing READMEs, notes, and documentation, while being more capable than nano for Markdown specifically.
 
 It can also be used as a distraction-free text editor!
 
-> **v0.3.** Core editing, decoration, and theming are solid. Keybindings and config keys are stable. Active development — check in for new features!
+> **v1.0.0.** Core editing, decoration, and theming are solid. Keybindings and config keys are stable. Feature requests and issues are welcome!
 
 ![A screenshot of this README shown in yame.](./_info/readme-screenshot.png)
 
