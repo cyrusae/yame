@@ -6,13 +6,13 @@ use std::time::Instant;
 use tui_textarea::TextArea;
 
 use crate::config::{FiletypeConfig, Theme};
-use crate::settings::SettingsModal;
 use crate::decoration::{
     DecorationMap, block_highlights_to_decoration_map, build_decoration_map, count_words,
 };
 use crate::highlighting::HighlightCache;
 use crate::renderer::shorten_path;
 use crate::search::SearchState;
+use crate::settings::SettingsModal;
 use crate::status::StatusLine;
 
 // ---------------------------------------------------------------------------

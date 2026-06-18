@@ -238,6 +238,10 @@ Optional per-element overrides. These take precedence over the derived defaults.
 
 If the config file has invalid TOML, yame falls back to defaults and prints a warning to stderr. If an individual color value is malformed, that field falls back to its default and a dismissible warning banner appears at the top of the editor.
 
+### How do you pronounce it?
+
+Think "Se llame *yame*."
+
 ---
 
 ## License

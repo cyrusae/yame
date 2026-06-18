@@ -151,6 +151,39 @@ fn fixture_multiple_heading_levels_decorated() {
     );
 }
 
+/// Heading background must not bleed into the paragraph that follows.
+///
+/// If `headings::on_end` is not called (e.g., the `Event::End(TagEnd::Heading(_))`
+/// match arm in `build_decoration_map` is deleted), `s.in_heading_bg` is never
+/// cleared and every subsequent line inherits the heading background.
+#[test]
+fn heading_bg_does_not_bleed_past_heading_line() {
+    let text = "# Heading\n\nNormal text\n";
+    let theme = Theme::default_theme();
+    let (map, _) = build_decoration_map(text, &theme, true, None);
+
+    // Line 0 must have heading_bg (basic sanity).
+    assert!(
+        map[&0]
+            .iter()
+            .any(|s| s.full_line_bg == Some(theme.heading_bg)),
+        "line 0 must have heading_bg"
+    );
+    // Line 2 ("Normal text") must NOT carry heading_bg.
+    let bleeds = map
+        .get(&2)
+        .map(|spans| {
+            spans
+                .iter()
+                .any(|s| s.full_line_bg == Some(theme.heading_bg))
+        })
+        .unwrap_or(false);
+    assert!(
+        !bleeds,
+        "heading_bg must not bleed into line 2 (normal paragraph after heading)"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Continuation indent (regression guard for the list-item clipping bug)
 // ---------------------------------------------------------------------------

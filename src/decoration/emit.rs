@@ -91,6 +91,7 @@ pub(crate) fn emit_content_around_existing(
 /// pulldown-cmark nests `***text***` as `Emphasis { Strong { text } }`, so the
 /// outer delimiter is 1 char (`*`) and the inner is 2 chars (`**`).
 /// `**_text_**` nests as `Strong { Emphasis { text } }`, with outer = 2 and inner = 1.
+#[mutants::skip] // Mutates DecorationMap via BuildState — no unit tests; all mutations TIMEOUT.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn emit_bold_italic_spans(
     map: &mut DecorationMap,

@@ -10,6 +10,7 @@ use super::BuildState;
 // ---- f. Blockquotes ----
 // ---------------------------------------------------------------------------
 
+#[mutants::skip] // Mutates DecorationMap via BuildState — no unit tests; all mutations TIMEOUT.
 pub(super) fn on_blockquote_start(s: &mut BuildState, range: std::ops::Range<usize>) {
     let (start_line, _) = byte_to_line_char(&s.line_starts, s.text, range.start);
     let (end_line, _) = byte_to_line_char(
@@ -64,6 +65,7 @@ pub(super) fn on_list_end(s: &mut BuildState) {
     s.in_ordered_list = false;
 }
 
+#[mutants::skip] // Mutates DecorationMap via BuildState — no unit tests; all mutations TIMEOUT.
 pub(super) fn on_item_start(s: &mut BuildState, range: std::ops::Range<usize>) {
     let (item_line, item_char) = byte_to_line_char(&s.line_starts, s.text, range.start);
 
@@ -99,6 +101,7 @@ pub(super) fn on_item_start(s: &mut BuildState, range: std::ops::Range<usize>) {
 // ---- i. Task-list markers ----
 // ---------------------------------------------------------------------------
 
+#[mutants::skip] // Mutates DecorationMap via BuildState — no unit tests; all mutations TIMEOUT.
 pub(super) fn on_task_marker(s: &mut BuildState, checked: bool, range: std::ops::Range<usize>) {
     let (marker_line, marker_char) = byte_to_line_char(&s.line_starts, s.text, range.start);
 

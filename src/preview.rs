@@ -164,8 +164,7 @@ pub(crate) fn render_lines(
         }
 
         // ── Line-level decoration properties ────────────────────────────────
-        let full_line_bg: Option<Color> =
-            deco.and_then(|d| d.iter().find_map(|s| s.full_line_bg));
+        let full_line_bg: Option<Color> = deco.and_then(|d| d.iter().find_map(|s| s.full_line_bg));
         let border_bottom: Option<Color> =
             deco.and_then(|d| d.iter().find_map(|s| s.border_bottom));
         let cont_indent: usize = deco
@@ -218,7 +217,11 @@ pub(crate) fn render_lines(
             let char_end = char_start + char_len;
             // First row uses row_indent (frontmatter visual offset); subsequent
             // rows use cont_indent (list / blockquote continuation alignment).
-            let indent = if wrap_idx == 0 { row_indent } else { cont_indent };
+            let indent = if wrap_idx == 0 {
+                row_indent
+            } else {
+                cont_indent
+            };
 
             // Narrow decoration spans to this visual row's char range and
             // adjust char positions to be relative to the row start — exactly
@@ -294,15 +297,22 @@ fn emit_spans(spans: &[Span<'_>], out: &mut impl Write) -> io::Result<()> {
 /// 2. `crossterm::terminal::size()` (works without raw mode on most systems).
 /// 3. Hard-coded default of 80.
 pub(crate) fn preview_width() -> usize {
-    if let Ok(s) = std::env::var("COLUMNS")
-        && let Ok(n) = s.trim().parse::<usize>()
-        && n > 0
+    if let Some(n) = std::env::var("COLUMNS")
+        .ok()
+        .and_then(|s| parse_columns(&s))
     {
         return n;
     }
     crossterm::terminal::size()
         .map(|(w, _)| w as usize)
         .unwrap_or(80)
+}
+
+/// Parse a `$COLUMNS` string into a positive column count.
+///
+/// Returns `None` if the string is not a valid integer or parses to zero.
+fn parse_columns(s: &str) -> Option<usize> {
+    s.trim().parse::<usize>().ok().filter(|&n| n > 0)
 }
 
 /// Convert a ratatui [`Style`] to an ANSI SGR opening escape sequence.
@@ -506,12 +516,15 @@ mod tests {
         let line = "- aaa bbb".to_string();
         let mut map = DecorationMap::default();
         // Bullet span at chars 0..1 carries cont_indent=2.
-        map.insert(0, vec![StyledSpan {
-            char_start: 0,
-            char_end: 1,
-            continuation_indent: 2,
-            ..Default::default()
-        }]);
+        map.insert(
+            0,
+            vec![StyledSpan {
+                char_start: 0,
+                char_end: 1,
+                continuation_indent: 2,
+                ..Default::default()
+            }],
+        );
         let theme = Theme::default_theme();
         let mut buf = Vec::new();
         render_lines(&[line], &map, Style::default(), &theme, 8, &mut buf).unwrap();
@@ -521,7 +534,10 @@ mod tests {
         // First row: no indent.
         assert_eq!(rows[0], "- aaa", "first row must not be indented");
         // Continuation row: 2 spaces indent + "bbb".
-        assert_eq!(rows[1], "  bbb", "continuation row must have 2-space indent");
+        assert_eq!(
+            rows[1], "  bbb",
+            "continuation row must have 2-space indent"
+        );
     }
 
     // Kills: row_indent not applied, or applied on wrong rows.
@@ -531,13 +547,16 @@ mod tests {
         let line = "title: Hello".to_string();
         let mut map = DecorationMap::default();
         // Frontmatter span with row_indent=3 and cont_indent=3.
-        map.insert(0, vec![StyledSpan {
-            char_start: 0,
-            char_end: 12,
-            row_indent: 3,
-            continuation_indent: 3,
-            ..Default::default()
-        }]);
+        map.insert(
+            0,
+            vec![StyledSpan {
+                char_start: 0,
+                char_end: 12,
+                row_indent: 3,
+                continuation_indent: 3,
+                ..Default::default()
+            }],
+        );
         let theme = Theme::default_theme();
         let mut buf = Vec::new();
         render_lines(&[line], &map, Style::default(), &theme, 40, &mut buf).unwrap();
@@ -558,12 +577,15 @@ mod tests {
         let line = "# Heading".to_string();
         let mut map = DecorationMap::default();
         // Heading span with full_line_bg = RGB(20, 30, 40).
-        map.insert(0, vec![StyledSpan {
-            char_start: 0,
-            char_end: 9,
-            full_line_bg: Some(Color::Rgb(20, 30, 40)),
-            ..Default::default()
-        }]);
+        map.insert(
+            0,
+            vec![StyledSpan {
+                char_start: 0,
+                char_end: 9,
+                full_line_bg: Some(Color::Rgb(20, 30, 40)),
+                ..Default::default()
+            }],
+        );
         let theme = Theme::default_theme();
         let mut buf = Vec::new();
         render_lines(&[line], &map, Style::default(), &theme, 40, &mut buf).unwrap();
@@ -584,12 +606,15 @@ mod tests {
     fn render_lines_border_bottom_emits_rule_line() {
         let line = "# H1".to_string();
         let mut map = DecorationMap::default();
-        map.insert(0, vec![StyledSpan {
-            char_start: 0,
-            char_end: 4,
-            border_bottom: Some(Color::Rgb(100, 150, 200)),
-            ..Default::default()
-        }]);
+        map.insert(
+            0,
+            vec![StyledSpan {
+                char_start: 0,
+                char_end: 4,
+                border_bottom: Some(Color::Rgb(100, 150, 200)),
+                ..Default::default()
+            }],
+        );
         let theme = Theme::default_theme();
         let mut buf = Vec::new();
         // term_width=5: heading row + border row of 5 × '─'.
@@ -614,12 +639,15 @@ mod tests {
         let mut map = DecorationMap::default();
         // Span with only a bg colour (inline code style).
         let span_style = Style::default().bg(Color::Rgb(50, 60, 70));
-        map.insert(0, vec![StyledSpan {
-            char_start: 0,
-            char_end: 5,
-            style: span_style,
-            ..Default::default()
-        }]);
+        map.insert(
+            0,
+            vec![StyledSpan {
+                char_start: 0,
+                char_end: 5,
+                style: span_style,
+                ..Default::default()
+            }],
+        );
         let theme = Theme::default_theme();
         let mut buf = Vec::new();
         render_lines(&[line], &map, Style::default(), &theme, 40, &mut buf).unwrap();
@@ -640,13 +668,16 @@ mod tests {
         let line = "> plain text".to_string();
         let mut map = DecorationMap::default();
         // Indicator span: only covers the ">" character (char_start=0, char_end=1).
-        map.insert(0, vec![StyledSpan {
-            char_start: 0,
-            char_end: 1,
-            style: Style::default().fg(Color::Rgb(80, 80, 80)), // muted indicator
-            is_blockquote: true,
-            ..Default::default()
-        }]);
+        map.insert(
+            0,
+            vec![StyledSpan {
+                char_start: 0,
+                char_end: 1,
+                style: Style::default().fg(Color::Rgb(80, 80, 80)), // muted indicator
+                is_blockquote: true,
+                ..Default::default()
+            }],
+        );
         let mut theme = Theme::default_theme();
         // Use a distinctive blockquote colour so we can detect it in the output.
         theme.blockquote_color = Color::Rgb(100, 150, 200);
@@ -660,15 +691,101 @@ mod tests {
         );
     }
 
+    // ── render_lines span positioning ────────────────────────────────────────
+
+    // Kills: delete field char_start from StyledSpan expression in render_lines.
+    // When char_start is omitted, the adjusted struct gets char_start=0 (Default),
+    // so a span in a soft-wrapped continuation row appears to start at column 0 of
+    // that row instead of at its correct position within the row.
+    //
+    // "- aaa bbb" at term_width=8 wraps to:
+    //   row 0: "- aaa"  char_range (0, 5)
+    //   row 1: "bbb"    char_range (6, 3)   ← space at char 5 consumed by wrapping
+    //
+    // A span at original chars 7–9 covers the last two 'b's ("bb").
+    // Correctly adjusted to row 1: [char_start=1, char_end=3] of "bbb".
+    // Under delete-char_start: [char_start=0, char_end=3] → all "bbb" gets the color.
+    //
+    // Test: the first 'b' of row 1 must be unstyled (no ANSI before it).
+    #[test]
+    fn render_lines_span_char_start_adjusted_for_wrapped_rows() {
+        let line = "- aaa bbb".to_string();
+        let mut map = DecorationMap::default();
+        let span_color = Color::Rgb(200, 100, 50);
+        map.insert(
+            0,
+            vec![StyledSpan {
+                char_start: 7,
+                char_end: 9,
+                style: Style::default().fg(span_color),
+                ..Default::default()
+            }],
+        );
+        let theme = Theme::default_theme();
+        let mut buf = Vec::new();
+        render_lines(&[line], &map, Style::default(), &theme, 8, &mut buf).unwrap();
+        let raw = String::from_utf8(buf).unwrap();
+        // The second newline-delimited segment is the "bbb" row.
+        let row1 = raw.split('\n').nth(1).unwrap_or("");
+        // First char must be unstyled: the row must start with 'b', not an ANSI escape.
+        // Under delete-char_start, the whole "bbb" gets the span color, starting the row
+        // with \x1b[38;2;...m instead of the plain 'b'.
+        assert!(
+            row1.starts_with('b'),
+            "first 'b' of wrapped row must be unstyled (span starts at col 1, not 0); \
+             got row1={row1:?}"
+        );
+        // The span color must still appear somewhere (span is actually applied to "bb").
+        assert!(
+            row1.contains("\x1b[38;2;200;100;50m"),
+            "span color must appear in the wrapped row; got row1={row1:?}"
+        );
+    }
+
+    // ── parse_columns ─────────────────────────────────────────────────────────
+
+    // Kills: replace > with < or == in parse_columns (COLUMNS never used when
+    // condition can't be satisfied for any positive usize).
+    #[test]
+    fn parse_columns_accepts_positive_value() {
+        assert_eq!(
+            super::parse_columns("100"),
+            Some(100),
+            "parse_columns must return Some(n) for a positive integer string"
+        );
+        assert_eq!(
+            super::parse_columns("  80  "),
+            Some(80),
+            "parse_columns must trim whitespace"
+        );
+    }
+
+    // Kills: replace > with >= in parse_columns (COLUMNS=0 would be returned as 0).
+    #[test]
+    fn parse_columns_rejects_zero() {
+        assert!(
+            super::parse_columns("0").is_none(),
+            "parse_columns must return None for 0 — a zero-width terminal is invalid"
+        );
+    }
+
+    // Sanity: non-numeric input must return None.
+    #[test]
+    fn parse_columns_rejects_non_numeric() {
+        assert!(super::parse_columns("abc").is_none());
+        assert!(super::parse_columns("").is_none());
+    }
+
     // ── preview_width ─────────────────────────────────────────────────────────
 
-    // Kills: $COLUMNS parsing returning wrong value or ignoring the variable.
+    // Kills: replace preview_width -> usize with 1 (and other small-constant mutations).
+    // In a typical test environment (no attached terminal, no COLUMNS override), the
+    // crossterm fallback produces 80.  We assert >= 2 to survive narrow-terminal CI
+    // environments while still failing if the whole function is replaced with a constant.
     #[test]
-    fn preview_width_uses_columns_env_var() {
-        // We can't mutate the real env in parallel tests safely, but we can
-        // confirm the fallback (80) is a positive integer — a minimal sanity check.
+    fn preview_width_is_at_least_two() {
         let w = super::preview_width();
-        assert!(w > 0, "preview_width must return a positive width");
+        assert!(w >= 2, "preview_width must be at least 2, got {w}");
     }
 
     // ---------------------------------------------------------------------------

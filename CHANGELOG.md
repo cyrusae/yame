@@ -22,6 +22,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - feat: `yame --preview <file>` — headless ANSI render for lf/file-manager previewers; respects `$COLUMNS`; full decoration and syntax-highlight pipeline; bg colours suppressed for clean integration (#190)
 
 ### Changed
+- input.rs/preview.rs/picker.rs: add tests for missed behavioral logic (Ctrl+X/F2 arms, detect_list_prefix, render_lines, preview_width, command_exists) (#231)
+- decoration/builder: replace heading-End exclude_re with post-heading bg test (#233)
+- mutants.toml: exclude decoration/builder TIMEOUTs (emit, blocks, fenced, headings, inline, misc on_link/on_image/on_strikethrough/on_rule, tables) (#230)
+- mutants.toml: exclude renderer TIMEOUTs (settings_modal, search_bar, status renderer) and settings commit_editor/commit_file TIMEOUTs (#229)
+- v1.0.0 version bump prep (#227)
+- settings.rs: add tests for modal behavioral logic (toggle_current, move_down/up, prev_tab, input_rgb, handle_settings_key, field_value/commit routing, value+commit functions) (#228)
 - Create CLAUDE.md with build commands and architecture overview (#218)
 - Set up Renovate for automated dependency management (#219)
 - Document recommended GitHub branch protection rules for main (#220)

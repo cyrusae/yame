@@ -1171,8 +1171,10 @@ mod tests {
             "code inside a heading must not use code_bg; got: {spans:?}"
         );
         assert!(
-            spans.iter().any(|s| s.style.fg == Some(theme.code_color)
-                && s.style.bg == Some(theme.heading_bg)),
+            spans
+                .iter()
+                .any(|s| s.style.fg == Some(theme.code_color)
+                    && s.style.bg == Some(theme.heading_bg)),
             "code inside a heading must use code_color fg and heading_bg bg; got: {spans:?}"
         );
     }
@@ -2427,10 +2429,9 @@ mod tests {
         let map = build_map(text, &make_theme(), true);
         let spans = map.get(&0).expect("line 0 must have spans");
         assert!(
-            spans
-                .iter()
-                .any(|s| s.char_start == 6 && s.char_end == 9
-                    && s.style.add_modifier.contains(Modifier::ITALIC)),
+            spans.iter().any(|s| s.char_start == 6
+                && s.char_end == 9
+                && s.style.add_modifier.contains(Modifier::ITALIC)),
             "path must be ITALIC when italic_support=true; got: {spans:?}"
         );
     }

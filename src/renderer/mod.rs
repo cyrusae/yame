@@ -15,7 +15,7 @@ mod utils;
 pub use self::search_bar::{
     render_search_bar, render_search_help_modal, render_shortcuts_modal, search_bar_height,
 };
-pub use self::settings_modal::{render_settings_modal, VISIBLE_FIELDS};
+pub use self::settings_modal::{VISIBLE_FIELDS, render_settings_modal};
 pub use status::{render_info_line, render_status_bar};
 pub use utils::{format_thousands, shorten_path, split_into_spans};
 
@@ -529,8 +529,8 @@ impl Widget for MarkdownView<'_> {
                     // Heading lines carry `line_default_style` on their delimiter span
                     // instead of emitting a wide content span that would block inline
                     // decorations.  Read from `line_decs` so continuation rows inherit it.
-                    let heading_default = line_decs
-                        .and_then(|decs| decs.iter().find_map(|s| s.line_default_style));
+                    let heading_default =
+                        line_decs.and_then(|decs| decs.iter().find_map(|s| s.line_default_style));
                     let row_default = if is_blockquote_line {
                         Style::default().fg(self.theme.blockquote_color).bg(line_bg)
                     } else if let Some(hd) = heading_default {
@@ -575,7 +575,11 @@ impl Widget for MarkdownView<'_> {
                     && is_last_wrap
                 {
                     use ratatui::layout::Rect as R;
-                    let ul_offset = if self.show_line_numbers { left_gutter } else { 0 };
+                    let ul_offset = if self.show_line_numbers {
+                        left_gutter
+                    } else {
+                        0
+                    };
                     buf.set_style(
                         R {
                             x: area.x + ul_offset,

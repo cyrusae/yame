@@ -168,4 +168,15 @@ mod tests {
             "which must find `sh` on Unix — it is always in PATH"
         );
     }
+
+    // Kills: replace command_exists -> bool with false.
+    // The false-constant mutant passes the nonexistent-tool test but fails here.
+    #[cfg(unix)]
+    #[test]
+    fn command_exists_returns_true_for_sh() {
+        assert!(
+            command_exists("sh"),
+            "command_exists must return true for `sh`, which is always in PATH on Unix"
+        );
+    }
 }

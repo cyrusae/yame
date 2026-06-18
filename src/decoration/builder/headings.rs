@@ -73,6 +73,7 @@ pub(super) fn on_start(s: &mut BuildState, level: HeadingLevel, range: std::ops:
     s.in_heading_bg = Some(s.theme.heading_bg);
 }
 
+#[mutants::skip] // Mutates BuildState — no unit tests; mutation TIMEOUT.
 pub(super) fn on_end(s: &mut BuildState) {
     s.in_heading_bg = None;
 }

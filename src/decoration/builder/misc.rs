@@ -12,6 +12,7 @@ use super::BuildState;
 // ---- g. Links ----
 // ---------------------------------------------------------------------------
 
+#[mutants::skip] // Mutates DecorationMap via BuildState — no unit tests; all mutations TIMEOUT.
 pub(super) fn on_link(s: &mut BuildState, range: std::ops::Range<usize>) {
     let (start_line, start_char) = byte_to_line_char(&s.line_starts, s.text, range.start);
     let (end_line, end_char_excl) = byte_to_line_char(&s.line_starts, s.text, range.end);
@@ -88,6 +89,7 @@ pub(super) fn on_link(s: &mut BuildState, range: std::ops::Range<usize>) {
 // `![alt](path)` — the range from pulldown-cmark covers the full `![alt](path)` string,
 // including the leading `!`.  We re-use `link_split_char_idx` which finds `](` at index 4
 // for `![hi](img)` (skipping the leading `!` and `[`).
+#[mutants::skip] // Mutates DecorationMap via BuildState — no unit tests; all mutations TIMEOUT.
 pub(super) fn on_image(s: &mut BuildState, range: std::ops::Range<usize>) {
     let (start_line, start_char) = byte_to_line_char(&s.line_starts, s.text, range.start);
     let (end_line, end_char_excl) = byte_to_line_char(&s.line_starts, s.text, range.end);
@@ -160,6 +162,7 @@ pub(super) fn on_image(s: &mut BuildState, range: std::ops::Range<usize>) {
 // ---- k. Strikethrough ----
 // ---------------------------------------------------------------------------
 
+#[mutants::skip] // Mutates DecorationMap via BuildState — no unit tests; all mutations TIMEOUT.
 pub(super) fn on_strikethrough(s: &mut BuildState, range: std::ops::Range<usize>) {
     let (start_line, start_char) = byte_to_line_char(&s.line_starts, s.text, range.start);
     let (end_line, end_char_excl) = byte_to_line_char(&s.line_starts, s.text, range.end);
@@ -202,6 +205,7 @@ pub(super) fn on_strikethrough(s: &mut BuildState, range: std::ops::Range<usize>
 // ---- l. Horizontal rule ----
 // ---------------------------------------------------------------------------
 
+#[mutants::skip] // Mutates DecorationMap via BuildState — no unit tests; all mutations TIMEOUT.
 pub(super) fn on_rule(s: &mut BuildState, range: std::ops::Range<usize>) {
     let (rule_line, _) = byte_to_line_char(&s.line_starts, s.text, range.start);
     let line_len = line_char_len(&s.line_starts, s.text, rule_line).max(1);

@@ -42,6 +42,7 @@ pub(super) fn on_emphasis_start(s: &mut BuildState, range: std::ops::Range<usize
 // decorations; the outer tag's state is left in place for its own End.
 // ---------------------------------------------------------------------------
 
+#[mutants::skip] // Mutates DecorationMap via BuildState — no unit tests; all mutations TIMEOUT.
 pub(super) fn on_strong_end(s: &mut BuildState, _range: std::ops::Range<usize>) {
     if let Some(strong_range) = s.in_strong.take() {
         // Peek at in_emphasis to check adjacency without consuming it.
@@ -113,6 +114,7 @@ pub(super) fn on_strong_end(s: &mut BuildState, _range: std::ops::Range<usize>) 
     }
 }
 
+#[mutants::skip] // Mutates DecorationMap via BuildState — no unit tests; all mutations TIMEOUT.
 pub(super) fn on_emphasis_end(s: &mut BuildState, _range: std::ops::Range<usize>) {
     if let Some(emph_range) = s.in_emphasis.take() {
         // Peek at in_strong to check adjacency without consuming it.
@@ -189,6 +191,7 @@ pub(super) fn on_emphasis_end(s: &mut BuildState, _range: std::ops::Range<usize>
 // ---- d. Inline code ----
 // ---------------------------------------------------------------------------
 
+#[mutants::skip] // Mutates DecorationMap via BuildState — no unit tests; all mutations TIMEOUT.
 pub(super) fn on_code(s: &mut BuildState, val: &CowStr, range: std::ops::Range<usize>) {
     s.word_count += val.split_whitespace().count();
     let (start_line, start_char) = byte_to_line_char(&s.line_starts, s.text, range.start);

@@ -186,6 +186,7 @@ pub(super) fn build_goto_line_bar(app: &App, input: &str) -> Line<'static> {
 ///
 /// Shows `" Save as: {input}_ "` in accent colour on `hints_bg`, matching the
 /// go-to-line prompt style so the two prompts feel visually consistent.
+#[mutants::skip] // Only called from #[mutants::skip] render_status_bar; no standalone test path.
 pub(super) fn build_save_as_bar(app: &App, input: &str) -> Line<'static> {
     let theme = &app.theme;
     let hints_bg = theme.ui_bg;

@@ -310,27 +310,6 @@ exclude_re = [
     "input\\.rs:387:67:.*replace \\| with \\^ in handle_search_key",
 
     # ---------------------------------------------------------------------------
-    # renderer/search_bar.rs — constants used only in #[mutants::skip] function
-    # ---------------------------------------------------------------------------
-
-    # INNER_W, BOX_W, BOX_H constants (lines 137, 139, 150) are only consumed by
-    # render_search_help_modal which is #[mutants::skip].  No test exercises the render
-    # path, so no arithmetic mutation to these constants can be killed.
-    "renderer/search_bar\\.rs:137:.*replace \\+ with",
-    "renderer/search_bar\\.rs:139:.*replace \\+ with",
-    "renderer/search_bar\\.rs:150:.*replace \\+ with",
-
-    # SC_INNER_W, SC_BOX_W, SC_BOX_H constants (lines 300, 302, 312) are only
-    # consumed by render_shortcuts_modal which is #[mutants::skip].  No test
-    # exercises that render path, so arithmetic mutations here are unkillable.
-    # Line 312: `SHORTCUTS.len() as u16 + 2` — `+→-` causes TIMEOUT (loop stall)
-    #   and `+→*` is a MISSED mutant (len()*2 never observable).
-    # Lines 300/302: `+→*` similarly unobservable through the skipped function.
-    "renderer/search_bar\\.rs:300:.*replace \\+ with",
-    "renderer/search_bar\\.rs:302:.*replace \\+ with",
-    "renderer/search_bar\\.rs:312:.*replace \\+ with",
-
-    # ---------------------------------------------------------------------------
     # renderer/mod.rs — focus_paragraph_bounds line 853 (unkillable)
     # ---------------------------------------------------------------------------
 
@@ -339,4 +318,80 @@ exclude_re = [
     # returns above).  The mutation gives `cursor_row..n`; since lines[cursor_row] is
     # non-blank, find() skips it and returns the same result as `cursor_row+1..n`.
     "renderer/mod\\.rs:853:27:.*replace \\+ with \\* in focus_paragraph_bounds",
+
+    # ---------------------------------------------------------------------------
+    # settings.rs — structurally unkillable no-ops
+    # ---------------------------------------------------------------------------
+
+    # `field_value`: `field < APPEARANCE_CORE.len()` (col 26).
+    # `<→<=` admits the expand-row index (== APPEARANCE_CORE.len()).
+    # appearance_core_value(cfg, resolved, APPEARANCE_CORE.len()) hits `_ => String::new()`,
+    # which is identical to the original expand-row branch.  No observable difference.
+    "settings\\.rs:219:26:.*replace < with <=",
+
+    # `commit_input`: same boundary check (col 31).
+    # commit_appearance_core(cfg, APPEARANCE_CORE.len(), v) hits `_ => false`,
+    # identical to the original `self.field == APPEARANCE_EXPAND_IDX` → false branch.
+    "settings\\.rs:239:31:.*replace < with <=",
+
+    # `move_up`: `self.field < self.scroll` scroll-adjust guard (col 27).
+    # `<→<=` fires when field == scroll, executing `self.scroll = self.field` — a no-op
+    # (scroll is already equal to field).  No observable state change.
+    "settings\\.rs:\\d+:27:.*replace < with <= in SettingsModal::move_up",
+
+    # `commit_appearance_core` arm 1: `1 => false` for the Toggle row.
+    # Deleting this arm makes field=1 fall to `_ => false` — identical return value.
+    "settings\\.rs:\\d+:9:.*delete match arm 1 in commit_appearance_core",
+
+    # `commit_editor` arms 0..=4: these toggles return false (handled by toggle_current).
+    # Deleting them makes fields 0-4 fall to `_ => false` — identical return value.
+    "settings\\.rs:\\d+:9:.*delete match arm 0\\.\\. in commit_editor",
+
+    # `commit_file` arms 0|1: toggle fields return false (handled by toggle_current).
+    # Deleting them makes fields 0-1 fall to `_ => false` — identical return value.
+    "settings\\.rs:\\d+:9:.*delete match arm 0 \\| 1 in commit_file",
+
+    # Dead code block inside the expand-row handler (handle_settings_key).
+    # The outer `if modal.field == APPEARANCE_EXPAND_IDX` ensures field is always
+    # exactly APPEARANCE_EXPAND_IDX when we reach the inner `if ... field > ...` check.
+    # A value can't be simultaneously == and > the same constant, so the inner branch
+    # body never executes.  All mutations to the inner condition or body are unkillable.
+    "settings\\.rs:511:.*",
+
+    # ---------------------------------------------------------------------------
+    # input.rs — Cmd+Shift+Z redo guard (non-overlapping bitmask no-op)
+    # ---------------------------------------------------------------------------
+
+    # `mods == KeyModifiers::SUPER | KeyModifiers::SHIFT` guard in handle_key_event.
+    # SUPER (bit 3) and SHIFT (bit 0) occupy non-overlapping bits; for any two
+    # non-overlapping flags A and B, `A | B == A ^ B`.  No test can distinguish
+    # the bitwise-OR from the bitwise-XOR form.
+    "input\\.rs:755:67:.*replace \\| with \\^ in handle_key_event",
+
+    # ---------------------------------------------------------------------------
+    # preview.rs — render_lines span-filter boundary no-ops
+    # ---------------------------------------------------------------------------
+
+    # `.filter(|s| s.char_end > char_start && s.char_start < char_end)` in render_lines.
+    # All three boundary mutations produce zero-width adjusted spans:
+    #   · `>→>=` (col 48): a span with char_end == row_char_start passes the filter, but
+    #     saturating_sub gives adjusted char_end = 0 — zero-width, skipped by split_into_spans.
+    #   · `&&→||` (col 61): a span completely before the row (char_end ≤ row_char_start)
+    #     passes via the second sub-condition, but the adjusted char_start and char_end both
+    #     saturate to 0 — zero-width, skipped.
+    #   · `<→<=` (col 77): a span starting exactly at row_char_end passes, but the adjusted
+    #     char_end = s.char_end.saturating_sub(char_start).min(char_len) is still ≤ 0 relative
+    #     to the clamped start — zero-width, skipped.
+    # In every case split_into_spans's `if s_start >= s_end { continue; }` guard absorbs
+    # the zero-width span, producing identical output.  Structurally unkillable.
+    "preview\\.rs:\\d+:48:.*replace > with >= in render_lines",
+    "preview\\.rs:\\d+:61:.*replace && with \\|\\| in render_lines",
+    "preview\\.rs:\\d+:77:.*replace < with <= in render_lines",
+
+    # `if indent > 0 { write!(out, " ".repeat(indent)) }` in render_lines.
+    # `>→>=` makes the condition always true for usize; but `" ".repeat(0)` writes
+    # an empty string — `write!(out, "{}", "")` emits zero bytes.  Observable output
+    # is identical.  Structurally unkillable.
+    "preview\\.rs:\\d+:23:.*replace > with >= in render_lines",
+
 ]

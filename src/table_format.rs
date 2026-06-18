@@ -636,11 +636,7 @@ mod tests {
     #[test]
     fn compact_table_removes_trailing_padding() {
         // A uniformly-padded table should become compact (no trailing spaces in cells).
-        let lines = s(&[
-            "| Name   | Age |",
-            "| ------ | --- |",
-            "| Alice  | 30  |",
-        ]);
+        let lines = s(&["| Name   | Age |", "| ------ | --- |", "| Alice  | 30  |"]);
         let result = compact_table(&lines);
         assert_eq!(result[0], "| Name | Age |");
         assert_eq!(result[2], "| Alice | 30 |");
@@ -695,13 +691,12 @@ mod tests {
     #[test]
     fn already_uniform_table_detected_correctly() {
         // format_table on a uniformly-padded table must be identity.
-        let uniform = s(&[
-            "| Name  | Age |",
-            "| ----- | --- |",
-            "| Alice | 30  |",
-        ]);
+        let uniform = s(&["| Name  | Age |", "| ----- | --- |", "| Alice | 30  |"]);
         let again = format_table(&uniform);
-        assert_eq!(again, uniform, "uniform table must be fixed point of format_table");
+        assert_eq!(
+            again, uniform,
+            "uniform table must be fixed point of format_table"
+        );
     }
 
     // ---- T-22: format_table with single-row input (no separator row) ----

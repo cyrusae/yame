@@ -68,6 +68,7 @@ pub(super) fn fence_content_line_end(line_starts: &[usize], text: &str, line: us
 // ---- e. Fenced code blocks ----
 // ---------------------------------------------------------------------------
 
+#[mutants::skip] // Mutates DecorationMap via BuildState — no unit tests; all mutations TIMEOUT.
 pub(super) fn on_start(s: &mut BuildState, lang: &CowStr, range: std::ops::Range<usize>) {
     let (start_line, _) = byte_to_line_char(&s.line_starts, s.text, range.start);
     let (end_line, _) = byte_to_line_char(

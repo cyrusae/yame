@@ -12,7 +12,6 @@ use tui_textarea::CursorMove;
 
 use yame::app::{App, FileMode, get_selection_text, resolve_file_mode};
 use yame::config::{LayoutConfig, Theme, load_config, write_config};
-use yame::settings::{SettingsModal, SettingsOutcome, handle_settings_key};
 use yame::decoration::{
     DecorationMap, block_highlights_to_decoration_map, build_decoration_map, count_words,
 };
@@ -20,6 +19,7 @@ use yame::highlighting::HighlightCache;
 use yame::layout::{DEFAULT_MIN_COLS, compute_layout};
 use yame::renderer;
 use yame::search::SearchState;
+use yame::settings::{SettingsModal, SettingsOutcome, handle_settings_key};
 use yame::status::StatusMode;
 
 use super::commands::{center_scroll, clamp_scroll, handle_exit, handle_save, handle_save_to_path};
@@ -673,8 +673,7 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
 
         // Ctrl+O / Cmd+O: open file picker.  If the current buffer is dirty,
         // ask the user to confirm discarding changes before suspending the TUI.
-        (KeyModifiers::CONTROL, KeyCode::Char('o'))
-        | (KeyModifiers::SUPER, KeyCode::Char('o')) => {
+        (KeyModifiers::CONTROL, KeyCode::Char('o')) | (KeyModifiers::SUPER, KeyCode::Char('o')) => {
             if app.is_dirty {
                 app.status.mode = StatusMode::SwitchFilePrompt;
                 KeyOutcome::Continue
@@ -1435,7 +1434,12 @@ where
                         KeyOutcome::CommitSettings => {
                             // Extract what we need before releasing the borrow on app.settings.
                             let (cfg, new_tw, new_fm, new_ro) = match &app.settings {
-                                Some(m) => (m.config.clone(), m.typewriter_mode, m.focus_mode, m.read_only),
+                                Some(m) => (
+                                    m.config.clone(),
+                                    m.typewriter_mode,
+                                    m.focus_mode,
+                                    m.read_only,
+                                ),
                                 None => continue,
                             };
                             match write_config(&cfg) {
@@ -1448,10 +1452,10 @@ where
                                         &mut warnings,
                                     );
                                     app.highlight_cache = cfg.highlighting.enabled.then(|| {
-                                        let palette_theme = cfg
-                                            .highlighting
-                                            .use_palette_colors
-                                            .then(|| yame::highlighting::build_palette_theme(&app.theme));
+                                        let palette_theme =
+                                            cfg.highlighting.use_palette_colors.then(|| {
+                                                yame::highlighting::build_palette_theme(&app.theme)
+                                            });
                                         Arc::new(yame::highlighting::HighlightCache::new(
                                             true,
                                             cfg.highlighting.syntect_theme.clone(),
@@ -1461,8 +1465,10 @@ where
                                     if let Some(p) = &app.file_path {
                                         app.file_mode = resolve_file_mode(p, &cfg.filetype);
                                     }
-                                    app.show_line_numbers = cfg.layout.line_numbers.unwrap_or(false);
-                                    app.powerline_glyphs = cfg.layout.powerline_glyphs.unwrap_or(true);
+                                    app.show_line_numbers =
+                                        cfg.layout.line_numbers.unwrap_or(false);
+                                    app.powerline_glyphs =
+                                        cfg.layout.powerline_glyphs.unwrap_or(true);
                                     app.tab_width = cfg.layout.tab_width.unwrap_or(4) as usize;
                                     app.typewriter_mode = new_tw;
                                     app.focus_mode = new_fm;
@@ -2502,7 +2508,11 @@ mod tests {
             &mut app,
             KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL),
         );
-        assert_eq!(outcome, KeyOutcome::Continue, "Ctrl+X cut must return Continue");
+        assert_eq!(
+            outcome,
+            KeyOutcome::Continue,
+            "Ctrl+X cut must return Continue"
+        );
         // The selection ("hello") should have been deleted.
         assert!(
             !app.textarea.lines()[0].contains("hello"),
@@ -3684,7 +3694,11 @@ mod tests {
         app.textarea = TextArea::new(vec!["- item".to_string()]);
         app.textarea.move_cursor(tui_textarea::CursorMove::End);
         handle_key_event(&mut app, key(KeyCode::Enter));
-        assert_eq!(app.textarea.lines()[1], "- ", "new line must start with list prefix");
+        assert_eq!(
+            app.textarea.lines()[1],
+            "- ",
+            "new line must start with list prefix"
+        );
     }
 
     // Kills: delete exit-list branch → Enter on empty item inserts another prefix instead of exiting.
@@ -3695,8 +3709,16 @@ mod tests {
         app.textarea.move_cursor(tui_textarea::CursorMove::End);
         handle_key_event(&mut app, key(KeyCode::Enter));
         // Line count unchanged: the prefix was stripped, no new line added.
-        assert_eq!(app.textarea.lines().len(), 1, "exit-list must not add a line");
-        assert_eq!(app.textarea.lines()[0], "", "prefix must be stripped from empty item");
+        assert_eq!(
+            app.textarea.lines().len(),
+            1,
+            "exit-list must not add a line"
+        );
+        assert_eq!(
+            app.textarea.lines()[0],
+            "",
+            "prefix must be stripped from empty item"
+        );
     }
 
     // Kills: delete ordered increment → ordered continuation repeats the same number.
@@ -3706,7 +3728,11 @@ mod tests {
         app.textarea = TextArea::new(vec!["3. third".to_string()]);
         app.textarea.move_cursor(tui_textarea::CursorMove::End);
         handle_key_event(&mut app, key(KeyCode::Enter));
-        assert_eq!(app.textarea.lines()[1], "4. ", "ordered continuation must use next number");
+        assert_eq!(
+            app.textarea.lines()[1],
+            "4. ",
+            "ordered continuation must use next number"
+        );
     }
 
     // Kills: delete task-list branch → task item continuation uses wrong prefix.
@@ -3716,7 +3742,11 @@ mod tests {
         app.textarea = TextArea::new(vec!["- [x] done".to_string()]);
         app.textarea.move_cursor(tui_textarea::CursorMove::End);
         handle_key_event(&mut app, key(KeyCode::Enter));
-        assert_eq!(app.textarea.lines()[1], "- [ ] ", "task continuation must be unchecked");
+        assert_eq!(
+            app.textarea.lines()[1],
+            "- [ ] ",
+            "task continuation must be unchecked"
+        );
     }
 
     // Kills: delete plain-Enter fallback → Enter on non-list line does nothing.
@@ -3726,7 +3756,85 @@ mod tests {
         app.textarea = TextArea::new(vec!["hello world".to_string()]);
         app.textarea.move_cursor(tui_textarea::CursorMove::End);
         handle_key_event(&mut app, key(KeyCode::Enter));
-        assert_eq!(app.textarea.lines().len(), 2, "Enter on plain text must add a new line");
+        assert_eq!(
+            app.textarea.lines().len(),
+            2,
+            "Enter on plain text must add a new line"
+        );
         assert_eq!(app.textarea.lines()[1], "", "new line must be empty");
+    }
+
+    // ── Ctrl+X / F2 arms ────────────────────────────────────────────────────
+
+    // Kills: delete Ctrl+X arm — falls to `_` which only sets force_redecorate
+    // when line count changes.  Cutting a single-line selection preserves line
+    // count, so the _ fallthrough leaves force_redecorate=false.
+    #[test]
+    fn ctrl_x_sets_force_redecorate() {
+        let mut app = make_app();
+        app.textarea = TextArea::new(vec!["hello world".to_string()]);
+        app.textarea.move_cursor(tui_textarea::CursorMove::Head);
+        app.textarea.start_selection();
+        app.textarea.move_cursor(tui_textarea::CursorMove::Forward);
+        app.force_redecorate = false;
+        handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL),
+        );
+        assert!(
+            app.force_redecorate,
+            "Ctrl+X must set force_redecorate=true unconditionally"
+        );
+    }
+
+    // Kills: delete F(2) arm — falls to `_` which returns Continue, not OpenSettings.
+    #[test]
+    fn f2_returns_open_settings() {
+        let mut app = make_app();
+        assert_eq!(
+            handle_key_event(&mut app, KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE)),
+            KeyOutcome::OpenSettings,
+            "F2 must return OpenSettings"
+        );
+    }
+
+    // Kills: replace != with == in the line-count guard inside the `_` arm.
+    // With ==: force_redecorate is set when line count DOES NOT change (inverted).
+    // Typing a plain char never changes line count, so the mutation would set
+    // force_redecorate where the real code leaves it false.
+    #[test]
+    fn typing_char_does_not_set_force_redecorate() {
+        let mut app = make_app();
+        app.force_redecorate = false;
+        handle_key_event(&mut app, key(KeyCode::Char('a')));
+        assert!(
+            !app.force_redecorate,
+            "typing a plain char must not set force_redecorate (no line count change)"
+        );
+    }
+
+    // ── detect_list_prefix boundary cases ───────────────────────────────────
+
+    // Kills: replace > with >= in the ordered-list digit_end guard.
+    // With >=: digit_end==0 (no leading digits) enters the branch, incorrectly
+    // treating ". item" as an ordered list with an implicit "1." prefix.
+    #[test]
+    fn detect_list_prefix_dot_without_leading_digit_returns_none() {
+        assert!(
+            detect_list_prefix(". item").is_none(),
+            "a line starting with '.' but no leading digit must not match ordered list"
+        );
+    }
+
+    // Kills: replace && with || in the ordered-list punctuation filter.
+    // With ||: any char after the digits where the substring-after has a leading
+    // space also matches (e.g. "1x item" where 'x' is not '.'/')' but " item" starts
+    // with ' ').
+    #[test]
+    fn detect_list_prefix_digit_then_non_punct_returns_none() {
+        assert!(
+            detect_list_prefix("1x item").is_none(),
+            "a digit followed by non-punctuation must not match ordered list"
+        );
     }
 }

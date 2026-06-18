@@ -56,8 +56,7 @@ pub const PRESET_OPTIONS: &[&str] = &[
 ];
 
 pub const BLEND_OPTIONS: &[&str] = &[
-    "0.0", "0.1", "0.2", "0.3", "0.4",
-    "0.5", "0.6", "0.7", "0.8", "0.9", "1.0",
+    "0.0", "0.1", "0.2", "0.3", "0.4", "0.5", "0.6", "0.7", "0.8", "0.9", "1.0",
 ];
 
 pub const UNKNOWN_AS_OPTIONS: &[&str] = &["markdown", "plain"];
@@ -67,47 +66,156 @@ pub const UNKNOWN_AS_OPTIONS: &[&str] = &["markdown", "plain"];
 // ---------------------------------------------------------------------------
 
 pub const APPEARANCE_CORE: &[FieldDef] = &[
-    FieldDef { label: "Preset",           kind: FieldKind::Cycler { options: PRESET_OPTIONS } },
-    FieldDef { label: "Rainbow headings", kind: FieldKind::Toggle },
-    FieldDef { label: "Text",             kind: FieldKind::HexColor },
-    FieldDef { label: "Accent",           kind: FieldKind::HexColor },
-    FieldDef { label: "Muted",            kind: FieldKind::HexColor },
-    FieldDef { label: "Code",             kind: FieldKind::HexColor },
-    FieldDef { label: "Background",       kind: FieldKind::HexColor },
-    FieldDef { label: "Warning",          kind: FieldKind::HexColor },
+    FieldDef {
+        label: "Preset",
+        kind: FieldKind::Cycler {
+            options: PRESET_OPTIONS,
+        },
+    },
+    FieldDef {
+        label: "Rainbow headings",
+        kind: FieldKind::Toggle,
+    },
+    FieldDef {
+        label: "Text",
+        kind: FieldKind::HexColor,
+    },
+    FieldDef {
+        label: "Accent",
+        kind: FieldKind::HexColor,
+    },
+    FieldDef {
+        label: "Muted",
+        kind: FieldKind::HexColor,
+    },
+    FieldDef {
+        label: "Code",
+        kind: FieldKind::HexColor,
+    },
+    FieldDef {
+        label: "Background",
+        kind: FieldKind::HexColor,
+    },
+    FieldDef {
+        label: "Warning",
+        kind: FieldKind::HexColor,
+    },
 ];
 
 // sentinel index: the "Show more…" / "Show less…" row
 pub const APPEARANCE_EXPAND_IDX: usize = APPEARANCE_CORE.len();
 
 pub const APPEARANCE_EXTENDED: &[FieldDef] = &[
-    FieldDef { label: "Bold color",          kind: FieldKind::HexColor },
-    FieldDef { label: "Italic color",        kind: FieldKind::HexColor },
-    FieldDef { label: "Strikethrough color", kind: FieldKind::HexColor },
-    FieldDef { label: "Blockquote color",    kind: FieldKind::HexColor },
-    FieldDef { label: "Link text color",     kind: FieldKind::HexColor },
-    FieldDef { label: "Link URL color",      kind: FieldKind::HexColor },
-    FieldDef { label: "Done item color",     kind: FieldKind::HexColor },
-    FieldDef { label: "Rule color",          kind: FieldKind::HexColor },
-    FieldDef { label: "Code bg",             kind: FieldKind::HexColor },
-    FieldDef { label: "Fenced bg",           kind: FieldKind::HexColor },
-    FieldDef { label: "Heading bg",          kind: FieldKind::HexColor },
-    FieldDef { label: "Selection bg",        kind: FieldKind::HexColor },
-    FieldDef { label: "Selection fg",        kind: FieldKind::HexColor },
-    FieldDef { label: "UI bg",               kind: FieldKind::HexColor },
-    FieldDef { label: "UI bar",              kind: FieldKind::HexColor },
-    FieldDef { label: "UI text",             kind: FieldKind::HexColor },
-    FieldDef { label: "Delimiter blend",     kind: FieldKind::Cycler { options: BLEND_OPTIONS } },
-    FieldDef { label: "Highlight bg",        kind: FieldKind::HexColor },
-    FieldDef { label: "Highlight fg",        kind: FieldKind::HexColor },
-    FieldDef { label: "Frontmatter key",     kind: FieldKind::HexColor },
-    FieldDef { label: "Frontmatter bg",      kind: FieldKind::HexColor },
-    FieldDef { label: "H1 color",            kind: FieldKind::HexColor },
-    FieldDef { label: "H2 color",            kind: FieldKind::HexColor },
-    FieldDef { label: "H3 color",            kind: FieldKind::HexColor },
-    FieldDef { label: "H4 color",            kind: FieldKind::HexColor },
-    FieldDef { label: "H5 color",            kind: FieldKind::HexColor },
-    FieldDef { label: "H6 color",            kind: FieldKind::HexColor },
+    FieldDef {
+        label: "Bold color",
+        kind: FieldKind::HexColor,
+    },
+    FieldDef {
+        label: "Italic color",
+        kind: FieldKind::HexColor,
+    },
+    FieldDef {
+        label: "Strikethrough color",
+        kind: FieldKind::HexColor,
+    },
+    FieldDef {
+        label: "Blockquote color",
+        kind: FieldKind::HexColor,
+    },
+    FieldDef {
+        label: "Link text color",
+        kind: FieldKind::HexColor,
+    },
+    FieldDef {
+        label: "Link URL color",
+        kind: FieldKind::HexColor,
+    },
+    FieldDef {
+        label: "Done item color",
+        kind: FieldKind::HexColor,
+    },
+    FieldDef {
+        label: "Rule color",
+        kind: FieldKind::HexColor,
+    },
+    FieldDef {
+        label: "Code bg",
+        kind: FieldKind::HexColor,
+    },
+    FieldDef {
+        label: "Fenced bg",
+        kind: FieldKind::HexColor,
+    },
+    FieldDef {
+        label: "Heading bg",
+        kind: FieldKind::HexColor,
+    },
+    FieldDef {
+        label: "Selection bg",
+        kind: FieldKind::HexColor,
+    },
+    FieldDef {
+        label: "Selection fg",
+        kind: FieldKind::HexColor,
+    },
+    FieldDef {
+        label: "UI bg",
+        kind: FieldKind::HexColor,
+    },
+    FieldDef {
+        label: "UI bar",
+        kind: FieldKind::HexColor,
+    },
+    FieldDef {
+        label: "UI text",
+        kind: FieldKind::HexColor,
+    },
+    FieldDef {
+        label: "Delimiter blend",
+        kind: FieldKind::Cycler {
+            options: BLEND_OPTIONS,
+        },
+    },
+    FieldDef {
+        label: "Highlight bg",
+        kind: FieldKind::HexColor,
+    },
+    FieldDef {
+        label: "Highlight fg",
+        kind: FieldKind::HexColor,
+    },
+    FieldDef {
+        label: "Frontmatter key",
+        kind: FieldKind::HexColor,
+    },
+    FieldDef {
+        label: "Frontmatter bg",
+        kind: FieldKind::HexColor,
+    },
+    FieldDef {
+        label: "H1 color",
+        kind: FieldKind::HexColor,
+    },
+    FieldDef {
+        label: "H2 color",
+        kind: FieldKind::HexColor,
+    },
+    FieldDef {
+        label: "H3 color",
+        kind: FieldKind::HexColor,
+    },
+    FieldDef {
+        label: "H4 color",
+        kind: FieldKind::HexColor,
+    },
+    FieldDef {
+        label: "H5 color",
+        kind: FieldKind::HexColor,
+    },
+    FieldDef {
+        label: "H6 color",
+        kind: FieldKind::HexColor,
+    },
 ];
 
 // ---------------------------------------------------------------------------
@@ -115,14 +223,38 @@ pub const APPEARANCE_EXTENDED: &[FieldDef] = &[
 // ---------------------------------------------------------------------------
 
 pub const EDITOR_FIELDS: &[FieldDef] = &[
-    FieldDef { label: "Line numbers",    kind: FieldKind::Toggle },
-    FieldDef { label: "Powerline glyphs",kind: FieldKind::Toggle },
-    FieldDef { label: "Typewriter mode", kind: FieldKind::Toggle },
-    FieldDef { label: "Focus mode",      kind: FieldKind::Toggle },
-    FieldDef { label: "Read-only",       kind: FieldKind::Toggle },
-    FieldDef { label: "Min columns",     kind: FieldKind::Number { allow_none: false } },
-    FieldDef { label: "Max columns",     kind: FieldKind::Number { allow_none: true  } },
-    FieldDef { label: "Tab width",       kind: FieldKind::Number { allow_none: false } },
+    FieldDef {
+        label: "Line numbers",
+        kind: FieldKind::Toggle,
+    },
+    FieldDef {
+        label: "Powerline glyphs",
+        kind: FieldKind::Toggle,
+    },
+    FieldDef {
+        label: "Typewriter mode",
+        kind: FieldKind::Toggle,
+    },
+    FieldDef {
+        label: "Focus mode",
+        kind: FieldKind::Toggle,
+    },
+    FieldDef {
+        label: "Read-only",
+        kind: FieldKind::Toggle,
+    },
+    FieldDef {
+        label: "Min columns",
+        kind: FieldKind::Number { allow_none: false },
+    },
+    FieldDef {
+        label: "Max columns",
+        kind: FieldKind::Number { allow_none: true },
+    },
+    FieldDef {
+        label: "Tab width",
+        kind: FieldKind::Number { allow_none: false },
+    },
 ];
 
 // ---------------------------------------------------------------------------
@@ -130,11 +262,28 @@ pub const EDITOR_FIELDS: &[FieldDef] = &[
 // ---------------------------------------------------------------------------
 
 pub const FILE_FIELDS: &[FieldDef] = &[
-    FieldDef { label: "Highlighting",        kind: FieldKind::Toggle },
-    FieldDef { label: "Use palette colors",  kind: FieldKind::Toggle },
-    FieldDef { label: "Syntect theme",       kind: FieldKind::Text   },
-    FieldDef { label: "Unknown files as",    kind: FieldKind::Cycler { options: UNKNOWN_AS_OPTIONS } },
-    FieldDef { label: "Extra MD extensions", kind: FieldKind::Text   },
+    FieldDef {
+        label: "Highlighting",
+        kind: FieldKind::Toggle,
+    },
+    FieldDef {
+        label: "Use palette colors",
+        kind: FieldKind::Toggle,
+    },
+    FieldDef {
+        label: "Syntect theme",
+        kind: FieldKind::Text,
+    },
+    FieldDef {
+        label: "Unknown files as",
+        kind: FieldKind::Cycler {
+            options: UNKNOWN_AS_OPTIONS,
+        },
+    },
+    FieldDef {
+        label: "Extra MD extensions",
+        kind: FieldKind::Text,
+    },
 ];
 
 // ---------------------------------------------------------------------------
@@ -163,7 +312,13 @@ pub struct SettingsModal {
 }
 
 impl SettingsModal {
-    pub fn new(config: Config, resolved: Theme, typewriter_mode: bool, focus_mode: bool, read_only: bool) -> Self {
+    pub fn new(
+        config: Config,
+        resolved: Theme,
+        typewriter_mode: bool,
+        focus_mode: bool,
+        read_only: bool,
+    ) -> Self {
         Self {
             tab: 0,
             field: 0,
@@ -184,7 +339,13 @@ impl SettingsModal {
         match self.tab {
             0 => {
                 // core + expand row + (extended if expanded)
-                APPEARANCE_CORE.len() + 1 + if self.expanded { APPEARANCE_EXTENDED.len() } else { 0 }
+                APPEARANCE_CORE.len()
+                    + 1
+                    + if self.expanded {
+                        APPEARANCE_EXTENDED.len()
+                    } else {
+                        0
+                    }
             }
             1 => EDITOR_FIELDS.len(),
             2 => FILE_FIELDS.len(),
@@ -221,7 +382,11 @@ impl SettingsModal {
                 } else if field == APPEARANCE_EXPAND_IDX {
                     String::new() // handled separately by renderer
                 } else {
-                    appearance_extended_value(cfg, &self.resolved, field - APPEARANCE_EXPAND_IDX - 1)
+                    appearance_extended_value(
+                        cfg,
+                        &self.resolved,
+                        field - APPEARANCE_EXPAND_IDX - 1,
+                    )
                 }
             }
             1 => editor_value(self, field),
@@ -272,36 +437,44 @@ impl SettingsModal {
                     }
                 }
                 _ => false,
-            }
-            1 => {
-                match self.field {
-                    0 => {
-                        let v = self.config.layout.line_numbers.unwrap_or(false);
-                        self.config.layout.line_numbers = Some(!v);
-                        true
-                    }
-                    1 => {
-                        let v = self.config.layout.powerline_glyphs.unwrap_or(true);
-                        self.config.layout.powerline_glyphs = Some(!v);
-                        true
-                    }
-                    2 => { self.typewriter_mode = !self.typewriter_mode; true }
-                    3 => { self.focus_mode = !self.focus_mode; true }
-                    4 => { self.read_only = !self.read_only; true }
-                    _ => false,
+            },
+            1 => match self.field {
+                0 => {
+                    let v = self.config.layout.line_numbers.unwrap_or(false);
+                    self.config.layout.line_numbers = Some(!v);
+                    true
                 }
-            }
-            2 => {
-                match self.field {
-                    0 => { self.config.highlighting.enabled = !self.config.highlighting.enabled; true }
-                    1 => {
-                        self.config.highlighting.use_palette_colors =
-                            !self.config.highlighting.use_palette_colors;
-                        true
-                    }
-                    _ => false,
+                1 => {
+                    let v = self.config.layout.powerline_glyphs.unwrap_or(true);
+                    self.config.layout.powerline_glyphs = Some(!v);
+                    true
                 }
-            }
+                2 => {
+                    self.typewriter_mode = !self.typewriter_mode;
+                    true
+                }
+                3 => {
+                    self.focus_mode = !self.focus_mode;
+                    true
+                }
+                4 => {
+                    self.read_only = !self.read_only;
+                    true
+                }
+                _ => false,
+            },
+            2 => match self.field {
+                0 => {
+                    self.config.highlighting.enabled = !self.config.highlighting.enabled;
+                    true
+                }
+                1 => {
+                    self.config.highlighting.use_palette_colors =
+                        !self.config.highlighting.use_palette_colors;
+                    true
+                }
+                _ => false,
+            },
             _ => false,
         }
     }
@@ -330,14 +503,19 @@ impl SettingsModal {
     /// list, committing the new value immediately.  Returns `true` on success.
     pub fn cycle_current(&mut self, forward: bool) -> bool {
         let options: &'static [&'static str] = {
-            let Some(def) = self.field_def(self.field) else { return false };
+            let Some(def) = self.field_def(self.field) else {
+                return false;
+            };
             match &def.kind {
                 FieldKind::Cycler { options } => options,
                 _ => return false,
             }
         };
         let current = self.field_value(self.field);
-        let idx = options.iter().position(|&o| o == current.as_str()).unwrap_or(0);
+        let idx = options
+            .iter()
+            .position(|&o| o == current.as_str())
+            .unwrap_or(0);
         let next = if forward {
             (idx + 1) % options.len()
         } else {
@@ -451,7 +629,9 @@ pub fn handle_settings_key(
                 modal.input_buf.pop();
             }
             (mods, KeyCode::Char(c))
-                if !mods.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER) =>
+                if !mods.intersects(
+                    KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER,
+                ) =>
             {
                 modal.input_buf.push(c);
             }
@@ -463,8 +643,9 @@ pub fn handle_settings_key(
     // ── Navigation / actions ────────────────────────────────────────────────
     match (k.modifiers, k.code) {
         // Close
-        (KeyModifiers::NONE, KeyCode::Esc)
-        | (KeyModifiers::NONE, KeyCode::F(2)) => SettingsOutcome::Close,
+        (KeyModifiers::NONE, KeyCode::Esc) | (KeyModifiers::NONE, KeyCode::F(2)) => {
+            SettingsOutcome::Close
+        }
 
         // Tab navigation — Tab always switches; ←/→ cycle on cycler fields, switch tab otherwise.
         (KeyModifiers::NONE, KeyCode::Tab) => {
@@ -477,7 +658,11 @@ pub fn handle_settings_key(
         }
         (KeyModifiers::NONE, KeyCode::Right) => {
             if modal.is_cycler_field() {
-                if modal.cycle_current(true) { SettingsOutcome::Committed } else { SettingsOutcome::Continue }
+                if modal.cycle_current(true) {
+                    SettingsOutcome::Committed
+                } else {
+                    SettingsOutcome::Continue
+                }
             } else {
                 modal.next_tab();
                 SettingsOutcome::Continue
@@ -485,7 +670,11 @@ pub fn handle_settings_key(
         }
         (KeyModifiers::NONE, KeyCode::Left) => {
             if modal.is_cycler_field() {
-                if modal.cycle_current(false) { SettingsOutcome::Committed } else { SettingsOutcome::Continue }
+                if modal.cycle_current(false) {
+                    SettingsOutcome::Committed
+                } else {
+                    SettingsOutcome::Continue
+                }
             } else {
                 modal.prev_tab();
                 SettingsOutcome::Continue
@@ -503,8 +692,7 @@ pub fn handle_settings_key(
         }
 
         // Activate / toggle
-        (KeyModifiers::NONE, KeyCode::Enter)
-        | (KeyModifiers::NONE, KeyCode::Char(' ')) => {
+        (KeyModifiers::NONE, KeyCode::Enter) | (KeyModifiers::NONE, KeyCode::Char(' ')) => {
             // Expand toggle row
             if modal.tab == 0 && modal.field == APPEARANCE_EXPAND_IDX {
                 modal.expanded = !modal.expanded;
@@ -566,16 +754,23 @@ fn opt_or_resolved(v: &Option<String>, resolved: Color) -> String {
 
 fn appearance_core_value(cfg: &Config, resolved: &Theme, field: usize) -> String {
     match field {
-        0 => cfg.palette.preset.clone()
-                .map(|p| p.trim_end_matches("-expanded").to_string())
-                .unwrap_or_default(),
-        1 => bool_str(cfg.palette.preset.as_deref()
-                .is_some_and(|p| p.ends_with("-expanded"))),
-        2 => opt_or_resolved(&cfg.palette.text,    resolved.text),
-        3 => opt_or_resolved(&cfg.palette.accent,  resolved.accent),
-        4 => opt_or_resolved(&cfg.palette.muted,   resolved.muted),
-        5 => opt_or_resolved(&cfg.palette.code,    resolved.code_color),
-        6 => opt_or_resolved(&cfg.palette.bg,      resolved.bg),
+        0 => cfg
+            .palette
+            .preset
+            .clone()
+            .map(|p| p.trim_end_matches("-expanded").to_string())
+            .unwrap_or_default(),
+        1 => bool_str(
+            cfg.palette
+                .preset
+                .as_deref()
+                .is_some_and(|p| p.ends_with("-expanded")),
+        ),
+        2 => opt_or_resolved(&cfg.palette.text, resolved.text),
+        3 => opt_or_resolved(&cfg.palette.accent, resolved.accent),
+        4 => opt_or_resolved(&cfg.palette.muted, resolved.muted),
+        5 => opt_or_resolved(&cfg.palette.code, resolved.code_color),
+        6 => opt_or_resolved(&cfg.palette.bg, resolved.bg),
         7 => opt_or_resolved(&cfg.palette.warning, resolved.warning),
         _ => String::new(),
     }
@@ -583,27 +778,32 @@ fn appearance_core_value(cfg: &Config, resolved: &Theme, field: usize) -> String
 
 fn appearance_extended_value(cfg: &Config, resolved: &Theme, idx: usize) -> String {
     match idx {
-        0  => opt_or_resolved(&cfg.theme.bold_color,          resolved.bold_color),
-        1  => opt_or_resolved(&cfg.theme.italic_color,        resolved.italic_color),
-        2  => opt_or_resolved(&cfg.theme.strikethrough_color, resolved.strikethrough_color),
-        3  => opt_or_resolved(&cfg.theme.blockquote_color,    resolved.blockquote_color),
-        4  => opt_or_resolved(&cfg.theme.link_text_color,     resolved.link_text),
-        5  => opt_or_resolved(&cfg.theme.link_url_color,      resolved.link_url),
-        6  => opt_or_resolved(&cfg.theme.todo_done,           resolved.todo_done),
-        7  => opt_or_resolved(&cfg.theme.rule_color,          resolved.rule_color),
-        8  => opt_or_resolved(&cfg.theme.code_bg,             resolved.code_bg),
-        9  => opt_or_resolved(&cfg.theme.fenced_bg,           resolved.fenced_bg),
-        10 => opt_or_resolved(&cfg.theme.heading_bg,          resolved.heading_bg),
-        11 => opt_or_resolved(&cfg.theme.selection_bg,        resolved.selection_bg),
-        12 => opt_or_resolved(&cfg.theme.selection_fg,        resolved.selection_fg),
-        13 => opt_or_resolved(&cfg.theme.ui_bg,               resolved.ui_bg),
-        14 => opt_or_resolved(&cfg.theme.ui_bar,              resolved.ui_bar),
-        15 => opt_or_resolved(&cfg.theme.ui_text,             resolved.ui_text),
-        16 => format!("{:.1}", cfg.theme.delimiter_blend.unwrap_or(resolved.delimiter_blend)),
-        17 => opt_or_resolved(&cfg.theme.highlight_bg,    resolved.highlight_bg),
-        18 => opt_or_resolved(&cfg.theme.highlight_fg,    resolved.highlight_fg),
+        0 => opt_or_resolved(&cfg.theme.bold_color, resolved.bold_color),
+        1 => opt_or_resolved(&cfg.theme.italic_color, resolved.italic_color),
+        2 => opt_or_resolved(&cfg.theme.strikethrough_color, resolved.strikethrough_color),
+        3 => opt_or_resolved(&cfg.theme.blockquote_color, resolved.blockquote_color),
+        4 => opt_or_resolved(&cfg.theme.link_text_color, resolved.link_text),
+        5 => opt_or_resolved(&cfg.theme.link_url_color, resolved.link_url),
+        6 => opt_or_resolved(&cfg.theme.todo_done, resolved.todo_done),
+        7 => opt_or_resolved(&cfg.theme.rule_color, resolved.rule_color),
+        8 => opt_or_resolved(&cfg.theme.code_bg, resolved.code_bg),
+        9 => opt_or_resolved(&cfg.theme.fenced_bg, resolved.fenced_bg),
+        10 => opt_or_resolved(&cfg.theme.heading_bg, resolved.heading_bg),
+        11 => opt_or_resolved(&cfg.theme.selection_bg, resolved.selection_bg),
+        12 => opt_or_resolved(&cfg.theme.selection_fg, resolved.selection_fg),
+        13 => opt_or_resolved(&cfg.theme.ui_bg, resolved.ui_bg),
+        14 => opt_or_resolved(&cfg.theme.ui_bar, resolved.ui_bar),
+        15 => opt_or_resolved(&cfg.theme.ui_text, resolved.ui_text),
+        16 => format!(
+            "{:.1}",
+            cfg.theme
+                .delimiter_blend
+                .unwrap_or(resolved.delimiter_blend)
+        ),
+        17 => opt_or_resolved(&cfg.theme.highlight_bg, resolved.highlight_bg),
+        18 => opt_or_resolved(&cfg.theme.highlight_fg, resolved.highlight_fg),
         19 => opt_or_resolved(&cfg.theme.frontmatter_key, resolved.frontmatter_key),
-        20 => opt_or_resolved(&cfg.theme.frontmatter_bg,  resolved.frontmatter_bg),
+        20 => opt_or_resolved(&cfg.theme.frontmatter_bg, resolved.frontmatter_bg),
         21 => opt_or_resolved(&cfg.headings.h1, resolved.headings.h1),
         22 => opt_or_resolved(&cfg.headings.h2, resolved.headings.h2),
         23 => opt_or_resolved(&cfg.headings.h3, resolved.headings.h3),
@@ -622,15 +822,21 @@ fn editor_value(modal: &SettingsModal, field: usize) -> String {
         2 => bool_str(modal.typewriter_mode),
         3 => bool_str(modal.focus_mode),
         4 => bool_str(modal.read_only),
-        5 => cfg.layout.min_cols
-                .map(|n| n.to_string())
-                .unwrap_or_else(|| "60".to_string()),
-        6 => cfg.layout.max_cols
-                .map(|n| n.to_string())
-                .unwrap_or_else(|| "none (≤50% of terminal)".to_string()),
-        7 => cfg.layout.tab_width
-                .map(|n| n.to_string())
-                .unwrap_or_else(|| "4".to_string()),
+        5 => cfg
+            .layout
+            .min_cols
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| "60".to_string()),
+        6 => cfg
+            .layout
+            .max_cols
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| "none (≤50% of terminal)".to_string()),
+        7 => cfg
+            .layout
+            .tab_width
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| "4".to_string()),
         _ => String::new(),
     }
 }
@@ -647,7 +853,11 @@ fn file_value(cfg: &Config, field: usize) -> String {
 }
 
 fn bool_str(b: bool) -> String {
-    if b { "on".to_string() } else { "off".to_string() }
+    if b {
+        "on".to_string()
+    } else {
+        "off".to_string()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -670,15 +880,19 @@ fn set_opt_hex(field: &mut Option<String>, v: &str) -> bool {
 fn commit_appearance_core(cfg: &mut Config, field: usize, v: &str) -> bool {
     match field {
         0 => {
-            cfg.palette.preset = if v.is_empty() { None } else { Some(v.to_string()) };
+            cfg.palette.preset = if v.is_empty() {
+                None
+            } else {
+                Some(v.to_string())
+            };
             // When a preset is chosen, clear individual overrides so the preset colors apply.
             // (Individual fields win over the preset, so keeping them would make the cycle a no-op.)
             if cfg.palette.preset.is_some() {
-                cfg.palette.text    = None;
-                cfg.palette.accent  = None;
-                cfg.palette.muted   = None;
-                cfg.palette.code    = None;
-                cfg.palette.bg      = None;
+                cfg.palette.text = None;
+                cfg.palette.accent = None;
+                cfg.palette.muted = None;
+                cfg.palette.code = None;
+                cfg.palette.bg = None;
                 cfg.palette.warning = None;
             }
             true
@@ -696,16 +910,16 @@ fn commit_appearance_core(cfg: &mut Config, field: usize, v: &str) -> bool {
 
 fn commit_appearance_extended(cfg: &mut Config, idx: usize, v: &str) -> bool {
     match idx {
-        0  => set_opt_hex(&mut cfg.theme.bold_color, v),
-        1  => set_opt_hex(&mut cfg.theme.italic_color, v),
-        2  => set_opt_hex(&mut cfg.theme.strikethrough_color, v),
-        3  => set_opt_hex(&mut cfg.theme.blockquote_color, v),
-        4  => set_opt_hex(&mut cfg.theme.link_text_color, v),
-        5  => set_opt_hex(&mut cfg.theme.link_url_color, v),
-        6  => set_opt_hex(&mut cfg.theme.todo_done, v),
-        7  => set_opt_hex(&mut cfg.theme.rule_color, v),
-        8  => set_opt_hex(&mut cfg.theme.code_bg, v),
-        9  => set_opt_hex(&mut cfg.theme.fenced_bg, v),
+        0 => set_opt_hex(&mut cfg.theme.bold_color, v),
+        1 => set_opt_hex(&mut cfg.theme.italic_color, v),
+        2 => set_opt_hex(&mut cfg.theme.strikethrough_color, v),
+        3 => set_opt_hex(&mut cfg.theme.blockquote_color, v),
+        4 => set_opt_hex(&mut cfg.theme.link_text_color, v),
+        5 => set_opt_hex(&mut cfg.theme.link_url_color, v),
+        6 => set_opt_hex(&mut cfg.theme.todo_done, v),
+        7 => set_opt_hex(&mut cfg.theme.rule_color, v),
+        8 => set_opt_hex(&mut cfg.theme.code_bg, v),
+        9 => set_opt_hex(&mut cfg.theme.fenced_bg, v),
         10 => set_opt_hex(&mut cfg.theme.heading_bg, v),
         11 => set_opt_hex(&mut cfg.theme.selection_bg, v),
         12 => set_opt_hex(&mut cfg.theme.selection_fg, v),
@@ -713,11 +927,16 @@ fn commit_appearance_extended(cfg: &mut Config, idx: usize, v: &str) -> bool {
         14 => set_opt_hex(&mut cfg.theme.ui_bar, v),
         15 => set_opt_hex(&mut cfg.theme.ui_text, v),
         16 => {
-            if v.is_empty() { cfg.theme.delimiter_blend = None; return true; }
+            if v.is_empty() {
+                cfg.theme.delimiter_blend = None;
+                return true;
+            }
             if let Ok(f) = v.parse::<f32>() {
                 cfg.theme.delimiter_blend = Some(f.clamp(0.0, 1.0));
                 true
-            } else { false }
+            } else {
+                false
+            }
         }
         17 => set_opt_hex(&mut cfg.theme.highlight_bg, v),
         18 => set_opt_hex(&mut cfg.theme.highlight_fg, v),
@@ -741,7 +960,9 @@ fn commit_editor(modal: &mut SettingsModal, v: &str) -> bool {
             if let Ok(n) = v.parse::<u16>() {
                 modal.config.layout.min_cols = Some(n);
                 true
-            } else { false }
+            } else {
+                false
+            }
         }
         6 => {
             if v == "unlimited" || v.is_empty() {
@@ -750,13 +971,17 @@ fn commit_editor(modal: &mut SettingsModal, v: &str) -> bool {
             } else if let Ok(n) = v.parse::<u16>() {
                 modal.config.layout.max_cols = Some(n);
                 true
-            } else { false }
+            } else {
+                false
+            }
         }
         7 => {
             if let Ok(n) = v.parse::<u16>() {
                 modal.config.layout.tab_width = Some(n.max(1));
                 true
-            } else { false }
+            } else {
+                false
+            }
         }
         _ => false,
     }
@@ -766,13 +991,18 @@ fn commit_file(cfg: &mut Config, field: usize, v: &str) -> bool {
     match field {
         // toggles handled by toggle_current
         0 | 1 => false,
-        2 => { cfg.highlighting.syntect_theme = v.to_string(); true }
+        2 => {
+            cfg.highlighting.syntect_theme = v.to_string();
+            true
+        }
         3 => {
             let lower = v.to_lowercase();
             if lower == "plain" || lower == "markdown" {
                 cfg.filetype.unknown_as = lower;
                 true
-            } else { false }
+            } else {
+                false
+            }
         }
         4 => {
             cfg.filetype.extra_markdown_extensions = v
@@ -796,7 +1026,13 @@ mod tests {
     use crate::config::Config;
 
     fn make_modal() -> SettingsModal {
-        SettingsModal::new(Config::default(), Theme::default_theme(), false, false, false)
+        SettingsModal::new(
+            Config::default(),
+            Theme::default_theme(),
+            false,
+            false,
+            false,
+        )
     }
 
     #[test]
@@ -1033,7 +1269,10 @@ mod tests {
         assert_eq!(m.config.palette.preset, None);
         assert!(m.cycle_current(true));
         // "" → "catppuccin-mocha"
-        assert_eq!(m.config.palette.preset, Some("catppuccin-mocha".to_string()));
+        assert_eq!(
+            m.config.palette.preset,
+            Some("catppuccin-mocha".to_string())
+        );
     }
 
     #[test]
@@ -1107,7 +1346,10 @@ mod tests {
         m.field = 1;
         m.config.palette.preset = Some("dracula".to_string());
         assert!(m.toggle_current());
-        assert_eq!(m.config.palette.preset, Some("dracula-expanded".to_string()));
+        assert_eq!(
+            m.config.palette.preset,
+            Some("dracula-expanded".to_string())
+        );
     }
 
     #[test]
@@ -1151,5 +1393,502 @@ mod tests {
             m.config.filetype.extra_markdown_extensions,
             vec!["txt", "rst", "wiki"]
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // toggle_current — additional arms not covered above
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn toggle_powerline_glyphs_flips() {
+        let mut m = make_modal();
+        m.tab = 1;
+        m.field = 1; // powerline_glyphs (unwrap_or(true))
+        assert!(m.toggle_current());
+        assert_eq!(m.config.layout.powerline_glyphs, Some(false));
+    }
+
+    #[test]
+    fn toggle_focus_mode_flips() {
+        let mut m = make_modal();
+        m.tab = 1;
+        m.field = 3;
+        assert!(!m.focus_mode);
+        assert!(m.toggle_current());
+        assert!(m.focus_mode);
+    }
+
+    #[test]
+    fn toggle_highlighting_enabled_flips() {
+        let mut m = make_modal();
+        m.tab = 2;
+        m.field = 0;
+        let was = m.config.highlighting.enabled;
+        assert!(m.toggle_current());
+        assert_eq!(m.config.highlighting.enabled, !was);
+    }
+
+    #[test]
+    fn toggle_use_palette_colors_flips() {
+        let mut m = make_modal();
+        m.tab = 2;
+        m.field = 1;
+        let was = m.config.highlighting.use_palette_colors;
+        assert!(m.toggle_current());
+        assert_eq!(m.config.highlighting.use_palette_colors, !was);
+    }
+
+    // -------------------------------------------------------------------------
+    // start_editing / cancel_editing
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn start_editing_sets_flag_and_populates_buf() {
+        let mut m = make_modal();
+        m.tab = 1;
+        m.field = 5; // min_cols → "60" by default
+        m.start_editing();
+        assert!(m.editing);
+        assert_eq!(m.input_buf, "60");
+    }
+
+    #[test]
+    fn cancel_editing_clears_flag_and_buf() {
+        let mut m = make_modal();
+        m.editing = true;
+        m.input_buf = "partial".to_string();
+        m.cancel_editing();
+        assert!(!m.editing);
+        assert!(m.input_buf.is_empty());
+    }
+
+    // -------------------------------------------------------------------------
+    // move_down / move_up scroll tracking
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn move_down_scroll_advances_when_field_leaves_window() {
+        let mut m = make_modal();
+        // visible_rows = 2: window is scroll..scroll+2
+        // After 1st down: field=1, still in window (1 < 0+2). scroll stays 0.
+        m.move_down(2);
+        assert_eq!(m.field, 1);
+        assert_eq!(m.scroll, 0);
+        // After 2nd down: field=2 >= 0+2 → scroll = 2+1-2 = 1.
+        m.move_down(2);
+        assert_eq!(m.field, 2);
+        assert_eq!(m.scroll, 1);
+    }
+
+    #[test]
+    fn move_up_scroll_retreats_when_field_leaves_window() {
+        let mut m = make_modal();
+        m.field = 3;
+        m.scroll = 2;
+        // field → 2: 2 < 2? No. scroll stays 2.
+        m.move_up();
+        assert_eq!(m.field, 2);
+        assert_eq!(m.scroll, 2);
+        // field → 1: 1 < 2? Yes. scroll becomes 1.
+        m.move_up();
+        assert_eq!(m.field, 1);
+        assert_eq!(m.scroll, 1);
+    }
+
+    // -------------------------------------------------------------------------
+    // prev_tab
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn prev_tab_decrements_tab() {
+        let mut m = make_modal();
+        m.tab = 1;
+        m.prev_tab();
+        assert_eq!(m.tab, 0);
+    }
+
+    #[test]
+    fn prev_tab_wraps_from_zero() {
+        let mut m = make_modal();
+        m.tab = 0;
+        m.prev_tab();
+        assert_eq!(m.tab, TAB_NAMES.len() - 1);
+    }
+
+    #[test]
+    fn prev_tab_resets_field_scroll_and_editing() {
+        let mut m = make_modal();
+        m.tab = 2;
+        m.field = 3;
+        m.scroll = 2;
+        m.editing = true;
+        m.input_buf = "abc".to_string();
+        m.prev_tab();
+        assert_eq!(m.field, 0);
+        assert_eq!(m.scroll, 0);
+        assert!(!m.editing);
+        assert!(m.input_buf.is_empty());
+    }
+
+    // -------------------------------------------------------------------------
+    // input_rgb
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn input_rgb_valid_hex_returns_tuple() {
+        let mut m = make_modal();
+        m.input_buf = "#abcdef".to_string();
+        assert_eq!(m.input_rgb(), Some((0xab, 0xcd, 0xef)));
+    }
+
+    #[test]
+    fn input_rgb_invalid_returns_none() {
+        let mut m = make_modal();
+        m.input_buf = "notacolor".to_string();
+        assert_eq!(m.input_rgb(), None);
+    }
+
+    // -------------------------------------------------------------------------
+    // handle_settings_key helpers
+    // -------------------------------------------------------------------------
+
+    fn key(code: KeyCode) -> crossterm::event::KeyEvent {
+        crossterm::event::KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn key_mod(code: KeyCode, mods: KeyModifiers) -> crossterm::event::KeyEvent {
+        crossterm::event::KeyEvent::new(code, mods)
+    }
+
+    // -------------------------------------------------------------------------
+    // handle_settings_key — editing mode
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn hsk_esc_while_editing_cancels() {
+        let mut m = make_modal();
+        m.editing = true;
+        m.input_buf = "abc".to_string();
+        handle_settings_key(&mut m, key(KeyCode::Esc), 10);
+        assert!(!m.editing);
+        assert!(m.input_buf.is_empty());
+    }
+
+    #[test]
+    fn hsk_enter_while_editing_commits_valid_hex() {
+        let mut m = make_modal();
+        m.tab = 0;
+        m.field = 2; // text color (HexColor)
+        m.editing = true;
+        m.input_buf = "#123456".to_string();
+        let outcome = handle_settings_key(&mut m, key(KeyCode::Enter), 10);
+        assert!(matches!(outcome, SettingsOutcome::Committed));
+        assert!(!m.editing);
+        assert_eq!(m.config.palette.text, Some("#123456".to_string()));
+    }
+
+    #[test]
+    fn hsk_backspace_while_editing_pops_char() {
+        let mut m = make_modal();
+        m.editing = true;
+        m.input_buf = "abc".to_string();
+        handle_settings_key(&mut m, key(KeyCode::Backspace), 10);
+        assert_eq!(m.input_buf, "ab");
+    }
+
+    #[test]
+    fn hsk_char_while_editing_pushes() {
+        let mut m = make_modal();
+        m.editing = true;
+        handle_settings_key(&mut m, key(KeyCode::Char('x')), 10);
+        assert_eq!(m.input_buf, "x");
+    }
+
+    #[test]
+    fn hsk_ctrl_char_while_editing_ignored() {
+        let mut m = make_modal();
+        m.editing = true;
+        m.input_buf = "ab".to_string();
+        handle_settings_key(
+            &mut m,
+            key_mod(KeyCode::Char('c'), KeyModifiers::CONTROL),
+            10,
+        );
+        assert_eq!(m.input_buf, "ab");
+    }
+
+    // -------------------------------------------------------------------------
+    // handle_settings_key — nav mode
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn hsk_esc_nav_returns_close() {
+        let mut m = make_modal();
+        assert!(matches!(
+            handle_settings_key(&mut m, key(KeyCode::Esc), 10),
+            SettingsOutcome::Close
+        ));
+    }
+
+    #[test]
+    fn hsk_f2_nav_returns_close() {
+        let mut m = make_modal();
+        assert!(matches!(
+            handle_settings_key(&mut m, key(KeyCode::F(2)), 10),
+            SettingsOutcome::Close
+        ));
+    }
+
+    #[test]
+    fn hsk_tab_advances_tab() {
+        let mut m = make_modal();
+        handle_settings_key(&mut m, key(KeyCode::Tab), 10);
+        assert_eq!(m.tab, 1);
+    }
+
+    #[test]
+    fn hsk_shift_tab_retreats_tab() {
+        let mut m = make_modal();
+        m.tab = 1;
+        handle_settings_key(&mut m, key_mod(KeyCode::Tab, KeyModifiers::SHIFT), 10);
+        assert_eq!(m.tab, 0);
+    }
+
+    #[test]
+    fn hsk_right_on_non_cycler_advances_tab() {
+        let mut m = make_modal();
+        m.tab = 1;
+        m.field = 0; // line_numbers (Toggle, not cycler)
+        handle_settings_key(&mut m, key(KeyCode::Right), 10);
+        assert_eq!(m.tab, 2);
+    }
+
+    #[test]
+    fn hsk_left_on_non_cycler_retreats_tab() {
+        let mut m = make_modal();
+        m.tab = 1;
+        m.field = 0;
+        handle_settings_key(&mut m, key(KeyCode::Left), 10);
+        assert_eq!(m.tab, 0);
+    }
+
+    #[test]
+    fn hsk_right_on_cycler_cycles_and_commits() {
+        let mut m = make_modal();
+        m.tab = 0;
+        m.field = 0; // Preset cycler
+        m.config.palette.preset = Some("dracula".to_string());
+        let outcome = handle_settings_key(&mut m, key(KeyCode::Right), 10);
+        assert!(matches!(outcome, SettingsOutcome::Committed));
+        assert_eq!(m.tab, 0); // tab must NOT have advanced
+    }
+
+    #[test]
+    fn hsk_down_moves_field() {
+        let mut m = make_modal();
+        handle_settings_key(&mut m, key(KeyCode::Down), 10);
+        assert_eq!(m.field, 1);
+    }
+
+    #[test]
+    fn hsk_up_moves_field() {
+        let mut m = make_modal();
+        m.field = 2;
+        handle_settings_key(&mut m, key(KeyCode::Up), 10);
+        assert_eq!(m.field, 1);
+    }
+
+    #[test]
+    fn hsk_enter_on_expand_row_toggles_expanded() {
+        let mut m = make_modal();
+        m.tab = 0;
+        m.field = APPEARANCE_EXPAND_IDX;
+        handle_settings_key(&mut m, key(KeyCode::Enter), 10);
+        assert!(m.expanded);
+        handle_settings_key(&mut m, key(KeyCode::Enter), 10);
+        assert!(!m.expanded);
+    }
+
+    #[test]
+    fn hsk_enter_on_non_expand_row_does_not_toggle_expanded() {
+        // Kills `&& → ||` at line 509: with ||, any field on tab=0 triggers expand.
+        let mut m = make_modal();
+        m.tab = 0;
+        m.field = 0; // Preset cycler — NOT the expand row
+        handle_settings_key(&mut m, key(KeyCode::Enter), 10);
+        assert!(!m.expanded);
+    }
+
+    #[test]
+    fn hsk_enter_on_toggle_field_no_effect_does_not_start_editing() {
+        // Kills `delete match arm Toggle | Cycler` at line 534: rainbow toggle with no
+        // preset set returns false from toggle_current, reaching the field_def match.
+        // Without the Toggle arm, start_editing would be called instead.
+        let mut m = make_modal();
+        m.tab = 0;
+        m.field = 1; // rainbow headings Toggle; no preset → toggle_current returns false
+        handle_settings_key(&mut m, key(KeyCode::Enter), 10);
+        assert!(!m.editing);
+    }
+
+    #[test]
+    fn hsk_enter_on_toggle_field_with_effect_returns_committed() {
+        let mut m = make_modal();
+        m.tab = 1;
+        m.field = 0; // line_numbers Toggle
+        let outcome = handle_settings_key(&mut m, key(KeyCode::Enter), 10);
+        assert!(matches!(outcome, SettingsOutcome::Committed));
+        assert!(!m.editing);
+    }
+
+    #[test]
+    fn hsk_enter_on_hex_field_starts_editing() {
+        let mut m = make_modal();
+        m.tab = 0;
+        m.field = 2; // text color (HexColor)
+        handle_settings_key(&mut m, key(KeyCode::Enter), 10);
+        assert!(m.editing);
+    }
+
+    // -------------------------------------------------------------------------
+    // Value getters — appearance_core, extended, editor, file
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn appearance_core_value_color_fields_nonempty() {
+        // Kills delete-match-arm mutations for fields 3-7 (accent–warning).
+        let m = make_modal();
+        for f in 3..=7usize {
+            let v = m.field_value(f);
+            assert!(
+                !v.is_empty(),
+                "appearance_core field {f} must return non-empty value"
+            );
+        }
+    }
+
+    #[test]
+    fn appearance_extended_value_all_fields_nonempty() {
+        // Kills delete-match-arm mutations for all 27 extended fields.
+        let m = make_modal(); // tab=0; field_value works without expanded=true
+        for idx in 0..APPEARANCE_EXTENDED.len() {
+            let f = APPEARANCE_EXPAND_IDX + 1 + idx;
+            let v = m.field_value(f);
+            assert!(
+                !v.is_empty(),
+                "appearance_extended idx {idx} must return non-empty value"
+            );
+        }
+    }
+
+    #[test]
+    fn editor_value_all_fields() {
+        // Kills delete-match-arm for arms 0-4 (bools) and 6-7 (max_cols, tab_width).
+        // Arm 5 (min_cols → "60") is already covered by field_value_editor_tab_returns_nonempty.
+        let mut m = make_modal();
+        m.tab = 1;
+        // Arms 0-4: any non-empty bool string is enough; exact values from code defaults.
+        assert_eq!(m.field_value(0), "off", "line_numbers default");
+        assert_eq!(m.field_value(1), "on", "powerline_glyphs default");
+        assert_eq!(m.field_value(2), "off", "typewriter_mode");
+        assert_eq!(m.field_value(3), "off", "focus_mode");
+        assert_eq!(m.field_value(4), "off", "read_only");
+        assert_eq!(
+            m.field_value(6),
+            "none (≤50% of terminal)",
+            "max_cols default"
+        );
+        assert_eq!(m.field_value(7), "4", "tab_width default");
+    }
+
+    #[test]
+    fn file_value_all_fields() {
+        // Kills delete-match-arm for arms 0, 1, 2, 4 (arm 3 caught by cycle test).
+        let mut m = make_modal();
+        m.tab = 2;
+        m.config.highlighting.enabled = true;
+        m.config.highlighting.use_palette_colors = true;
+        m.config.highlighting.syntect_theme = "InspiredGitHub".to_string();
+        m.config.filetype.extra_markdown_extensions = vec!["txt".to_string()];
+        assert_eq!(m.field_value(0), "on", "highlighting.enabled");
+        assert_eq!(m.field_value(1), "on", "use_palette_colors");
+        assert_eq!(m.field_value(2), "InspiredGitHub", "syntect_theme");
+        assert_eq!(m.field_value(4), "txt", "extra_md_extensions");
+    }
+
+    // -------------------------------------------------------------------------
+    // Commit helpers — appearance_core fields 3-7, extended all, editor arm 5
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn commit_appearance_core_fields_3_to_7() {
+        let mut m = make_modal();
+        m.tab = 0;
+        m.field = 3;
+        m.input_buf = "#aabbcc".to_string();
+        assert!(m.commit_input());
+        assert_eq!(m.config.palette.accent, Some("#aabbcc".to_string()));
+        m.field = 4;
+        m.input_buf = "#aabbcc".to_string();
+        assert!(m.commit_input());
+        assert_eq!(m.config.palette.muted, Some("#aabbcc".to_string()));
+        m.field = 5;
+        m.input_buf = "#aabbcc".to_string();
+        assert!(m.commit_input());
+        assert_eq!(m.config.palette.code, Some("#aabbcc".to_string()));
+        m.field = 6;
+        m.input_buf = "#aabbcc".to_string();
+        assert!(m.commit_input());
+        assert_eq!(m.config.palette.bg, Some("#aabbcc".to_string()));
+        m.field = 7;
+        m.input_buf = "#aabbcc".to_string();
+        assert!(m.commit_input());
+        assert_eq!(m.config.palette.warning, Some("#aabbcc".to_string()));
+    }
+
+    #[test]
+    fn commit_appearance_extended_all_hex_fields() {
+        // Kills delete-match-arm for extended indices 0-15 and 17-26.
+        let mut m = make_modal();
+        m.tab = 0;
+        m.expanded = true;
+        for idx in (0..=15usize).chain(17..=26) {
+            m.field = APPEARANCE_EXPAND_IDX + 1 + idx;
+            m.input_buf = "#fedcba".to_string();
+            assert!(m.commit_input(), "commit extended idx {idx} should succeed");
+        }
+    }
+
+    #[test]
+    fn commit_appearance_extended_blend_field() {
+        let mut m = make_modal();
+        m.tab = 0;
+        m.expanded = true;
+        m.field = APPEARANCE_EXPAND_IDX + 1 + 16;
+        m.input_buf = "0.5".to_string();
+        assert!(m.commit_input());
+        assert!((m.config.theme.delimiter_blend.unwrap() - 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn commit_editor_min_cols_valid() {
+        // Kills TIMEOUT `delete match arm 5` in commit_editor.
+        let mut m = make_modal();
+        m.tab = 1;
+        m.field = 5;
+        m.input_buf = "80".to_string();
+        assert!(m.commit_input());
+        assert_eq!(m.config.layout.min_cols, Some(80));
+    }
+
+    #[test]
+    fn commit_file_syntect_theme() {
+        // Kills TIMEOUT `delete match arm 2` in commit_file.
+        let mut m = make_modal();
+        m.tab = 2;
+        m.field = 2;
+        m.input_buf = "base16-ocean.dark".to_string();
+        assert!(m.commit_input());
+        assert_eq!(m.config.highlighting.syntect_theme, "base16-ocean.dark");
     }
 }

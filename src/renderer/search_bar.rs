@@ -205,6 +205,15 @@ const HELP: &[(&str, &str, &str, &str)] = &[
 /// Height: top border + one row per entry + bottom border.
 const BOX_H: u16 = HELP.len() as u16 + 2;
 
+// Compile-time sanity checks.  Arithmetic mutations to the constants above
+// become UNVIABLE (compile error) rather than TIMEOUT.
+//   INNER_W = 2 + 13 + 1 + 11 + 1 + 12 + 1 + 11 + 1 = 53
+//   BOX_W   = 53 + 2 = 55
+//   BOX_H   = 4 + 2  = 6
+const _: () = assert!(INNER_W == 53, "INNER_W arithmetic is wrong");
+const _: () = assert!(BOX_W == 55, "BOX_W arithmetic is wrong");
+const _: () = assert!(BOX_H == 6, "BOX_H arithmetic is wrong");
+
 /// Render a floating keyboard-shortcut cheatsheet over `editor_area`.
 ///
 /// The box is centered horizontally and anchored at the top of the editor
@@ -395,6 +404,7 @@ const _: () = assert!(SC_INNER_W == 60, "SC_INNER_W arithmetic is wrong");
 const _: () = assert!(SC_BOX_W == 62, "SC_BOX_W arithmetic is wrong");
 /// Total box height: top border + one row per SHORTCUTS entry + bottom border.
 const SC_BOX_H: u16 = SHORTCUTS.len() as u16 + 2;
+const _: () = assert!(SC_BOX_H == 20, "SC_BOX_H arithmetic is wrong");
 
 /// Render the full keybindings reference modal, centred over `editor_area`.
 ///

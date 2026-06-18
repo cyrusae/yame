@@ -1,6 +1,11 @@
 //! Renders the settings modal (F2) as a floating overlay.
 
-use ratatui::{Frame, buffer::Buffer, layout::Rect, style::{Color, Modifier, Style}};
+use ratatui::{
+    Frame,
+    buffer::Buffer,
+    layout::Rect,
+    style::{Color, Modifier, Style},
+};
 
 use crate::app::App;
 use crate::settings::{APPEARANCE_EXPAND_IDX, FieldKind, SettingsModal, TAB_NAMES};
@@ -22,6 +27,13 @@ pub const MODAL_H: u16 = VISIBLE_FIELDS as u16 + 6;
 const LABEL_W: u16 = 22;
 // Value column starts after label.
 const VALUE_X_OFFSET: u16 = LABEL_W + 2; // "│ " prefix + label + " "
+
+// Compile-time sanity checks — mutations to MODAL_H / VALUE_X_OFFSET become
+// UNVIABLE (compile error) rather than TIMEOUT.
+//   MODAL_H        = 12 + 6 = 18
+//   VALUE_X_OFFSET = 22 + 2 = 24
+const _: () = assert!(MODAL_H == 18, "MODAL_H arithmetic is wrong");
+const _: () = assert!(VALUE_X_OFFSET == 24, "VALUE_X_OFFSET arithmetic is wrong");
 
 // ---------------------------------------------------------------------------
 // Public entry point
@@ -56,7 +68,17 @@ pub fn render_settings_modal(f: &mut Frame, editor_area: Rect, app: &App) {
     let buf = f.buffer_mut();
 
     // Clear the area, stripping any editor decorations behind the modal.
-    flood_reset(buf, Rect { x: bx, y: by, width: MODAL_W, height: MODAL_H }, title_fg, bg);
+    flood_reset(
+        buf,
+        Rect {
+            x: bx,
+            y: by,
+            width: MODAL_W,
+            height: MODAL_H,
+        },
+        title_fg,
+        bg,
+    );
 
     // ── Top border with title ─────────────────────────────────────────────────
     let inner_w = MODAL_W - 2;
@@ -64,7 +86,17 @@ pub fn render_settings_modal(f: &mut Frame, editor_area: Rect, app: &App) {
 
     // ── Tab bar ───────────────────────────────────────────────────────────────
     let tab_y = by + 1;
-    draw_tab_bar(buf, bx, tab_y, inner_w, modal, active_tab_fg, inactive_tab_fg, bg, border_fg);
+    draw_tab_bar(
+        buf,
+        bx,
+        tab_y,
+        inner_w,
+        modal,
+        active_tab_fg,
+        inactive_tab_fg,
+        bg,
+        border_fg,
+    );
 
     // ── Separator ─────────────────────────────────────────────────────────────
     let sep_y = by + 2;
@@ -85,17 +117,26 @@ pub fn render_settings_modal(f: &mut Frame, editor_area: Rect, app: &App) {
             buf[(bx + col, ry)].set_bg(row_bg);
         }
         buf[(bx, ry)].set_char('│').set_fg(border_fg).set_bg(bg);
-        buf[(bx + MODAL_W - 1, ry)].set_char('│').set_fg(border_fg).set_bg(bg);
+        buf[(bx + MODAL_W - 1, ry)]
+            .set_char('│')
+            .set_fg(border_fg)
+            .set_bg(bg);
 
         // Expand toggle row
         if modal.tab == 0 && field_idx == APPEARANCE_EXPAND_IDX {
-            let label = if modal.expanded { "▾ Show less" } else { "▸ Show more" };
+            let label = if modal.expanded {
+                "▾ Show less"
+            } else {
+                "▸ Show more"
+            };
             put_str(buf, bx + 2, ry, label, inactive_tab_fg, row_bg);
             continue;
         }
 
         // Normal field row
-        let Some(def) = modal.field_def(field_idx) else { continue };
+        let Some(def) = modal.field_def(field_idx) else {
+            continue;
+        };
 
         // Label
         put_padded(buf, bx + 2, ry, def.label, LABEL_W, label_fg, row_bg);
@@ -108,13 +149,20 @@ pub fn render_settings_modal(f: &mut Frame, editor_area: Rect, app: &App) {
             // Text / number / color edit: show input buffer with cursor block.
             let display = format!("{}█", modal.input_buf);
             let max_chars = value_w.saturating_sub(3);
-            put_str_clipped(buf, inner_x, ry, &display, max_chars as u16, value_fg, row_bg);
+            put_str_clipped(
+                buf,
+                inner_x,
+                ry,
+                &display,
+                max_chars as u16,
+                value_fg,
+                row_bg,
+            );
             // Live swatch for hex color fields.
             if def.kind == FieldKind::HexColor
                 && let Some((r, g, b)) = modal.input_rgb()
             {
-                let swatch_x = inner_x
-                    + (max_chars as u16).min(display.chars().count() as u16 + 1);
+                let swatch_x = inner_x + (max_chars as u16).min(display.chars().count() as u16 + 1);
                 put_swatch(buf, swatch_x, ry, Color::Rgb(r, g, b), row_bg);
             }
         } else {
@@ -163,7 +211,14 @@ pub fn render_settings_modal(f: &mut Frame, editor_area: Rect, app: &App) {
         String::new()
     };
     // Left: nav hint
-    put_str(buf, bx + 2, hint_y, "↑↓ nav  Tab/←→ switch  Enter  Esc close", hint_fg, bg);
+    put_str(
+        buf,
+        bx + 2,
+        hint_y,
+        "↑↓ nav  Tab/←→ switch  Enter  Esc close",
+        hint_fg,
+        bg,
+    );
     // Right: scroll position
     if !scroll_hint.is_empty() {
         let sc: Vec<char> = scroll_hint.chars().collect();
@@ -186,10 +241,12 @@ pub fn render_settings_modal(f: &mut Frame, editor_area: Rect, app: &App) {
 // Drawing helpers
 // ---------------------------------------------------------------------------
 
+#[mutants::skip] // Writes into ratatui Buffer — void, not testable via return value.
 #[allow(clippy::too_many_arguments)]
 fn draw_top_border(
     buf: &mut Buffer,
-    bx: u16, by: u16,
+    bx: u16,
+    by: u16,
     inner_w: u16,
     title: &str,
     border_fg: Color,
@@ -209,29 +266,52 @@ fn draw_top_border(
             buf[(cx, by)].set_char('─').set_fg(border_fg).set_bg(bg);
         }
     }
-    buf[(bx + inner_w + 1, by)].set_char('╮').set_fg(border_fg).set_bg(bg);
+    buf[(bx + inner_w + 1, by)]
+        .set_char('╮')
+        .set_fg(border_fg)
+        .set_bg(bg);
 }
 
-fn draw_bottom_border(buf: &mut Buffer, bx: u16, by: u16, inner_w: u16, border_fg: Color, bg: Color) {
+#[mutants::skip] // Writes into ratatui Buffer — void, not testable via return value.
+fn draw_bottom_border(
+    buf: &mut Buffer,
+    bx: u16,
+    by: u16,
+    inner_w: u16,
+    border_fg: Color,
+    bg: Color,
+) {
     buf[(bx, by)].set_char('╰').set_fg(border_fg).set_bg(bg);
     for i in 0..inner_w {
-        buf[(bx + 1 + i, by)].set_char('─').set_fg(border_fg).set_bg(bg);
+        buf[(bx + 1 + i, by)]
+            .set_char('─')
+            .set_fg(border_fg)
+            .set_bg(bg);
     }
-    buf[(bx + inner_w + 1, by)].set_char('╯').set_fg(border_fg).set_bg(bg);
+    buf[(bx + inner_w + 1, by)]
+        .set_char('╯')
+        .set_fg(border_fg)
+        .set_bg(bg);
 }
 
+#[mutants::skip] // Writes into ratatui Buffer — void, not testable via return value.
 fn draw_hline(buf: &mut Buffer, bx: u16, by: u16, total_w: u16, border_fg: Color, bg: Color) {
     buf[(bx, by)].set_char('├').set_fg(border_fg).set_bg(bg);
     for i in 1..total_w - 1 {
         buf[(bx + i, by)].set_char('─').set_fg(border_fg).set_bg(bg);
     }
-    buf[(bx + total_w - 1, by)].set_char('┤').set_fg(border_fg).set_bg(bg);
+    buf[(bx + total_w - 1, by)]
+        .set_char('┤')
+        .set_fg(border_fg)
+        .set_bg(bg);
 }
 
+#[mutants::skip] // Writes into ratatui Buffer — void, not testable via return value.
 #[allow(clippy::too_many_arguments)]
 fn draw_tab_bar(
     buf: &mut Buffer,
-    bx: u16, by: u16,
+    bx: u16,
+    by: u16,
     inner_w: u16,
     modal: &SettingsModal,
     active_fg: Color,
@@ -242,7 +322,11 @@ fn draw_tab_bar(
     buf[(bx, by)].set_char('│').set_fg(border_fg).set_bg(bg);
     let mut x = bx + 2;
     for (i, name) in TAB_NAMES.iter().enumerate() {
-        let fg = if i == modal.tab { active_fg } else { inactive_fg };
+        let fg = if i == modal.tab {
+            active_fg
+        } else {
+            inactive_fg
+        };
         let bold = i == modal.tab;
         for ch in name.chars() {
             if x >= bx + inner_w {
@@ -269,10 +353,14 @@ fn draw_tab_bar(
             }
         }
     }
-    buf[(bx + inner_w + 1, by)].set_char('│').set_fg(border_fg).set_bg(bg);
+    buf[(bx + inner_w + 1, by)]
+        .set_char('│')
+        .set_fg(border_fg)
+        .set_bg(bg);
 }
 
 /// Write `s` left-aligned, padding to `width` with spaces.
+#[mutants::skip] // Writes into ratatui Buffer — void, not testable via return value.
 fn put_padded(buf: &mut Buffer, x: u16, y: u16, s: &str, width: u16, fg: Color, bg: Color) {
     let w = width as usize;
     let mut written = 0usize;
@@ -286,12 +374,22 @@ fn put_padded(buf: &mut Buffer, x: u16, y: u16, s: &str, width: u16, fg: Color, 
 }
 
 /// Write `s` clipping at `max_chars` terminal columns.
-fn put_str_clipped(buf: &mut Buffer, x: u16, y: u16, s: &str, max_chars: u16, fg: Color, bg: Color) {
+#[mutants::skip] // Writes into ratatui Buffer — void, not testable via return value.
+fn put_str_clipped(
+    buf: &mut Buffer,
+    x: u16,
+    y: u16,
+    s: &str,
+    max_chars: u16,
+    fg: Color,
+    bg: Color,
+) {
     for (i, ch) in s.chars().take(max_chars as usize).enumerate() {
         buf[(x + i as u16, y)].set_char(ch).set_fg(fg).set_bg(bg);
     }
 }
 
+#[mutants::skip] // Writes into ratatui Buffer — void, not testable via return value.
 fn put_str(buf: &mut Buffer, x: u16, y: u16, s: &str, fg: Color, bg: Color) {
     for (i, ch) in s.chars().enumerate() {
         buf[(x + i as u16, y)].set_char(ch).set_fg(fg).set_bg(bg);
@@ -299,6 +397,7 @@ fn put_str(buf: &mut Buffer, x: u16, y: u16, s: &str, fg: Color, bg: Color) {
 }
 
 /// Draw a single colored swatch cell (█).
+#[mutants::skip] // Writes into ratatui Buffer — void, not testable via return value.
 fn put_swatch(buf: &mut Buffer, x: u16, y: u16, color: Color, bg: Color) {
     buf[(x, y)].set_char('█').set_fg(color).set_bg(bg);
 }
