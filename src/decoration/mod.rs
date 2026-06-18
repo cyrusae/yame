@@ -3956,4 +3956,26 @@ mod tests {
             "separate bold-only ** at 0..2 must NOT exist (adjacency must take combined path); got: {spans:?}"
         );
     }
+
+    // Kills: delete match arm Event::End(TagEnd::Heading(_)) in build_decoration_map.
+    // Without on_end, in_heading_bg stays Some(heading_bg) for all subsequent events,
+    // so inline code after the heading gets heading_bg instead of code_bg.
+    #[test]
+    fn inline_code_after_heading_uses_code_bg_not_heading_bg() {
+        let theme = make_theme();
+        // Line 0: "# Heading", line 1: blank, line 2: "text `code` text"
+        let text = "# Heading\n\ntext `code` text";
+        let map = build_map(text, &theme, true);
+        let spans = map.get(&2).expect("line 2 (inline code line) must have spans");
+        let code_span = spans
+            .iter()
+            .find(|s| s.style.bg.is_some())
+            .expect("line 2 must have an inline code span with a bg");
+        assert_eq!(
+            code_span.style.bg,
+            Some(theme.code_bg),
+            "inline code after a heading must use code_bg, not heading_bg; \
+             if on_end is skipped in_heading_bg leaks into subsequent code spans"
+        );
+    }
 }

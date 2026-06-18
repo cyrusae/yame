@@ -22,6 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - feat: `yame --preview <file>` — headless ANSI render for lf/file-manager previewers; respects `$COLUMNS`; full decoration and syntax-highlight pipeline; bg colours suppressed for clean integration (#190)
 
 ### Changed
+- decoration/builder: targeted mutants run to classify #[mutants::skip] on_* functions (#232)
 - input.rs/preview.rs/picker.rs: add tests for missed behavioral logic (Ctrl+X/F2 arms, detect_list_prefix, render_lines, preview_width, command_exists) (#231)
 - decoration/builder: replace heading-End exclude_re with post-heading bg test (#233)
 - mutants.toml: exclude decoration/builder TIMEOUTs (emit, blocks, fenced, headings, inline, misc on_link/on_image/on_strikethrough/on_rule, tables) (#230)
