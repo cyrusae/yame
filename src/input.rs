@@ -238,6 +238,9 @@ pub(super) fn is_ro_allowed(mods: KeyModifiers, code: KeyCode) -> bool {
         | (KeyModifiers::CONTROL, KeyCode::Char('t'))
         | (KeyModifiers::CONTROL, KeyCode::Char('d'))
         | (KeyModifiers::CONTROL, KeyCode::Char('e'))
+        // ── Select all (non-destructive selection) ───────────────────────────
+        | (KeyModifiers::CONTROL, KeyCode::Char('a'))
+        | (KeyModifiers::SUPER, KeyCode::Char('a'))
         // ── Shortcuts / settings modals ────────────────────────────────────────
         | (KeyModifiers::NONE, KeyCode::F(1))
         | (KeyModifiers::NONE, KeyCode::F(2))
@@ -552,6 +555,17 @@ fn has_ctrl_alt_super(mods: KeyModifiers) -> bool {
     mods.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
 }
 
+/// Select every character in the buffer and return the total line count.
+fn select_all(app: &mut App) -> usize {
+    let n = app.textarea.lines().len();
+    app.textarea.cancel_selection();
+    app.textarea.move_cursor(CursorMove::Top);
+    app.textarea.start_selection();
+    app.textarea.move_cursor(CursorMove::Bottom);
+    app.textarea.move_cursor(CursorMove::End);
+    n
+}
+
 /// Returns a [`KeyOutcome`] telling the caller what (if any) I/O action to
 /// perform next. File writes, config reloads, and loop termination are the
 /// responsibility of the caller (`event_loop`).  This separation makes the
@@ -710,6 +724,13 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
             } else {
                 KeyOutcome::Continue
             }
+        }
+
+        (KeyModifiers::CONTROL, KeyCode::Char('a')) | (KeyModifiers::SUPER, KeyCode::Char('a')) => {
+            let n = select_all(app);
+            app.status
+                .set_timed(yame::clipboard::lines_msg("Selected", n), Duration::from_secs(2));
+            KeyOutcome::Continue
         }
 
         (KeyModifiers::CONTROL, KeyCode::Char('c')) | (KeyModifiers::SUPER, KeyCode::Char('c')) => {
@@ -3057,6 +3078,66 @@ mod tests {
         assert!(
             is_ro_allowed(KeyModifiers::CONTROL, KeyCode::Char('e')),
             "Ctrl+E must be allowed in read-only mode so the toggle works"
+        );
+    }
+
+    // is_ro_allowed must permit Ctrl+A and Cmd+A (select-all is non-destructive).
+    #[test]
+    fn is_ro_allowed_permits_select_all() {
+        assert!(
+            is_ro_allowed(KeyModifiers::CONTROL, KeyCode::Char('a')),
+            "Ctrl+A must be allowed in read-only mode"
+        );
+        assert!(
+            is_ro_allowed(KeyModifiers::SUPER, KeyCode::Char('a')),
+            "Cmd+A must be allowed in read-only mode"
+        );
+    }
+
+    // Kills: `lines().len()` replaced by 0 or 1.
+    #[test]
+    fn select_all_returns_line_count() {
+        let mut app = make_app();
+        app.textarea = tui_textarea::TextArea::new(vec![
+            "alpha".to_string(),
+            "beta".to_string(),
+            "gamma".to_string(),
+        ]);
+        let n = select_all(&mut app);
+        assert_eq!(n, 3, "select_all must return the total line count");
+    }
+
+    // Kills: `start_selection()` deleted (no selection active after call).
+    #[test]
+    fn select_all_creates_active_selection() {
+        let mut app = make_app();
+        app.textarea = tui_textarea::TextArea::new(vec![
+            "first line".to_string(),
+            "second line".to_string(),
+        ]);
+        select_all(&mut app);
+        assert!(
+            app.textarea.selection_range().is_some(),
+            "select_all must leave an active selection"
+        );
+    }
+
+    // Kills: `move_cursor(CursorMove::Bottom)` or `move_cursor(CursorMove::End)` deleted
+    // (cursor would not reach the last character).
+    #[test]
+    fn select_all_places_cursor_at_end_of_last_line() {
+        let mut app = make_app();
+        app.textarea = tui_textarea::TextArea::new(vec![
+            "line one".to_string(),
+            "line two".to_string(),
+        ]);
+        select_all(&mut app);
+        let (row, col) = app.textarea.cursor();
+        assert_eq!(row, 1, "cursor row must be the last line after select_all");
+        assert_eq!(
+            col,
+            "line two".chars().count(),
+            "cursor col must be end of last line after select_all"
         );
     }
 
