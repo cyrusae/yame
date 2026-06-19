@@ -58,6 +58,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - chore: v0.2.1 version bump (#188)
 
 ### Fixed
+- Smart pair wrap: ctrl+z requires 3 steps instead of 1 to undo surround (#239)
 - fix: initial decoration lag - run synchronously before alternate screen (#241)
 - perf: slow decoration updates and theme transitions (#240)
 - Settings modal: click dismiss bug and toggle/cycler clicks non-functional (#238)

@@ -255,6 +255,10 @@ pub const EDITOR_FIELDS: &[FieldDef] = &[
         kind: FieldKind::Toggle,
     },
     FieldDef {
+        label: "Auto-close pairs",
+        kind: FieldKind::Toggle,
+    },
+    FieldDef {
         label: "Min columns",
         kind: FieldKind::Number { allow_none: false },
     },
@@ -470,6 +474,11 @@ impl SettingsModal {
                 }
                 4 => {
                     self.read_only = !self.read_only;
+                    true
+                }
+                5 => {
+                    let v = self.config.layout.auto_close_pairs.unwrap_or(false);
+                    self.config.layout.auto_close_pairs = Some(!v);
                     true
                 }
                 _ => false,
@@ -955,17 +964,18 @@ fn editor_value(modal: &SettingsModal, field: usize) -> String {
         2 => bool_str(modal.typewriter_mode),
         3 => bool_str(modal.focus_mode),
         4 => bool_str(modal.read_only),
-        5 => cfg
+        5 => bool_str(cfg.layout.auto_close_pairs.unwrap_or(false)),
+        6 => cfg
             .layout
             .min_cols
             .map(|n| n.to_string())
             .unwrap_or_else(|| "60".to_string()),
-        6 => cfg
+        7 => cfg
             .layout
             .max_cols
             .map(|n| n.to_string())
             .unwrap_or_else(|| "none (≤50% of terminal)".to_string()),
-        7 => cfg
+        8 => cfg
             .layout
             .tab_width
             .map(|n| n.to_string())
@@ -1088,8 +1098,8 @@ fn commit_appearance_extended(cfg: &mut Config, idx: usize, v: &str) -> bool {
 fn commit_editor(modal: &mut SettingsModal, v: &str) -> bool {
     match modal.field {
         // toggles handled by toggle_current; shouldn't reach here
-        0..=4 => false,
-        5 => {
+        0..=5 => false,
+        6 => {
             if let Ok(n) = v.parse::<u16>() {
                 modal.config.layout.min_cols = Some(n);
                 true
@@ -1097,7 +1107,7 @@ fn commit_editor(modal: &mut SettingsModal, v: &str) -> bool {
                 false
             }
         }
-        6 => {
+        7 => {
             if v == "unlimited" || v.is_empty() {
                 modal.config.layout.max_cols = None;
                 true
@@ -1108,7 +1118,7 @@ fn commit_editor(modal: &mut SettingsModal, v: &str) -> bool {
                 false
             }
         }
-        7 => {
+        8 => {
             if let Ok(n) = v.parse::<u16>() {
                 modal.config.layout.tab_width = Some(n.max(1));
                 true
@@ -1226,13 +1236,13 @@ mod tests {
     #[test]
     fn field_value_editor_tab_returns_nonempty() {
         // Kills: `delete match arm 1` in field_value — tab=1 would return "".
-        // field 5 = min_cols, defaults to "60" so we get a concrete non-empty value.
+        // field 6 = min_cols, defaults to "60" so we get a concrete non-empty value.
         let mut m = make_modal();
         m.tab = 1;
         assert_eq!(
-            m.field_value(5),
+            m.field_value(6),
             "60",
-            "tab=1 field 5 (min_cols default) must return \"60\""
+            "tab=1 field 6 (min_cols default) must return \"60\""
         );
     }
 
@@ -1304,7 +1314,7 @@ mod tests {
     fn commit_max_cols_unlimited_clears_option() {
         let mut m = make_modal();
         m.tab = 1;
-        m.field = 6;
+        m.field = 7;
         m.config.layout.max_cols = Some(80);
         m.input_buf = "unlimited".to_string();
         assert!(m.commit_input());
@@ -1315,7 +1325,7 @@ mod tests {
     fn commit_tab_width_min_one() {
         let mut m = make_modal();
         m.tab = 1;
-        m.field = 7;
+        m.field = 8;
         m.input_buf = "0".to_string();
         // 0 parses as u16 but max(1) clamps to 1
         assert!(m.commit_input());
@@ -1553,6 +1563,18 @@ mod tests {
     }
 
     #[test]
+    fn toggle_auto_close_pairs_flips() {
+        let mut m = make_modal();
+        m.tab = 1;
+        m.field = 5;
+        assert_eq!(m.config.layout.auto_close_pairs, None);
+        assert!(m.toggle_current());
+        assert_eq!(m.config.layout.auto_close_pairs, Some(true));
+        assert!(m.toggle_current());
+        assert_eq!(m.config.layout.auto_close_pairs, Some(false));
+    }
+
+    #[test]
     fn toggle_highlighting_enabled_flips() {
         let mut m = make_modal();
         m.tab = 2;
@@ -1580,7 +1602,7 @@ mod tests {
     fn start_editing_sets_flag_and_populates_buf() {
         let mut m = make_modal();
         m.tab = 1;
-        m.field = 5; // min_cols → "60" by default
+        m.field = 6; // min_cols → "60" by default
         m.start_editing();
         assert!(m.editing);
         assert_eq!(m.input_buf, "60");
@@ -1917,22 +1939,22 @@ mod tests {
 
     #[test]
     fn editor_value_all_fields() {
-        // Kills delete-match-arm for arms 0-4 (bools) and 6-7 (max_cols, tab_width).
-        // Arm 5 (min_cols → "60") is already covered by field_value_editor_tab_returns_nonempty.
+        // Kills delete-match-arm for arms 0-5 (bools) and 7-8 (max_cols, tab_width).
+        // Arm 6 (min_cols → "60") is already covered by field_value_editor_tab_returns_nonempty.
         let mut m = make_modal();
         m.tab = 1;
-        // Arms 0-4: any non-empty bool string is enough; exact values from code defaults.
         assert_eq!(m.field_value(0), "off", "line_numbers default");
         assert_eq!(m.field_value(1), "on", "powerline_glyphs default");
         assert_eq!(m.field_value(2), "off", "typewriter_mode");
         assert_eq!(m.field_value(3), "off", "focus_mode");
         assert_eq!(m.field_value(4), "off", "read_only");
+        assert_eq!(m.field_value(5), "off", "auto_close_pairs default");
         assert_eq!(
-            m.field_value(6),
+            m.field_value(7),
             "none (≤50% of terminal)",
             "max_cols default"
         );
-        assert_eq!(m.field_value(7), "4", "tab_width default");
+        assert_eq!(m.field_value(8), "4", "tab_width default");
     }
 
     #[test]
@@ -2006,10 +2028,10 @@ mod tests {
 
     #[test]
     fn commit_editor_min_cols_valid() {
-        // Kills TIMEOUT `delete match arm 5` in commit_editor.
+        // Kills TIMEOUT `delete match arm 6` in commit_editor.
         let mut m = make_modal();
         m.tab = 1;
-        m.field = 5;
+        m.field = 6;
         m.input_buf = "80".to_string();
         assert!(m.commit_input());
         assert_eq!(m.config.layout.min_cols, Some(80));

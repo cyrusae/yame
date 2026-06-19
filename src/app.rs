@@ -200,6 +200,11 @@ pub struct App {
     /// Set at startup via the `-r` / `--read-only` CLI flag; never toggled at
     /// runtime.
     pub read_only: bool,
+    /// When true, typing an opener like `(` inserts `(|)` with the cursor placed
+    /// between the pair; typing the matching closer when already before it skips
+    /// over instead of inserting a duplicate.  Mirrors `[layout] auto_close_pairs`
+    /// from config.  Default false.
+    pub auto_close_pairs: bool,
     /// Open settings modal (F2).  `None` when the modal is closed.
     pub settings: Option<SettingsModal>,
 }
@@ -264,6 +269,7 @@ impl App {
             focus_mode: false,
             show_shortcuts: false,
             read_only: false, // set by caller via app.read_only = read_only after new()
+            auto_close_pairs: false, // set by caller via app.auto_close_pairs after new()
             settings: None,
         })
     }
@@ -482,6 +488,7 @@ mod tests {
             focus_mode: false,
             show_shortcuts: false,
             read_only: false,
+            auto_close_pairs: false,
             settings: None,
         }
     }

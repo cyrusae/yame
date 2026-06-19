@@ -105,6 +105,11 @@ pub struct LayoutConfig {
     /// The gutter width grows automatically as the document grows past 9, 99,
     /// 999 … lines so the content column shifts by one cell at each threshold.
     pub line_numbers: Option<bool>,
+    /// Automatically insert a matching closing delimiter when typing an opener.
+    /// Typing `(` produces `(|)` with the cursor between; typing `)` when already
+    /// before a `)` skips over it instead of inserting a duplicate.
+    /// Applies to `( [ { " ' \` * _`. Default false.
+    pub auto_close_pairs: Option<bool>,
 }
 
 /// Configuration for syntax highlighting of fenced code blocks.

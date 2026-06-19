@@ -274,6 +274,98 @@ pub(super) fn handle_pair_wrap(app: &mut App, k: crossterm::event::KeyEvent) -> 
     true
 }
 
+/// When `app.auto_close_pairs` is enabled and there is no active selection,
+/// handle a key event as an auto-close pair action:
+///
+/// - Asymmetric openers `( [ {` always insert the open+close pair and place
+///   the cursor between them (one `Back` step).
+/// - Asymmetric closers `) ] }` skip over the next char if it matches; otherwise
+///   return `false` so the caller falls through to normal `textarea.input`.
+/// - Symmetric chars `" ' \` * _` skip over if the next char matches; otherwise
+///   insert the pair and place the cursor between them.
+///
+/// Returns `true` when the event was fully handled, `false` when the caller
+/// should fall through to the normal `textarea.input` path.
+pub(super) fn handle_auto_close(app: &mut App, k: crossterm::event::KeyEvent) -> bool {
+    if !app.auto_close_pairs {
+        return false;
+    }
+    if k.modifiers
+        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+    {
+        return false;
+    }
+    if app.textarea.selection_range().is_some() {
+        return false;
+    }
+    let KeyCode::Char(c) = k.code else {
+        return false;
+    };
+
+    let (row, col) = app.textarea.cursor();
+    let next_char = app
+        .textarea
+        .lines()
+        .get(row)
+        .and_then(|line| line.chars().nth(col));
+
+    match c {
+        // Asymmetric openers: always insert pair.
+        '(' => {
+            app.textarea.insert_str("()");
+            app.textarea.move_cursor(CursorMove::Back);
+            true
+        }
+        '[' => {
+            app.textarea.insert_str("[]");
+            app.textarea.move_cursor(CursorMove::Back);
+            true
+        }
+        '{' => {
+            app.textarea.insert_str("{}");
+            app.textarea.move_cursor(CursorMove::Back);
+            true
+        }
+        // Asymmetric closers: skip-over only.
+        ')' => {
+            if next_char == Some(')') {
+                app.textarea.move_cursor(CursorMove::Forward);
+                true
+            } else {
+                false
+            }
+        }
+        ']' => {
+            if next_char == Some(']') {
+                app.textarea.move_cursor(CursorMove::Forward);
+                true
+            } else {
+                false
+            }
+        }
+        '}' => {
+            if next_char == Some('}') {
+                app.textarea.move_cursor(CursorMove::Forward);
+                true
+            } else {
+                false
+            }
+        }
+        // Symmetric chars: skip-over if next matches, else insert pair.
+        '"' | '\'' | '`' | '*' | '_' => {
+            if next_char == Some(c) {
+                app.textarea.move_cursor(CursorMove::Forward);
+                true
+            } else {
+                app.textarea.insert_str(format!("{c}{c}"));
+                app.textarea.move_cursor(CursorMove::Back);
+                true
+            }
+        }
+        _ => false,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Search helpers (called from handle_search_key)
 // ---------------------------------------------------------------------------
@@ -901,7 +993,7 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
             app.config_warnings.clear();
             let is_nav = is_navigation_key(&k);
 
-            if !is_nav && handle_pair_wrap(app, k) {
+            if !is_nav && (handle_pair_wrap(app, k) || handle_auto_close(app, k)) {
                 app.force_redecorate = true;
                 app.mark_keystroke();
             } else {
@@ -1188,6 +1280,7 @@ fn do_commit_settings(app: &mut App, deco_tx: &std::sync::mpsc::Sender<DecorateR
             app.show_line_numbers = cfg.layout.line_numbers.unwrap_or(false);
             app.powerline_glyphs = cfg.layout.powerline_glyphs.unwrap_or(true);
             app.tab_width = cfg.layout.tab_width.unwrap_or(4) as usize;
+            app.auto_close_pairs = cfg.layout.auto_close_pairs.unwrap_or(false);
             app.typewriter_mode = new_tw;
             app.focus_mode = new_fm;
             app.read_only = new_ro;
@@ -1473,6 +1566,7 @@ where
                                 app.file_mode = resolve_file_mode(p, &new_config.filetype);
                             }
                             app.show_line_numbers = new_config.layout.line_numbers.unwrap_or(false);
+                            app.auto_close_pairs = new_config.layout.auto_close_pairs.unwrap_or(false);
                             app.config_warnings = warnings;
                             app.status
                                 .set_timed("Config reloaded.", Duration::from_millis(1500));
@@ -1701,6 +1795,7 @@ mod tests {
             focus_mode: false,
             show_shortcuts: false,
             read_only: false,
+            auto_close_pairs: false,
             settings: None,
         }
     }
@@ -1771,6 +1866,76 @@ mod tests {
             "",
             "third undo removes the original 'hello' insert, not some phantom entry"
         );
+    }
+
+    // ── Auto-close pairs ─────────────────────────────────────────────────────
+
+    // Kills: `delete !app.auto_close_pairs` guard — with the guard removed,
+    // typing `(` would insert `()` even when the feature is off.
+    #[test]
+    fn auto_close_off_typing_open_inserts_single_char() {
+        let mut app = make_app(); // auto_close_pairs = false
+        handle_key_event(&mut app, key(KeyCode::Char('(')));
+        assert_eq!(app.textarea.lines()[0], "(");
+    }
+
+    // Kills: `delete insert_str("()")` branch — the opener would do nothing.
+    #[test]
+    fn auto_close_on_typing_open_inserts_pair() {
+        let mut app = make_app();
+        app.auto_close_pairs = true;
+        handle_key_event(&mut app, key(KeyCode::Char('(')));
+        assert_eq!(app.textarea.lines()[0], "()");
+        assert_eq!(app.textarea.cursor(), (0, 1), "cursor must sit between the pair");
+    }
+
+    // Kills: `delete move_cursor(Back)` — cursor would land after the pair, not between.
+    #[test]
+    fn auto_close_on_cursor_placed_between_pair() {
+        let mut app = make_app();
+        app.auto_close_pairs = true;
+        handle_key_event(&mut app, key(KeyCode::Char('[')));
+        assert_eq!(app.textarea.cursor(), (0, 1));
+    }
+
+    // Kills: `delete move_cursor(Forward)` in skip-over branch — closer would be
+    // inserted as a duplicate instead of consumed.
+    #[test]
+    fn auto_close_on_typing_closer_skips_over() {
+        let mut app = make_app();
+        app.auto_close_pairs = true;
+        handle_key_event(&mut app, key(KeyCode::Char('(')));
+        // cursor is at col 1 inside "()"
+        handle_key_event(&mut app, key(KeyCode::Char(')')));
+        assert_eq!(app.textarea.lines()[0], "()", "no duplicate close inserted");
+        assert_eq!(app.textarea.cursor(), (0, 2), "cursor must be past the closer");
+    }
+
+    // Kills: `delete Some(c) ==` guard — symmetric char would always insert a pair
+    // instead of skipping over the existing one.
+    #[test]
+    fn auto_close_on_symmetric_char_skips_over_existing() {
+        let mut app = make_app();
+        app.auto_close_pairs = true;
+        handle_key_event(&mut app, key(KeyCode::Char('"')));
+        // cursor between the two quotes: `"|"`
+        handle_key_event(&mut app, key(KeyCode::Char('"')));
+        assert_eq!(app.textarea.lines()[0], "\"\"", "no triple-quote produced");
+        assert_eq!(app.textarea.cursor(), (0, 2));
+    }
+
+    // Kills: `delete selection_range().is_some()` guard — with the guard removed,
+    // auto_close would fire on top of pair_wrap (selection case).
+    #[test]
+    fn auto_close_on_with_selection_still_wraps() {
+        let mut app = make_app();
+        app.auto_close_pairs = true;
+        app.textarea.insert_str("hello");
+        app.textarea.move_cursor(CursorMove::Head);
+        app.textarea.start_selection();
+        app.textarea.move_cursor(CursorMove::End);
+        handle_key_event(&mut app, key(KeyCode::Char('(')));
+        assert_eq!(app.textarea.lines()[0], "(hello)");
     }
 
     // Kills: input.rs:275:47 replace != with == in handle_key_event.

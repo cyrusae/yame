@@ -1019,6 +1019,7 @@ mod tests {
             focus_mode: false,
             show_shortcuts: false,
             read_only: false,
+            auto_close_pairs: false,
             settings: None,
         }
     }
