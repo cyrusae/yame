@@ -10,6 +10,9 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 
 use yame::app::{App, is_likely_binary, resolve_file_mode};
 use yame::config::{Theme, load_config, supports_italic};
+use yame::decoration::{
+    DecorationMap, block_highlights_to_decoration_map, build_decoration_map, count_words,
+};
 
 mod cli;
 mod commands;
@@ -41,45 +44,13 @@ fn run(file_path: Option<PathBuf>, read_only: bool) -> io::Result<()> {
         std::process::exit(1);
     }
 
-    // Enter the alternate screen *before* loading config / computing
-    // decorations.  This prevents the terminal from briefly showing
-    // scrollback or lf's UI during initialisation — the blank alternate
-    // screen is visually neutral, so the first draw lands on a clean slate.
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
+    // ── All heavy initialisation runs on the normal terminal ─────────────────
+    //
+    // Config load, App construction, and the initial decoration pass all happen
+    // here — before EnterAlternateScreen.  The user sees their normal shell
+    // while we work (~10-500 ms depending on file size and highlighting),
+    // then the editor appears already fully decorated on the first draw.
 
-    // All remaining initialisation + the event loop run inside the alternate
-    // screen.  We store the result and always clean up, even on error.
-    let result = init_and_run(&mut terminal, file_path, read_only);
-
-    // Best-effort cleanup — preserve the original error if cleanup also fails.
-    let _ = disable_raw_mode();
-    let _ = execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture
-    );
-    let _ = terminal.show_cursor();
-
-    result
-}
-
-/// Load config, build the app, run the event loop.
-///
-/// Separated from `run` so the terminal is always cleaned up even when
-/// initialisation (config load, file parse, decoration build) fails.
-#[mutants::skip] // I/O orchestration — not unit-testable.
-fn init_and_run<B: ratatui::backend::Backend>(
-    terminal: &mut Terminal<B>,
-    file_path: Option<PathBuf>,
-    read_only: bool,
-) -> io::Result<()>
-where
-    io::Error: From<B::Error>,
-{
     let (config, config_warnings) = load_config();
     let italic_support = supports_italic();
     let mut warnings = config_warnings;
@@ -106,7 +77,6 @@ where
     });
     let file_mode = match &file_path {
         Some(p) => resolve_file_mode(p, &config.filetype),
-        // Untitled buffers default to Markdown; resolved again on first save-as.
         None => yame::app::FileMode::Markdown,
     };
 
@@ -133,7 +103,53 @@ where
         );
     }
 
-    input::event_loop(terminal, &mut app, &config.layout)
+    // Run the initial decoration pass synchronously so the editor opens
+    // already formatted.  App::new sets force_redecorate=true; we satisfy it
+    // here and clear the flag so the event loop doesn't re-queue immediately.
+    let text = app.textarea.lines().join("\n");
+    let (deco_map, wc) = match &app.file_mode {
+        yame::app::FileMode::Markdown => build_decoration_map(
+            &text,
+            &app.theme,
+            app.italic_support,
+            app.highlight_cache.as_deref(),
+        ),
+        yame::app::FileMode::PlainHighlight(lang) => {
+            let lang = lang.clone();
+            let map = app
+                .highlight_cache
+                .as_deref()
+                .and_then(|cache| cache.highlight_block(&lang, &text))
+                .map(|hl| block_highlights_to_decoration_map(&hl, 0))
+                .unwrap_or_default();
+            let wc = count_words(&text);
+            (map, wc)
+        }
+        yame::app::FileMode::PlainText => (DecorationMap::default(), count_words(&text)),
+    };
+    app.decoration_map = deco_map;
+    app.word_count = wc;
+    app.force_redecorate = false;
+
+    // ── Enter the alternate screen now that the app is fully ready ────────────
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+
+    let result = input::event_loop(&mut terminal, &mut app, &config.layout);
+
+    // Best-effort cleanup — preserve the original error if cleanup also fails.
+    let _ = disable_raw_mode();
+    let _ = execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    );
+    let _ = terminal.show_cursor();
+
+    result
 }
 
 #[mutants::skip] // Entry point — calls process::exit, not unit-testable.
@@ -142,7 +158,6 @@ fn main() {
     match command {
         cli::Command::Edit { path, read_only } => {
             if let Err(e) = run(path, read_only) {
-                // path: Option<PathBuf>
                 eprintln!("error: {e}");
                 std::process::exit(1);
             }

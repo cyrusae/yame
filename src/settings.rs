@@ -610,8 +610,10 @@ pub enum ModalHit {
     Field(usize),
     /// A tab label in the tab bar; carries the tab index.
     Tab(usize),
-    /// Outside the modal bounds, or on a non-interactive area (border, separator).
+    /// Completely outside the modal's bounding rectangle.
     Outside,
+    /// Inside the modal but on a non-interactive surface (border, separator, hint row).
+    Inert,
 }
 
 impl SettingsModal {
@@ -628,7 +630,7 @@ impl SettingsModal {
         // Tab bar row (by + 1).
         if row == by + 1 {
             if col < bx + 2 {
-                return ModalHit::Outside;
+                return ModalHit::Inert; // left border column
             }
             let rel = (col - (bx + 2)) as usize;
             let mut x = 0usize;
@@ -640,12 +642,12 @@ impl SettingsModal {
                 x += name_len;
                 if i + 1 < TAB_NAMES.len() {
                     if rel < x + 3 {
-                        return ModalHit::Outside; // clicked " · " separator
+                        return ModalHit::Inert; // clicked " · " separator
                     }
                     x += 3;
                 }
             }
-            return ModalHit::Outside;
+            return ModalHit::Inert;
         }
 
         // Field rows (by + 3 .. by + 3 + VISIBLE_FIELDS).
@@ -658,7 +660,9 @@ impl SettingsModal {
             }
         }
 
-        ModalHit::Outside
+        // Inside the modal bounds but on a non-interactive surface (top/bottom border,
+        // separator rows, hint row, or a field row past the end of the list).
+        ModalHit::Inert
     }
 
     /// Move cursor to `field`, cancelling any active edit.
@@ -676,6 +680,32 @@ impl SettingsModal {
         } else if self.field >= self.scroll + VISIBLE_FIELDS {
             self.scroll = self.field + 1 - VISIBLE_FIELDS;
         }
+    }
+
+    /// Activate the currently focused field on a mouse click: toggle booleans, advance cyclers,
+    /// and toggle the expand row.  Text/color/number fields are left for keyboard Enter.
+    pub fn activate_clicked_field(&mut self) -> SettingsOutcome {
+        // Expand toggle row
+        if self.tab == 0 && self.field == APPEARANCE_EXPAND_IDX {
+            self.expanded = !self.expanded;
+            if !self.expanded && self.field > APPEARANCE_EXPAND_IDX {
+                self.field = APPEARANCE_EXPAND_IDX;
+            }
+            return SettingsOutcome::Continue;
+        }
+        // Cycler: advance one step forward
+        if self.is_cycler_field() {
+            return if self.cycle_current(true) {
+                SettingsOutcome::Committed
+            } else {
+                SettingsOutcome::Continue
+            };
+        }
+        // Toggle: flip
+        if self.toggle_current() {
+            return SettingsOutcome::Committed;
+        }
+        SettingsOutcome::Continue
     }
 
     /// Switch to `tab`, resetting field and scroll.  No-op if `tab` is already active.
@@ -2016,17 +2046,17 @@ mod tests {
     }
 
     #[test]
-    fn hit_test_top_border_returns_outside() {
-        // by = 11 — the top border row is non-interactive.
+    fn hit_test_top_border_returns_inert() {
+        // by = 11 — top border is inside the modal rectangle but non-interactive.
         let m = make_modal();
-        assert_eq!(m.hit_test(11, 40, test_area()), ModalHit::Outside);
+        assert_eq!(m.hit_test(11, 40, test_area()), ModalHit::Inert);
     }
 
     #[test]
-    fn hit_test_separator_row_returns_outside() {
-        // by+2 = 13 — the separator between tab bar and fields.
+    fn hit_test_separator_row_returns_inert() {
+        // by+2 = 13 — separator between tab bar and fields: inside modal, non-interactive.
         let m = make_modal();
-        assert_eq!(m.hit_test(13, 40, test_area()), ModalHit::Outside);
+        assert_eq!(m.hit_test(13, 40, test_area()), ModalHit::Inert);
     }
 
     #[test]
@@ -2071,10 +2101,10 @@ mod tests {
     }
 
     #[test]
-    fn hit_test_tab_separator_returns_outside() {
+    fn hit_test_tab_separator_returns_inert() {
         let m = make_modal();
-        // Separator " · " between Appearance and Editor: col 44 (bx+12).
-        assert_eq!(m.hit_test(12, 44, test_area()), ModalHit::Outside);
+        // Separator " · " between Appearance and Editor: col 44 (bx+12) — inside modal, non-interactive.
+        assert_eq!(m.hit_test(12, 44, test_area()), ModalHit::Inert);
     }
 
     // -------------------------------------------------------------------------
@@ -2168,5 +2198,78 @@ mod tests {
         let mut m = make_modal();
         m.switch_to_tab(99);
         assert_eq!(m.tab, 0); // unchanged
+    }
+
+    // -------------------------------------------------------------------------
+    // hit_test — Inert / Outside boundary cases
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn hit_test_truly_outside_returns_outside() {
+        // col=0 is left of bx=32 → truly outside the modal rectangle.
+        let m = make_modal();
+        assert_eq!(m.hit_test(14, 0, test_area()), ModalHit::Outside);
+    }
+
+    #[test]
+    fn hit_test_hint_row_returns_inert() {
+        // by+16 = 27 — the navigation hint row below the second separator.
+        let m = make_modal();
+        assert_eq!(m.hit_test(27, 40, test_area()), ModalHit::Inert);
+    }
+
+    #[test]
+    fn hit_test_bottom_border_returns_inert() {
+        // by+17 = 28 — bottom border row.
+        let m = make_modal();
+        assert_eq!(m.hit_test(28, 40, test_area()), ModalHit::Inert);
+    }
+
+    // -------------------------------------------------------------------------
+    // activate_clicked_field
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn activate_clicked_field_toggle_flips_and_commits() {
+        let mut m = make_modal();
+        m.tab = 1;
+        m.field = 0; // line_numbers Toggle
+        let outcome = m.activate_clicked_field();
+        assert!(matches!(outcome, SettingsOutcome::Committed));
+        assert!(m.config.layout.line_numbers.unwrap_or(false));
+    }
+
+    #[test]
+    fn activate_clicked_field_cycler_advances_and_commits() {
+        let mut m = make_modal();
+        m.tab = 0;
+        m.field = 0; // Preset cycler — starts at "" (index 0)
+        let outcome = m.activate_clicked_field();
+        assert!(matches!(outcome, SettingsOutcome::Committed));
+        assert_eq!(
+            m.config.palette.preset,
+            Some("catppuccin-mocha".to_string())
+        );
+    }
+
+    #[test]
+    fn activate_clicked_field_expand_row_toggles_expanded() {
+        let mut m = make_modal();
+        m.tab = 0;
+        m.field = APPEARANCE_EXPAND_IDX;
+        let outcome = m.activate_clicked_field();
+        assert!(matches!(outcome, SettingsOutcome::Continue));
+        assert!(m.expanded);
+    }
+
+    #[test]
+    fn activate_clicked_field_hex_field_returns_continue_no_edit() {
+        // Text/color fields should not start editing on a bare click.
+        let mut m = make_modal();
+        m.tab = 0;
+        m.field = 2; // Text color (HexColor)
+        let outcome = m.activate_clicked_field();
+        assert!(matches!(outcome, SettingsOutcome::Continue));
+        assert!(!m.editing);
     }
 }

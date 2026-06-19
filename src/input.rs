@@ -1159,6 +1159,61 @@ fn handle_visual_move(app: &mut App, go_down: bool, selecting: bool) -> KeyOutco
 // Event loop
 // ---------------------------------------------------------------------------
 
+/// Apply a committed settings change: write config to disk, rebuild theme, and send a fresh
+/// decoration request.  Shared by the keyboard CommitSettings path and mouse click activation.
+#[mutants::skip] // Performs disk I/O (write_config) and terminal-state mutation.
+fn do_commit_settings(app: &mut App, deco_tx: &std::sync::mpsc::Sender<DecorateRequest>) {
+    let (cfg, new_tw, new_fm, new_ro) = match &app.settings {
+        Some(m) => (m.config.clone(), m.typewriter_mode, m.focus_mode, m.read_only),
+        None => return,
+    };
+    match write_config(&cfg) {
+        Ok(()) => {
+            let mut warnings = Vec::new();
+            app.theme = Theme::from_config(&cfg.palette, &cfg.theme, &cfg.headings, &mut warnings);
+            app.highlight_cache = cfg.highlighting.enabled.then(|| {
+                let palette_theme = cfg.highlighting.use_palette_colors.then(|| {
+                    yame::highlighting::build_palette_theme(&app.theme)
+                });
+                Arc::new(yame::highlighting::HighlightCache::new(
+                    true,
+                    cfg.highlighting.syntect_theme.clone(),
+                    palette_theme,
+                ))
+            });
+            if let Some(p) = &app.file_path {
+                app.file_mode = resolve_file_mode(p, &cfg.filetype);
+            }
+            app.show_line_numbers = cfg.layout.line_numbers.unwrap_or(false);
+            app.powerline_glyphs = cfg.layout.powerline_glyphs.unwrap_or(true);
+            app.tab_width = cfg.layout.tab_width.unwrap_or(4) as usize;
+            app.typewriter_mode = new_tw;
+            app.focus_mode = new_fm;
+            app.read_only = new_ro;
+            app.config_warnings = warnings;
+            // Send a fresh decoration request immediately so the new theme is applied without
+            // waiting for the DEBOUNCE timer.  We do NOT clear decoration_map or drain deco_rx
+            // — the worker's own "latest wins" drain handles rapid cycling, and clearing would
+            // cause a visible flash to unstyled text.
+            let _ = deco_tx.send(DecorateRequest {
+                text: app.textarea.lines().join("\n"),
+                mode: app.file_mode.clone(),
+                theme: app.theme.clone(),
+                italic_support: app.italic_support,
+                cache: app.highlight_cache.clone(),
+            });
+            // Refresh the modal's resolved theme so derived defaults update immediately.
+            if let Some(modal) = app.settings.as_mut() {
+                modal.resolved = app.theme.clone();
+            }
+        }
+        Err(e) => {
+            app.status
+                .set_timed(format!("⚠ Settings error: {e}"), Duration::from_secs(3));
+        }
+    }
+}
+
 #[mutants::skip] // Terminal I/O loop — requires a real terminal backend + live event stream; not unit-testable.
 pub(super) fn event_loop<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
@@ -1454,72 +1509,7 @@ where
                             ));
                         }
                         KeyOutcome::CommitSettings => {
-                            // Extract what we need before releasing the borrow on app.settings.
-                            let (cfg, new_tw, new_fm, new_ro) = match &app.settings {
-                                Some(m) => (
-                                    m.config.clone(),
-                                    m.typewriter_mode,
-                                    m.focus_mode,
-                                    m.read_only,
-                                ),
-                                None => continue,
-                            };
-                            match write_config(&cfg) {
-                                Ok(()) => {
-                                    let mut warnings = Vec::new();
-                                    app.theme = Theme::from_config(
-                                        &cfg.palette,
-                                        &cfg.theme,
-                                        &cfg.headings,
-                                        &mut warnings,
-                                    );
-                                    app.highlight_cache = cfg.highlighting.enabled.then(|| {
-                                        let palette_theme =
-                                            cfg.highlighting.use_palette_colors.then(|| {
-                                                yame::highlighting::build_palette_theme(&app.theme)
-                                            });
-                                        Arc::new(yame::highlighting::HighlightCache::new(
-                                            true,
-                                            cfg.highlighting.syntect_theme.clone(),
-                                            palette_theme,
-                                        ))
-                                    });
-                                    if let Some(p) = &app.file_path {
-                                        app.file_mode = resolve_file_mode(p, &cfg.filetype);
-                                    }
-                                    app.show_line_numbers =
-                                        cfg.layout.line_numbers.unwrap_or(false);
-                                    app.powerline_glyphs =
-                                        cfg.layout.powerline_glyphs.unwrap_or(true);
-                                    app.tab_width = cfg.layout.tab_width.unwrap_or(4) as usize;
-                                    app.typewriter_mode = new_tw;
-                                    app.focus_mode = new_fm;
-                                    app.read_only = new_ro;
-                                    app.config_warnings = warnings;
-                                    // Send a fresh decoration request immediately so the new
-                                    // theme is applied without waiting for the DEBOUNCE timer.
-                                    // We do NOT clear decoration_map or drain deco_rx — the
-                                    // worker's own "latest wins" drain handles rapid cycling,
-                                    // and clearing would cause a visible flash to unstyled text.
-                                    let _ = deco_tx.send(DecorateRequest {
-                                        text: app.textarea.lines().join("\n"),
-                                        mode: app.file_mode.clone(),
-                                        theme: app.theme.clone(),
-                                        italic_support: app.italic_support,
-                                        cache: app.highlight_cache.clone(),
-                                    });
-                                    // Refresh the modal's resolved theme so derived defaults update.
-                                    if let Some(modal) = app.settings.as_mut() {
-                                        modal.resolved = app.theme.clone();
-                                    }
-                                }
-                                Err(e) => {
-                                    app.status.set_timed(
-                                        format!("⚠ Settings error: {e}"),
-                                        Duration::from_secs(3),
-                                    );
-                                }
-                            }
+                            do_commit_settings(app, &deco_tx);
                         }
                         KeyOutcome::OpenPicker => {
                             match picker::pick_file() {
@@ -1581,16 +1571,30 @@ where
                             }
                         }
                         MouseEventKind::Down(MouseButton::Left) => {
+                            use yame::settings::SettingsOutcome;
                             match modal_hit {
                                 Some(ModalHit::Tab(t)) => {
                                     app.settings.as_mut().unwrap().switch_to_tab(t);
                                 }
                                 Some(ModalHit::Field(f)) => {
-                                    app.settings.as_mut().unwrap().jump_to_field(f);
+                                    // Navigate to the clicked field, then activate it if it's a
+                                    // toggle, cycler, or expand row (text/color fields need Enter).
+                                    let outcome = {
+                                        let modal = app.settings.as_mut().unwrap();
+                                        modal.jump_to_field(f);
+                                        modal.activate_clicked_field()
+                                    };
+                                    if matches!(outcome, SettingsOutcome::Committed) {
+                                        do_commit_settings(app, &deco_tx);
+                                    }
                                 }
                                 Some(ModalHit::Outside) => {
-                                    // Click outside the modal dismisses it.
+                                    // Click truly outside the modal bounds — dismiss.
                                     app.settings = None;
+                                }
+                                Some(ModalHit::Inert) => {
+                                    // Click on non-interactive interior surface (border, separator,
+                                    // hint row) — keep the modal open, do nothing.
                                 }
                                 None => {
                                     // No modal open — standard click behaviour.

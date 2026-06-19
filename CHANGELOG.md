@@ -55,6 +55,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - chore: v0.2.1 version bump (#188)
 
 ### Fixed
+- fix: blank screen flash on startup (regression) (#237)
 - Investigate crossterm 0.28→0.29 breaking change causing test failures (#221)
 - Fix: heading_bg not updating when rainbow headings enabled (#215)
 - Debug: preset cycling has no visual effect (#213)
