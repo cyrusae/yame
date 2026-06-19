@@ -8,20 +8,13 @@ use ratatui::{
 };
 
 use crate::app::App;
-use crate::settings::{APPEARANCE_EXPAND_IDX, FieldKind, SettingsModal, TAB_NAMES};
+use crate::settings::{APPEARANCE_EXPAND_IDX, FieldKind, MODAL_H, MODAL_W, SettingsModal, TAB_NAMES, VISIBLE_FIELDS};
 
 use super::search_bar::flood_reset;
 
 // ---------------------------------------------------------------------------
 // Layout constants
 // ---------------------------------------------------------------------------
-
-/// Total modal width (terminal columns), including border glyphs.
-pub const MODAL_W: u16 = 56;
-/// Number of field rows visible at once (the scrollable area height).
-pub const VISIBLE_FIELDS: usize = 12;
-/// Total modal height: top border + tab row + separator + fields + separator + hint + bottom border.
-pub const MODAL_H: u16 = VISIBLE_FIELDS as u16 + 6;
 
 // Label column width inside the modal.
 const LABEL_W: u16 = 22;

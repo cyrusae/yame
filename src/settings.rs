@@ -1,7 +1,18 @@
 use crossterm::event::{KeyCode, KeyModifiers};
+use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 use crate::config::{Config, Theme, parse_hex_color};
+
+// ---------------------------------------------------------------------------
+// Modal geometry — shared by renderer and hit-test logic
+// ---------------------------------------------------------------------------
+
+pub const MODAL_W: u16 = 56;
+/// Number of field rows visible at once.
+pub const VISIBLE_FIELDS: usize = 12;
+/// Total modal height (top border + tab row + separator + fields + separator + hint + bottom border).
+pub const MODAL_H: u16 = VISIBLE_FIELDS as u16 + 6;
 
 // ---------------------------------------------------------------------------
 // Tab / field descriptors
@@ -589,6 +600,98 @@ impl SettingsModal {
 }
 
 // ---------------------------------------------------------------------------
+// Mouse hit-test
+// ---------------------------------------------------------------------------
+
+/// Where a mouse event landed relative to the settings modal.
+#[derive(Debug, PartialEq)]
+pub enum ModalHit {
+    /// A visible field row; carries the absolute field index.
+    Field(usize),
+    /// A tab label in the tab bar; carries the tab index.
+    Tab(usize),
+    /// Outside the modal bounds, or on a non-interactive area (border, separator).
+    Outside,
+}
+
+impl SettingsModal {
+    /// Classify a mouse position relative to the modal rendered over `editor_area`.
+    pub fn hit_test(&self, row: u16, col: u16, editor_area: Rect) -> ModalHit {
+        let bx = editor_area.x + (editor_area.width.saturating_sub(MODAL_W)) / 2;
+        let by = editor_area.y + (editor_area.height.saturating_sub(MODAL_H)) / 2;
+
+        // Outside modal bounds entirely.
+        if col < bx || col >= bx + MODAL_W || row < by || row >= by + MODAL_H {
+            return ModalHit::Outside;
+        }
+
+        // Tab bar row (by + 1).
+        if row == by + 1 {
+            if col < bx + 2 {
+                return ModalHit::Outside;
+            }
+            let rel = (col - (bx + 2)) as usize;
+            let mut x = 0usize;
+            for (i, name) in TAB_NAMES.iter().enumerate() {
+                let name_len = name.chars().count();
+                if rel < x + name_len {
+                    return ModalHit::Tab(i);
+                }
+                x += name_len;
+                if i + 1 < TAB_NAMES.len() {
+                    if rel < x + 3 {
+                        return ModalHit::Outside; // clicked " · " separator
+                    }
+                    x += 3;
+                }
+            }
+            return ModalHit::Outside;
+        }
+
+        // Field rows (by + 3 .. by + 3 + VISIBLE_FIELDS).
+        let fields_start_y = by + 3;
+        if row >= fields_start_y && row < fields_start_y + VISIBLE_FIELDS as u16 {
+            let visual_row = (row - fields_start_y) as usize;
+            let field_idx = self.scroll + visual_row;
+            if field_idx < self.field_count() {
+                return ModalHit::Field(field_idx);
+            }
+        }
+
+        ModalHit::Outside
+    }
+
+    /// Move cursor to `field`, cancelling any active edit.
+    /// Adjusts `scroll` to keep the field visible.  No-op if out of range.
+    pub fn jump_to_field(&mut self, field: usize) {
+        if field >= self.field_count() {
+            return;
+        }
+        if self.editing {
+            self.cancel_editing();
+        }
+        self.field = field;
+        if self.field < self.scroll {
+            self.scroll = self.field;
+        } else if self.field >= self.scroll + VISIBLE_FIELDS {
+            self.scroll = self.field + 1 - VISIBLE_FIELDS;
+        }
+    }
+
+    /// Switch to `tab`, resetting field and scroll.  No-op if `tab` is already active.
+    pub fn switch_to_tab(&mut self, tab: usize) {
+        if tab >= TAB_NAMES.len() || tab == self.tab {
+            return;
+        }
+        self.tab = tab;
+        self.field = 0;
+        self.scroll = 0;
+        self.editing = false;
+        self.input_buf.clear();
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Key handler (pure — no I/O)
 // ---------------------------------------------------------------------------
 
@@ -1024,6 +1127,7 @@ fn commit_file(cfg: &mut Config, field: usize, v: &str) -> bool {
 mod tests {
     use super::*;
     use crate::config::Config;
+    use ratatui::layout::Rect;
 
     fn make_modal() -> SettingsModal {
         SettingsModal::new(
@@ -1890,5 +1994,179 @@ mod tests {
         m.input_buf = "base16-ocean.dark".to_string();
         assert!(m.commit_input());
         assert_eq!(m.config.highlighting.syntect_theme, "base16-ocean.dark");
+    }
+
+    // -------------------------------------------------------------------------
+    // hit_test
+    // -------------------------------------------------------------------------
+
+    // editor_area: 120 wide × 40 tall at (0, 0)
+    // bx = (120 - 56) / 2 = 32,  by = (40 - 18) / 2 = 11
+    // tab row: y=12
+    //   "Appearance" x=34..43, " · " x=44..46, "Editor" x=47..52, " · " x=53..55, "File" x=56..59
+    // field rows: y=14..25  (by+3 .. by+3+12)
+    fn test_area() -> Rect {
+        Rect { x: 0, y: 0, width: 120, height: 40 }
+    }
+
+    #[test]
+    fn hit_test_outside_returns_outside() {
+        let m = make_modal();
+        assert_eq!(m.hit_test(0, 0, test_area()), ModalHit::Outside);
+    }
+
+    #[test]
+    fn hit_test_top_border_returns_outside() {
+        // by = 11 — the top border row is non-interactive.
+        let m = make_modal();
+        assert_eq!(m.hit_test(11, 40, test_area()), ModalHit::Outside);
+    }
+
+    #[test]
+    fn hit_test_separator_row_returns_outside() {
+        // by+2 = 13 — the separator between tab bar and fields.
+        let m = make_modal();
+        assert_eq!(m.hit_test(13, 40, test_area()), ModalHit::Outside);
+    }
+
+    #[test]
+    fn hit_test_field_row_0_returns_field_0() {
+        let m = make_modal();
+        assert_eq!(m.hit_test(14, 40, test_area()), ModalHit::Field(0));
+    }
+
+    #[test]
+    fn hit_test_field_row_3_returns_field_3() {
+        let m = make_modal();
+        assert_eq!(m.hit_test(17, 40, test_area()), ModalHit::Field(3));
+    }
+
+    #[test]
+    fn hit_test_field_row_with_scroll_offset() {
+        // scroll=3: visual row 0 (y=14) maps to absolute field 3.
+        let mut m = make_modal();
+        m.scroll = 3;
+        assert_eq!(m.hit_test(14, 40, test_area()), ModalHit::Field(3));
+    }
+
+    #[test]
+    fn hit_test_tab_appearance() {
+        let m = make_modal();
+        // "Appearance" starts at bx+2=34; click col 36 is inside it.
+        assert_eq!(m.hit_test(12, 36, test_area()), ModalHit::Tab(0));
+    }
+
+    #[test]
+    fn hit_test_tab_editor() {
+        let m = make_modal();
+        // "Editor" starts at bx+2+13=47; click col 48 is inside it.
+        assert_eq!(m.hit_test(12, 48, test_area()), ModalHit::Tab(1));
+    }
+
+    #[test]
+    fn hit_test_tab_file() {
+        let m = make_modal();
+        // "File" starts at bx+2+22=56; click col 57 is inside it.
+        assert_eq!(m.hit_test(12, 57, test_area()), ModalHit::Tab(2));
+    }
+
+    #[test]
+    fn hit_test_tab_separator_returns_outside() {
+        let m = make_modal();
+        // Separator " · " between Appearance and Editor: col 44 (bx+12).
+        assert_eq!(m.hit_test(12, 44, test_area()), ModalHit::Outside);
+    }
+
+    // -------------------------------------------------------------------------
+    // jump_to_field
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn jump_to_field_sets_field() {
+        let mut m = make_modal();
+        m.jump_to_field(3);
+        assert_eq!(m.field, 3);
+    }
+
+    #[test]
+    fn jump_to_field_cancels_active_edit() {
+        let mut m = make_modal();
+        m.editing = true;
+        m.input_buf = "abc".to_string();
+        m.jump_to_field(2);
+        assert!(!m.editing);
+        assert!(m.input_buf.is_empty());
+    }
+
+    #[test]
+    fn jump_to_field_scrolls_forward_when_out_of_window() {
+        // VISIBLE_FIELDS=12; jump to field 14 from scroll=0 → scroll = 14+1-12 = 3.
+        let mut m = make_modal();
+        m.tab = 0;
+        m.expanded = true; // expose enough fields
+        m.jump_to_field(14);
+        assert_eq!(m.field, 14);
+        assert_eq!(m.scroll, 3);
+    }
+
+    #[test]
+    fn jump_to_field_scrolls_backward_when_above_window() {
+        let mut m = make_modal();
+        m.scroll = 5;
+        m.field = 5;
+        m.jump_to_field(2);
+        assert_eq!(m.field, 2);
+        assert_eq!(m.scroll, 2);
+    }
+
+    #[test]
+    fn jump_to_field_out_of_range_is_noop() {
+        let mut m = make_modal();
+        let original_field = m.field;
+        m.jump_to_field(9999);
+        assert_eq!(m.field, original_field);
+    }
+
+    // -------------------------------------------------------------------------
+    // switch_to_tab
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn switch_to_tab_changes_tab() {
+        let mut m = make_modal();
+        m.switch_to_tab(1);
+        assert_eq!(m.tab, 1);
+    }
+
+    #[test]
+    fn switch_to_tab_resets_field_and_scroll() {
+        let mut m = make_modal();
+        m.field = 4;
+        m.scroll = 2;
+        m.editing = true;
+        m.input_buf = "x".to_string();
+        m.switch_to_tab(2);
+        assert_eq!(m.tab, 2);
+        assert_eq!(m.field, 0);
+        assert_eq!(m.scroll, 0);
+        assert!(!m.editing);
+        assert!(m.input_buf.is_empty());
+    }
+
+    #[test]
+    fn switch_to_tab_noop_on_same_tab() {
+        let mut m = make_modal();
+        m.field = 3;
+        m.scroll = 1;
+        m.switch_to_tab(0); // already on tab 0
+        assert_eq!(m.field, 3); // unchanged
+        assert_eq!(m.scroll, 1); // unchanged
+    }
+
+    #[test]
+    fn switch_to_tab_out_of_range_is_noop() {
+        let mut m = make_modal();
+        m.switch_to_tab(99);
+        assert_eq!(m.tab, 0); // unchanged
     }
 }

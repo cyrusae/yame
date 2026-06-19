@@ -617,7 +617,7 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
 
     // ── Settings modal — delegate to settings key handler ────────────────────
     if app.settings.is_some() {
-        use yame::renderer::VISIBLE_FIELDS;
+        use yame::settings::VISIBLE_FIELDS;
         let outcome = {
             let modal = app.settings.as_mut().unwrap();
             handle_settings_key(modal, k, VISIBLE_FIELDS)
@@ -1202,8 +1202,9 @@ where
         })
         .expect("failed to spawn decoration worker");
 
-    // decoration_map and word_count are pre-computed in App::new() before the
-    // terminal enters the alternate screen, so the first draw is immediate.
+    // force_redecorate=true (set in App::new) triggers an immediate background
+    // decoration request on the first loop iteration.  Text is visible from the
+    // first draw; decorations arrive within one or two frames.
 
     let mut last_editor_area = Rect::default();
     let mut drag_selecting = false;
@@ -1553,54 +1554,86 @@ where
                         }
                     }
                 }
-                Event::Mouse(mouse) => match mouse.kind {
-                    MouseEventKind::ScrollDown => {
-                        let max = app.textarea.lines().len().saturating_sub(1);
-                        app.scroll_top = (app.scroll_top + SCROLL_LINES).min(max);
-                        app.free_scroll = true;
-                    }
-                    MouseEventKind::ScrollUp => {
-                        app.scroll_top = app.scroll_top.saturating_sub(SCROLL_LINES);
-                        app.free_scroll = true;
-                    }
-                    MouseEventKind::Down(MouseButton::Left) => {
-                        // Click re-engages cursor-clamping scroll.
-                        app.free_scroll = false;
-                        drag_selecting = false;
-                        if let Some((doc_row, doc_col)) = screen_to_doc(
-                            mouse.row,
-                            mouse.column,
-                            &last_editor_area,
-                            app.scroll_top,
-                            app.textarea.lines(),
-                            &app.decoration_map,
-                            app.show_line_numbers,
-                        ) {
-                            app.textarea.cancel_selection();
-                            app.textarea.move_cursor(CursorMove::Jump(doc_row, doc_col));
-                        }
-                    }
-                    MouseEventKind::Drag(MouseButton::Left) => {
-                        // Drag moves the cursor, so re-engage cursor-clamping scroll.
-                        app.free_scroll = false;
-                        if let Some((doc_row, doc_col)) = screen_to_doc(
-                            mouse.row,
-                            mouse.column,
-                            &last_editor_area,
-                            app.scroll_top,
-                            app.textarea.lines(),
-                            &app.decoration_map,
-                            app.show_line_numbers,
-                        ) {
-                            if !drag_selecting {
-                                app.textarea.start_selection();
-                                drag_selecting = true;
+                Event::Mouse(mouse) => {
+                    use yame::settings::{ModalHit, VISIBLE_FIELDS};
+                    // Compute hit while the borrow of app.settings is scoped separately.
+                    let modal_hit = app
+                        .settings
+                        .as_ref()
+                        .map(|m| m.hit_test(mouse.row, mouse.column, last_editor_area));
+                    match mouse.kind {
+                        MouseEventKind::ScrollDown => {
+                            // Scroll inside modal → move field cursor; outside → scroll editor.
+                            if matches!(modal_hit, Some(ModalHit::Field(_) | ModalHit::Tab(_))) {
+                                app.settings.as_mut().unwrap().move_down(VISIBLE_FIELDS);
+                            } else {
+                                let max = app.textarea.lines().len().saturating_sub(1);
+                                app.scroll_top = (app.scroll_top + SCROLL_LINES).min(max);
+                                app.free_scroll = true;
                             }
-                            app.textarea.move_cursor(CursorMove::Jump(doc_row, doc_col));
                         }
+                        MouseEventKind::ScrollUp => {
+                            if matches!(modal_hit, Some(ModalHit::Field(_) | ModalHit::Tab(_))) {
+                                app.settings.as_mut().unwrap().move_up();
+                            } else {
+                                app.scroll_top = app.scroll_top.saturating_sub(SCROLL_LINES);
+                                app.free_scroll = true;
+                            }
+                        }
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            match modal_hit {
+                                Some(ModalHit::Tab(t)) => {
+                                    app.settings.as_mut().unwrap().switch_to_tab(t);
+                                }
+                                Some(ModalHit::Field(f)) => {
+                                    app.settings.as_mut().unwrap().jump_to_field(f);
+                                }
+                                Some(ModalHit::Outside) => {
+                                    // Click outside the modal dismisses it.
+                                    app.settings = None;
+                                }
+                                None => {
+                                    // No modal open — standard click behaviour.
+                                    app.free_scroll = false;
+                                    drag_selecting = false;
+                                    if let Some((doc_row, doc_col)) = screen_to_doc(
+                                        mouse.row,
+                                        mouse.column,
+                                        &last_editor_area,
+                                        app.scroll_top,
+                                        app.textarea.lines(),
+                                        &app.decoration_map,
+                                        app.show_line_numbers,
+                                    ) {
+                                        app.textarea.cancel_selection();
+                                        app.textarea
+                                            .move_cursor(CursorMove::Jump(doc_row, doc_col));
+                                    }
+                                }
+                            }
+                        }
+                        MouseEventKind::Drag(MouseButton::Left) if modal_hit.is_none() => {
+                            // Drag moves the cursor, so re-engage cursor-clamping scroll.
+                            app.free_scroll = false;
+                            if let Some((doc_row, doc_col)) = screen_to_doc(
+                                mouse.row,
+                                mouse.column,
+                                &last_editor_area,
+                                app.scroll_top,
+                                app.textarea.lines(),
+                                &app.decoration_map,
+                                app.show_line_numbers,
+                            ) {
+                                if !drag_selecting {
+                                    app.textarea.start_selection();
+                                    drag_selecting = true;
+                                }
+                                app.textarea.move_cursor(CursorMove::Jump(doc_row, doc_col));
+                            }
+                        }
+                        _ => {}
                     }
-                    _ => {}
-                },
+                }
                 Event::Resize(_, _) => {
                     // Viewport geometry changed — re-engage cursor-clamping scroll
                     // so the cursor is guaranteed visible after the resize.

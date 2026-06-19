@@ -15,7 +15,7 @@ mod utils;
 pub use self::search_bar::{
     render_search_bar, render_search_help_modal, render_shortcuts_modal, search_bar_height,
 };
-pub use self::settings_modal::{VISIBLE_FIELDS, render_settings_modal};
+pub use self::settings_modal::render_settings_modal;
 pub use status::{render_info_line, render_status_bar};
 pub use utils::{format_thousands, shorten_path, split_into_spans};
 

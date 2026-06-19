@@ -6,9 +6,7 @@ use std::time::Instant;
 use tui_textarea::TextArea;
 
 use crate::config::{FiletypeConfig, Theme};
-use crate::decoration::{
-    DecorationMap, block_highlights_to_decoration_map, build_decoration_map, count_words,
-};
+use crate::decoration::DecorationMap;
 use crate::highlighting::HighlightCache;
 use crate::renderer::shorten_path;
 use crate::search::SearchState;
@@ -237,26 +235,6 @@ impl App {
         // a reference without cloning the expensive SyntaxSet/ThemeSet payloads.
         let highlight_cache: Option<Arc<HighlightCache>> = highlight_cache.map(Arc::new);
 
-        // Pre-compute the initial decoration map before entering the alternate screen
-        // so the event loop's first draw is immediate with fully-styled content,
-        // eliminating the blank-frame flash on startup.
-        let text = textarea.lines().join("\n");
-        let (decoration_map, word_count) = match &file_mode {
-            FileMode::Markdown => {
-                build_decoration_map(&text, &theme, italic_support, highlight_cache.as_deref())
-            }
-            FileMode::PlainHighlight(lang) => {
-                let map = highlight_cache
-                    .as_deref()
-                    .and_then(|cache| cache.highlight_block(lang, &text))
-                    .map(|hl| block_highlights_to_decoration_map(&hl, 0))
-                    .unwrap_or_default();
-                let wc = count_words(&text);
-                (map, wc)
-            }
-            FileMode::PlainText => (DecorationMap::default(), count_words(&text)),
-        };
-
         Ok(Self {
             textarea,
             shortened_path,
@@ -267,9 +245,9 @@ impl App {
             italic_support,
             powerline_glyphs,
             last_keystroke: None,
-            force_redecorate: false,
-            decoration_map,
-            word_count,
+            force_redecorate: true,
+            decoration_map: DecorationMap::default(),
+            word_count: 0,
             status: StatusLine::default(),
             config_warnings,
             scroll_top: 0,
