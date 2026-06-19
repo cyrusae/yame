@@ -253,23 +253,24 @@ pub(super) fn handle_pair_wrap(app: &mut App, k: crossterm::event::KeyEvent) -> 
     {
         return false;
     }
-    let close = match k.code {
-        KeyCode::Char('(') => ')',
-        KeyCode::Char('[') => ']',
-        KeyCode::Char('{') => '}',
-        KeyCode::Char('"') => '"',
-        KeyCode::Char('\'') => '\'',
-        KeyCode::Char('`') => '`',
-        KeyCode::Char('*') => '*',
-        KeyCode::Char('_') => '_',
+    let (open, close) = match k.code {
+        KeyCode::Char('(') => ('(', ')'),
+        KeyCode::Char('[') => ('[', ']'),
+        KeyCode::Char('{') => ('{', '}'),
+        KeyCode::Char('"') => ('"', '"'),
+        KeyCode::Char('\'') => ('\'', '\''),
+        KeyCode::Char('`') => ('`', '`'),
+        KeyCode::Char('*') => ('*', '*'),
+        KeyCode::Char('_') => ('_', '_'),
         _ => return false,
     };
     let selected = match get_selection_text(app) {
         Some(s) => s,
         None => return false,
     };
-    app.textarea.input(k);
-    app.textarea.insert_str(format!("{selected}{close}"));
+    // Single insert_str while selection is active: delete selection (1 undo entry) +
+    // insert wrapped text (1 undo entry) = 2 steps, down from 3 with input() + insert_str().
+    app.textarea.insert_str(format!("{open}{selected}{close}"));
     true
 }
 
@@ -1739,6 +1740,36 @@ mod tests {
             app.textarea.lines()[0],
             "(hello)",
             "pair-wrap must wrap the selection"
+        );
+    }
+
+    // Kills: the insert_str(open+selected+close) line being split back into two calls.
+    // Two undo steps restore the buffer fully; a third undo would over-shoot into the
+    // pre-"hello" state, proving the wrap is recorded as exactly 2 history entries.
+    #[test]
+    fn pair_wrap_undoes_in_two_steps() {
+        let mut app = make_app();
+        app.textarea.insert_str("hello");
+        app.textarea.move_cursor(CursorMove::Head);
+        app.textarea.start_selection();
+        app.textarea.move_cursor(CursorMove::End);
+        handle_key_event(&mut app, key(KeyCode::Char('(')));
+        assert_eq!(app.textarea.lines()[0], "(hello)");
+
+        app.textarea.undo(); // remove "(hello)" insertion
+        app.textarea.undo(); // restore "hello" by un-deleting the selection
+        assert_eq!(
+            app.textarea.lines()[0],
+            "hello",
+            "two undos must fully restore the pre-wrap state"
+        );
+
+        // A third undo would overshoot into blank — verify it does nothing more.
+        app.textarea.undo();
+        assert_eq!(
+            app.textarea.lines()[0],
+            "",
+            "third undo removes the original 'hello' insert, not some phantom entry"
         );
     }
 

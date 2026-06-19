@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [1.0.0] — 2026-06-16
 
 ### Added
+- Settings modal: mouse click support for tab/field selection and selector cycling (#224)
 - Extend heading underline to match background width (#217)
 - Style image embeds: italicize+underline path, accent-color alt text (#223)
 - Expose rose-pine/moon/dawn in PRESET_OPTIONS cycler (#216)
@@ -22,6 +23,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - feat: `yame --preview <file>` — headless ANSI render for lf/file-manager previewers; respects `$COLUMNS`; full decoration and syntax-highlight pipeline; bg colours suppressed for clean integration (#190)
 
 ### Changed
+- Settings modal: mouse click support with scroll routing (#236)
+- investigate startup/render performance gap vs installed binary (#242)
 - feat: Copied./Pasted. status bar notifications (#235)
 - feat: Ctrl+A select all (#234)
 - decoration/builder: targeted mutants run to classify #[mutants::skip] on_* functions (#232)
@@ -55,6 +58,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - chore: v0.2.1 version bump (#188)
 
 ### Fixed
+- fix: initial decoration lag - run synchronously before alternate screen (#241)
+- perf: slow decoration updates and theme transitions (#240)
+- Settings modal: click dismiss bug and toggle/cycler clicks non-functional (#238)
 - fix: blank screen flash on startup (regression) (#237)
 - Investigate crossterm 0.28→0.29 breaking change causing test failures (#221)
 - Fix: heading_bg not updating when rainbow headings enabled (#215)
