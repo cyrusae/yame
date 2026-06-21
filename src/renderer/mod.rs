@@ -163,6 +163,24 @@ pub fn wrap_line_indented(s: &str, first_width: usize, cont_width: usize) -> Vec
     result
 }
 
+/// Return the effective continuation indent for a logical line.
+///
+/// Prefers the `continuation_indent` from decoration spans (set for list
+/// bullets, blockquote indicators, etc.).  Falls back to the leading-space
+/// count of the raw line text so that fenced code blocks indented under a
+/// list item (e.g. `   ```toml`) keep soft-wrap continuations visually
+/// aligned instead of landing at column 0.
+fn effective_ci(line: &str, decs: Option<&Vec<StyledSpan>>) -> usize {
+    let from_spans = decs
+        .map(|d| d.iter().map(|s| s.continuation_indent).max().unwrap_or(0))
+        .unwrap_or(0) as usize;
+    if from_spans > 0 {
+        from_spans
+    } else {
+        line.bytes().take_while(|&b| b == b' ').count()
+    }
+}
+
 /// Compute the `(char_start, char_len)` pair for each element of a
 /// [`wrap_line`] (or [`wrap_line_indented`]) output slice, measured in char
 /// units within `line`.
@@ -371,14 +389,7 @@ impl Widget for MarkdownView<'_> {
             // effective width.
             // `line_ci` — continuation indent (wrap_idx > 0 only, e.g. list bullets).
             // `line_ri` — first-row indent (wrap_idx == 0, e.g. frontmatter content).
-            let line_ci = line_decs
-                .map(|decs| {
-                    decs.iter()
-                        .map(|s| s.continuation_indent)
-                        .max()
-                        .unwrap_or(0)
-                })
-                .unwrap_or(0) as usize;
+            let line_ci = effective_ci(line, line_decs);
             let line_ri = line_decs
                 .map(|decs| decs.iter().map(|s| s.row_indent).max().unwrap_or(0))
                 .unwrap_or(0) as usize;
@@ -431,14 +442,7 @@ impl Widget for MarkdownView<'_> {
                 // continuation row — so it would be stripped from `row_spans` and the
                 // indent would compute to zero.
                 let continuation_indent: u16 = if wrap_idx > 0 {
-                    line_decs
-                        .map(|decs| {
-                            decs.iter()
-                                .map(|s| s.continuation_indent)
-                                .max()
-                                .unwrap_or(0)
-                        })
-                        .unwrap_or(0) as u16
+                    line_ci as u16
                 } else {
                     line_ri as u16
                 };
@@ -659,19 +663,9 @@ fn apply_selection_overlay(
         }
 
         let line = &view.lines[log_row];
-        let line_ci = view
-            .decoration_map
-            .get(&log_row)
-            .map(|decs| {
-                decs.iter()
-                    .map(|s| s.continuation_indent)
-                    .max()
-                    .unwrap_or(0)
-            })
-            .unwrap_or(0) as usize;
-        let line_ri = view
-            .decoration_map
-            .get(&log_row)
+        let line_decs_sel = view.decoration_map.get(&log_row);
+        let line_ci = effective_ci(line, line_decs_sel);
+        let line_ri = line_decs_sel
             .map(|decs| decs.iter().map(|s| s.row_indent).max().unwrap_or(0))
             .unwrap_or(0) as usize;
         let wrapped = wrap_line_indented(
@@ -693,15 +687,7 @@ fn apply_selection_overlay(
             // Mirror the indent logic from render() so selection highlighting
             // respects the same left-margin offset.
             let continuation_indent: u16 = if wrap_idx > 0 {
-                view.decoration_map
-                    .get(&log_row)
-                    .map(|decs| {
-                        decs.iter()
-                            .map(|s| s.continuation_indent)
-                            .max()
-                            .unwrap_or(0)
-                    })
-                    .unwrap_or(0) as u16
+                line_ci as u16
             } else {
                 line_ri as u16
             };
@@ -777,16 +763,7 @@ fn apply_search_overlay(area: Rect, buf: &mut Buffer, view: &MarkdownView<'_>) {
     while visual_row < visible && log_row < total {
         if let Some(row_matches) = by_line.get(&log_row) {
             let line = &view.lines[log_row];
-            let line_ci = view
-                .decoration_map
-                .get(&log_row)
-                .map(|decs| {
-                    decs.iter()
-                        .map(|s| s.continuation_indent)
-                        .max()
-                        .unwrap_or(0)
-                })
-                .unwrap_or(0) as usize;
+            let line_ci = effective_ci(line, view.decoration_map.get(&log_row));
             let wrapped = wrap_line_indented(
                 line,
                 content_width.max(1),
@@ -801,19 +778,7 @@ fn apply_search_overlay(area: Rect, buf: &mut Buffer, view: &MarkdownView<'_>) {
                     break;
                 }
                 let char_end = char_start + char_len;
-                let continuation_indent: u16 = if wrap_idx > 0 {
-                    view.decoration_map
-                        .get(&log_row)
-                        .map(|decs| {
-                            decs.iter()
-                                .map(|s| s.continuation_indent)
-                                .max()
-                                .unwrap_or(0)
-                        })
-                        .unwrap_or(0) as u16
-                } else {
-                    0
-                };
+                let continuation_indent: u16 = if wrap_idx > 0 { line_ci as u16 } else { 0 };
 
                 for &(ms, me, is_current) in row_matches {
                     let row_ms = ms.max(char_start);
@@ -839,16 +804,7 @@ fn apply_search_overlay(area: Rect, buf: &mut Buffer, view: &MarkdownView<'_>) {
         } else {
             // No matches on this line — count its visual rows and move on.
             let line = &view.lines[log_row];
-            let line_ci = view
-                .decoration_map
-                .get(&log_row)
-                .map(|decs| {
-                    decs.iter()
-                        .map(|s| s.continuation_indent)
-                        .max()
-                        .unwrap_or(0)
-                })
-                .unwrap_or(0) as usize;
+            let line_ci = effective_ci(line, view.decoration_map.get(&log_row));
             let wrapped = wrap_line_indented(
                 line,
                 content_width.max(1),

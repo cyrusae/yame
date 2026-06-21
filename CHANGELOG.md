@@ -56,6 +56,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - chore: v0.2.1 version bump (#188)
 
 ### Fixed
+- bug: Ctrl+V/Cmd+V paste produces wrong content ('hello'/'h') instead of clipboard (#261)
 - fix: enable bracketed paste to prevent list-continuation corruption during terminal paste (#259)
 - Fixed zero-width regex matches to always advance by a full byte, preventing potential UTF-8 boundary splits (#247)
 - Smart pair wrap: ctrl+z now undoes a surround in one step instead of three (#239)
