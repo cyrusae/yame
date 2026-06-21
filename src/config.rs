@@ -1006,11 +1006,12 @@ pub const DEFAULT_CONFIG_TEMPLATE: &str = r##"# yame configuration
 
 # ── Layout ────────────────────────────────────────────────────────────────────
 [layout]
-# min_cols         = 60     # minimum editing-column width in characters
-# max_cols         = 88     # maximum editing-column width (prose wrap margin); default: unlimited
-# tab_width        = 4      # spaces per tab character expanded on load
-# powerline_glyphs = true   # set false to use the universal │ separator (no Nerd Font required)
-# line_numbers     = false  # set true to show line numbers in the left gutter
+# min_cols          = 60     # minimum editing-column width in characters
+# max_cols          = 88     # maximum editing-column width (prose wrap margin); default: unlimited
+# tab_width         = 4      # spaces per tab character expanded on load
+# powerline_glyphs  = true   # set false to use the universal │ separator (no Nerd Font required)
+# line_numbers      = false  # set true to show line numbers in the left gutter
+# auto_close_pairs  = false  # set true to auto-insert closing delimiters: ( → (), [ → [], " → "", etc.
 
 # ── Syntax highlighting ────────────────────────────────────────────────────────
 [highlighting]

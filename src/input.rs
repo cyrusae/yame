@@ -1750,6 +1750,16 @@ where
                         _ => {}
                     }
                 }
+                Event::Paste(text) => {
+                    // Bracketed paste: the terminal has wrapped the pasted content
+                    // in escape sequences so crossterm delivers the entire payload
+                    // as a single event.  Insert it directly — bypassing
+                    // handle_enter so list-continuation logic never fires on the
+                    // embedded newlines.
+                    app.textarea.insert_str(&text);
+                    app.force_redecorate = true;
+                    app.mark_keystroke();
+                }
                 Event::Resize(_, _) => {
                     // Viewport geometry changed — re-engage cursor-clamping scroll
                     // so the cursor is guaranteed visible after the resize.
