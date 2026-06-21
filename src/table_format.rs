@@ -719,4 +719,27 @@ mod tests {
             result
         );
     }
+
+    #[test]
+    fn compact_table_single_row_does_not_panic() {
+        // Kills compact_table 252:30 (`>→>=`) and 252:44 (`&&→||`).
+        // With `>→>=`: `1 >= 1` is true → rows[1] OOB panic.
+        // With `&&→||`: `false || rows[1]` → same OOB panic.
+        let lines = s(&["| A | B |"]);
+        let result = compact_table(&lines);
+        assert_eq!(result.len(), 1, "single-row compact must produce one row");
+        assert!(result[0].contains('|'));
+    }
+
+    #[test]
+    fn compact_table_two_rows_no_separator_preserved_as_content() {
+        // Kills compact_table 252:44 (`&&→||`) without relying on OOB.
+        // With `&&→||`: `rows.len() > 1 || ...` short-circuits to true, so row 1 is
+        // treated as a separator → formatted as `| --- | --- |` instead of content.
+        let lines = s(&["| A | B |", "| C | D |"]);
+        let result = compact_table(&lines);
+        assert_eq!(result.len(), 2);
+        assert!(!result[1].contains("---"), "row 1 must not be separator-formatted: {:?}", result[1]);
+        assert!(result[1].contains('C'), "row 1 content must survive: {:?}", result[1]);
+    }
 }

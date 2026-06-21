@@ -1773,6 +1773,22 @@ mod tests {
         assert_eq!(m.input_buf, "ab");
     }
 
+    #[test]
+    fn hsk_alt_char_while_editing_ignored() {
+        // Kills: `replace | with &` at col 63 in handle_settings_key.
+        // With |→&, ALT & SUPER = 0, so intersects(CONTROL | 0) = intersects(CONTROL).
+        // Alt+Char then passes the filter and pushes to input_buf — this test catches that.
+        let mut m = make_modal();
+        m.editing = true;
+        m.input_buf = "ab".to_string();
+        handle_settings_key(
+            &mut m,
+            key_mod(KeyCode::Char('x'), KeyModifiers::ALT),
+            10,
+        );
+        assert_eq!(m.input_buf, "ab");
+    }
+
     // -------------------------------------------------------------------------
     // handle_settings_key — nav mode
     // -------------------------------------------------------------------------
@@ -2293,5 +2309,118 @@ mod tests {
         let outcome = m.activate_clicked_field();
         assert!(matches!(outcome, SettingsOutcome::Continue));
         assert!(!m.editing);
+    }
+
+    // ---------------------------------------------------------------------------
+    // hit_test — coordinate geometry
+    //
+    // All tests use editor_area = Rect { x:0, y:0, width:100, height:50 } so that:
+    //   bx = (100 - MODAL_W) / 2 = 22
+    //   by = (50 - MODAL_H) / 2 = 16
+    //   tab bar row   = 17 (by + 1)
+    //   field rows    = 19..30 (by+3 .. by+3+VISIBLE_FIELDS-1)
+    //   right edge    = 78 (bx + MODAL_W — first column OUTSIDE the modal)
+    //   bottom edge   = 34 (by + MODAL_H — first row OUTSIDE the modal)
+    //   TAB_NAMES content starts at col 24 (bx + 2):
+    //     "Appearance" rel 0-9  → col 24-33 → Tab(0)
+    //     separator   rel 10-12 → col 34-36 → Inert
+    //     "Editor"    rel 13-18 → col 37-42 → Tab(1)
+    //     separator   rel 19-21 → col 43-45 → Inert
+    //     "File"      rel 22-25 → col 46-49 → Tab(2)
+    // ---------------------------------------------------------------------------
+
+    fn area() -> Rect {
+        Rect { x: 0, y: 0, width: 100, height: 50 }
+    }
+
+    // Kills 635:16 `< → <=`: mutant treats the left modal edge (col == bx) as Outside.
+    #[test]
+    fn hit_test_left_edge_col_is_inside_modal() {
+        let m = make_modal();
+        // col=22 == bx; original `col < bx` is false → inside. Mutant `col <= bx` → Outside.
+        assert!(matches!(m.hit_test(19, 22, area()), ModalHit::Field(_)));
+    }
+
+    // Kills 635:34 `+ → *` and 635:44 `|| → &&`:
+    //   · +→*: bx * MODAL_W = 1232 ≫ 78, so mutant sees col as inside and doesn't return Outside.
+    //   · ||→&&: second `||` becomes `&&`; `(col >= bx+MODAL_W && row < by)` is false (row in
+    //     bounds), so mutant skips Outside even though col is beyond the right edge.
+    #[test]
+    fn hit_test_right_edge_col_is_outside_modal() {
+        let m = make_modal();
+        // col=78 == bx + MODAL_W — first column right of the modal.
+        assert!(matches!(m.hit_test(19, 78, area()), ModalHit::Outside));
+    }
+
+    // Kills 635:56 `|| → &&`: third `||` becomes `&&`; the compound
+    // `(row < by && row >= by + MODAL_H)` is always false, so the mutant never returns
+    // Outside for "above the modal" positions when col is within horizontal bounds.
+    #[test]
+    fn hit_test_above_modal_is_outside() {
+        let m = make_modal();
+        // row=15 < by=16; col=25 is within horizontal bounds.
+        assert!(matches!(m.hit_test(15, 25, area()), ModalHit::Outside));
+    }
+
+    // Kills 635:69 `+ → *`: by * MODAL_H = 288 ≫ 34, so mutant sees row as inside
+    // and doesn't return Outside for the first row below the modal.
+    #[test]
+    fn hit_test_below_modal_is_outside() {
+        let m = make_modal();
+        // row=34 == by + MODAL_H — first row below the modal.
+        assert!(matches!(m.hit_test(34, 25, area()), ModalHit::Outside));
+    }
+
+    // Kills 641:20 `< → ==` and 641:25 `+ → -`:
+    //   · <→==: `22 == bx+2=24` is false → falls through; `col - (bx+2)` = 22-24 underflows
+    //     (u16 overflow in debug mode → panic).
+    //   · +→-: `22 < bx-2=20` is false → same underflow path.
+    #[test]
+    fn hit_test_tab_row_left_border_is_inert() {
+        let m = make_modal();
+        // col=22 == bx: left border of the tab bar (col < bx+2 → Inert).
+        assert!(matches!(m.hit_test(17, 22, area()), ModalHit::Inert));
+    }
+
+    // Kills 641:20 `< → <=`: mutant treats col == bx+2 as part of the left border (Inert)
+    // instead of the first character of the first tab name.
+    #[test]
+    fn hit_test_tab_row_first_tab_char_returns_tab0() {
+        let m = make_modal();
+        // col=24 == bx+2: first character of "Appearance". Original: Tab(0). Mutant: Inert.
+        assert!(matches!(m.hit_test(17, 24, area()), ModalHit::Tab(0)));
+    }
+
+    // Kills 653:28 `< → <=`: the separator check after "Appearance" becomes `rel <= x+3`,
+    // admitting rel=13 (= x+3 = first char of "Editor") and returning Inert instead of Tab(1).
+    #[test]
+    fn hit_test_tab_row_first_char_of_editor_returns_tab1() {
+        let m = make_modal();
+        // col=37: rel = 37 - 24 = 13 = first char of "Editor".
+        assert!(matches!(m.hit_test(17, 37, area()), ModalHit::Tab(1)));
+    }
+
+    // Kills 664:41 `< → <=` and 664:58 `+ → *`:
+    //   · <→<=: `row <= fields_start_y + VISIBLE_FIELDS` is true at row=31, admitting one
+    //     extra row; with enough fields that row maps to a valid field_idx → Field(_).
+    //   · +→*: `fields_start_y * VISIBLE_FIELDS = 228` ≫ 31, so the entire field range
+    //     expands and row=31 is treated as a field row.
+    // Uses an expanded modal so field_count > VISIBLE_FIELDS (ensures field_idx=12 < field_count).
+    #[test]
+    fn hit_test_row_just_below_field_area_is_inert() {
+        let mut m = make_modal();
+        m.expanded = true; // field_count = APPEARANCE_CORE.len() + 1 + APPEARANCE_EXTENDED.len() > 12
+        // row=31 = fields_start_y(19) + VISIBLE_FIELDS(12): first row BELOW the field area.
+        assert!(matches!(m.hit_test(31, 25, area()), ModalHit::Inert));
+    }
+
+    // Kills 667:26 `< → <=`: `field_idx <= field_count` admits field_idx == field_count,
+    // returning a phantom Field that is one past the last valid index.
+    #[test]
+    fn hit_test_field_row_past_field_count_is_inert() {
+        let m = make_modal(); // field_count = 9 (APPEARANCE_CORE.len()+1, tab=0, not expanded)
+        // row = by+3 + field_count = 19 + 9 = 28: visual_row=9, field_idx=9.
+        // Original: 9 < 9 = false → Inert. Mutant: 9 <= 9 → Field(9) (phantom).
+        assert!(matches!(m.hit_test(28, 25, area()), ModalHit::Inert));
     }
 }

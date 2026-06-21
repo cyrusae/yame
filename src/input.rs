@@ -1956,6 +1956,79 @@ mod tests {
         assert_eq!(app.textarea.lines()[0], "(hello)");
     }
 
+    // Kills: input.rs:294:43 replace | with & in handle_auto_close.
+    // With |→&, CONTROL & ALT = 0 (non-overlapping bits), so intersects(0) is always
+    // false — Ctrl+( bypasses the modifier guard and auto-closes to "()".
+    #[test]
+    fn auto_close_ctrl_char_not_handled() {
+        let mut app = make_app();
+        app.auto_close_pairs = true;
+        let handled = handle_auto_close(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('('), KeyModifiers::CONTROL),
+        );
+        assert!(!handled, "Ctrl+( must not trigger auto-close");
+        assert_eq!(app.textarea.lines()[0], "", "no characters must be inserted");
+    }
+
+    // Kills: input.rs:319:9 delete match arm '['.
+    // With arm deleted [ falls to _ → returns false; caller inserts just "[" not "[]".
+    #[test]
+    fn auto_close_square_bracket_inserts_pair() {
+        let mut app = make_app();
+        app.auto_close_pairs = true;
+        handle_key_event(&mut app, key(KeyCode::Char('[')));
+        assert_eq!(app.textarea.lines()[0], "[]");
+        assert_eq!(app.textarea.cursor(), (0, 1));
+    }
+
+    // Kills: input.rs:324:9 delete match arm '{'.
+    #[test]
+    fn auto_close_curly_brace_inserts_pair() {
+        let mut app = make_app();
+        app.auto_close_pairs = true;
+        handle_key_event(&mut app, key(KeyCode::Char('{')));
+        assert_eq!(app.textarea.lines()[0], "{}");
+        assert_eq!(app.textarea.cursor(), (0, 1));
+    }
+
+    // Kills: input.rs:338:9 delete match arm ']' and 339:26 replace == with !=.
+    // Arm deleted: ] falls to _ → inserts ], giving "[]" → "]" = "[]]".
+    // ==→!=: next_char IS ] → condition false → inserts ], same "[]]".
+    #[test]
+    fn auto_close_square_closer_skips_over() {
+        let mut app = make_app();
+        app.auto_close_pairs = true;
+        handle_key_event(&mut app, key(KeyCode::Char('[')));
+        handle_key_event(&mut app, key(KeyCode::Char(']')));
+        assert_eq!(app.textarea.lines()[0], "[]", "no duplicate ] inserted");
+        assert_eq!(app.textarea.cursor(), (0, 2), "cursor must be past the closer");
+    }
+
+    // Kills: input.rs:346:9 delete match arm '}' and 347:26 replace == with !=.
+    #[test]
+    fn auto_close_curly_closer_skips_over() {
+        let mut app = make_app();
+        app.auto_close_pairs = true;
+        handle_key_event(&mut app, key(KeyCode::Char('{')));
+        handle_key_event(&mut app, key(KeyCode::Char('}')));
+        assert_eq!(app.textarea.lines()[0], "{}", "no duplicate }} inserted");
+        assert_eq!(app.textarea.cursor(), (0, 2), "cursor must be past the closer");
+    }
+
+    // Kills: input.rs:355:9 delete match arm '"' | '\'' | '`' | '*' | '_'.
+    // With arm deleted, " falls to _ → false → caller inserts single " not "".
+    // The existing skip-over test types " twice, so both mutations produce ""
+    // at cursor col 2 — that test does NOT distinguish. This one types " once.
+    #[test]
+    fn auto_close_symmetric_char_inserts_pair() {
+        let mut app = make_app();
+        app.auto_close_pairs = true;
+        handle_key_event(&mut app, key(KeyCode::Char('"')));
+        assert_eq!(app.textarea.lines()[0], "\"\"", "symmetric char must insert pair");
+        assert_eq!(app.textarea.cursor(), (0, 1), "cursor must sit between the pair");
+    }
+
     // Kills: input.rs:275:47 replace != with == in handle_key_event.
     // With ==: force_redecorate is set only when line count has NOT changed;
     // pressing Enter adds a new line, so with the mutation force_redecorate is NOT set.
@@ -3389,6 +3462,22 @@ mod tests {
             col,
             "line two".chars().count(),
             "cursor col must be end of last line after select_all"
+        );
+    }
+
+    // Kills: input.rs:829:9 delete match arm Ctrl+A / Cmd+A in handle_key_event.
+    // With arm deleted, Ctrl+A falls through to wildcard — no selection created.
+    #[test]
+    fn ctrl_a_selects_all_text() {
+        let mut app = make_app();
+        app.textarea = tui_textarea::TextArea::new(vec![
+            "hello".to_string(),
+            "world".to_string(),
+        ]);
+        handle_key_event(&mut app, KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL));
+        assert!(
+            app.textarea.selection_range().is_some(),
+            "Ctrl+A must create an active selection"
         );
     }
 

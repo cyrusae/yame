@@ -92,6 +92,16 @@ exclude_re = [
     # Column anchor 43: the `+` in `i + 1 == char_ranges.len()` at indent level 12.
     "commands\\.rs:\\d+:43:.*replace \\+ with \\* in clamp_scroll",
 
+    # Pre-clamp guard `cursor_row.saturating_sub(app.scroll_top) > visible_rows` (col 50).
+    # Both mutations are unkillable: the downstream backward scan always computes the same
+    # final scroll_top regardless of whether the pre-clamp fires.
+    #   · `>→==`: fires only when gap == visible_rows+1 exactly; downstream corrects to
+    #     the identical value.
+    #   · `>→>=`: fires when gap == visible_rows, executing
+    #     `scroll_top = cursor_row − visible_rows`, which equals the current scroll_top
+    #     (gap == visible_rows implies cursor_row − visible_rows == scroll_top). A no-op.
+    "commands\\.rs:\\d+:50:.*replace > with == in clamp_scroll",
+    "commands\\.rs:\\d+:50:.*replace > with >= in clamp_scroll",
 
     # `i += 1` loop-advance in link_split_char_idx (decoration/words.rs:29).
     # `i *= 1` is a no-op that leaves i = 0 forever → guaranteed infinite loop / timeout.
@@ -274,12 +284,12 @@ exclude_re = [
     # the inconsistent half-state is unreachable.
     "search\\.rs:185:36:.*replace \\|\\| with \\&\\& in apply_replace_all",
 
-    # `apply_replace_all` per-match bounds check (search.rs:183, col 19).
+    # `apply_replace_all` per-match bounds check (col 19).
     # `<→<=` admits ml == result.len() → OOB.  ml comes from find_all_matches which only
     # yields valid line indices; ml == len is unreachable for valid state.
     # Note: cargo-mutants includes the qualified path `SearchState::apply_replace_all`
     # in the description, so we need `.*` between `in ` and `apply_replace_all`.
-    "search\\.rs:183:19:.*replace < with <= in.*apply_replace_all",
+    "search\\.rs:\\d+:19:.*replace < with <= in.*apply_replace_all",
 
     # ---------------------------------------------------------------------------
     # table_format.rs — infinite-loop and unreachable mutations
@@ -300,14 +310,18 @@ exclude_re = [
     # input.rs — non-overlapping bitmask no-ops (additional call sites)
     # ---------------------------------------------------------------------------
 
-    # `handle_key_event` CONTROL | ALT | SUPER at line 474 (cols 47 and 67).
+    # `handle_key_event` CONTROL | ALT | SUPER (cols 47 and 67, multiple sites).
     # Same non-overlapping-bits argument as the cols 57/77 entries above.
-    "input\\.rs:474:47:.*replace \\| with \\^ in handle_key_event",
-    "input\\.rs:474:67:.*replace \\| with \\^ in handle_key_event",
+    "input\\.rs:\\d+:47:.*replace \\| with \\^ in handle_key_event",
+    "input\\.rs:\\d+:67:.*replace \\| with \\^ in handle_key_event",
 
-    # `handle_search_key` CONTROL | ALT | SUPER at line 387 (cols 47 and 67).
-    "input\\.rs:387:47:.*replace \\| with \\^ in handle_search_key",
-    "input\\.rs:387:67:.*replace \\| with \\^ in handle_search_key",
+    # `handle_search_key` CONTROL | ALT | SUPER (cols 47 and 67).
+    "input\\.rs:\\d+:47:.*replace \\| with \\^ in handle_search_key",
+    "input\\.rs:\\d+:67:.*replace \\| with \\^ in handle_search_key",
+
+    # `handle_auto_close` modifier guard: `CONTROL | ALT` (col 43).
+    # Non-overlapping bits — same argument as above.
+    "input\\.rs:\\d+:43:.*replace \\| with \\^ in handle_auto_close",
 
     # ---------------------------------------------------------------------------
     # renderer/mod.rs — focus_paragraph_bounds line 853 (unkillable)
@@ -327,12 +341,12 @@ exclude_re = [
     # `<→<=` admits the expand-row index (== APPEARANCE_CORE.len()).
     # appearance_core_value(cfg, resolved, APPEARANCE_CORE.len()) hits `_ => String::new()`,
     # which is identical to the original expand-row branch.  No observable difference.
-    "settings\\.rs:219:26:.*replace < with <=",
+    "settings\\.rs:\\d+:26:.*replace < with <= in SettingsModal::field_value",
 
     # `commit_input`: same boundary check (col 31).
     # commit_appearance_core(cfg, APPEARANCE_CORE.len(), v) hits `_ => false`,
     # identical to the original `self.field == APPEARANCE_EXPAND_IDX` → false branch.
-    "settings\\.rs:239:31:.*replace < with <=",
+    "settings\\.rs:\\d+:31:.*replace < with <= in SettingsModal::commit_input",
 
     # `move_up`: `self.field < self.scroll` scroll-adjust guard (col 27).
     # `<→<=` fires when field == scroll, executing `self.scroll = self.field` — a no-op
@@ -343,30 +357,48 @@ exclude_re = [
     # Deleting this arm makes field=1 fall to `_ => false` — identical return value.
     "settings\\.rs:\\d+:9:.*delete match arm 1 in commit_appearance_core",
 
-    # `commit_editor` arms 0..=4: these toggles return false (handled by toggle_current).
-    # Deleting them makes fields 0-4 fall to `_ => false` — identical return value.
-    "settings\\.rs:\\d+:9:.*delete match arm 0\\.\\. in commit_editor",
+    # `commit_editor` arms 0..=N: these toggles return false (handled by toggle_current).
+    # Deleting them makes those fields fall to `_ => false` — identical return value.
+    # Pattern uses `0\\.\\..* ` to match both `0..4` and `0..= 5` forms.
+    "settings\\.rs:\\d+:9:.*delete match arm 0\\.\\..* in commit_editor",
 
     # `commit_file` arms 0|1: toggle fields return false (handled by toggle_current).
     # Deleting them makes fields 0-1 fall to `_ => false` — identical return value.
     "settings\\.rs:\\d+:9:.*delete match arm 0 \\| 1 in commit_file",
 
-    # Dead code block inside the expand-row handler (handle_settings_key).
-    # The outer `if modal.field == APPEARANCE_EXPAND_IDX` ensures field is always
-    # exactly APPEARANCE_EXPAND_IDX when we reach the inner `if ... field > ...` check.
-    # A value can't be simultaneously == and > the same constant, so the inner branch
-    # body never executes.  All mutations to the inner condition or body are unkillable.
-    "settings\\.rs:511:.*",
+    # Dead code inside the expand-row handler — both in `activate_clicked_field` and
+    # `handle_settings_key`.  The outer `if ... field == APPEARANCE_EXPAND_IDX` ensures
+    # field equals the expand index; the inner `if !self.expanded && field > EXPAND_IDX`
+    # is always false (== and > on the same constant can't both hold).  All mutations to
+    # the inner condition (`delete !`, `&&→||`, `>→==/</>= `) or its body are unkillable.
+    "settings\\.rs:\\d+:(16|20):.*delete ! in (activate_clicked_field|handle_settings_key)",
+    "settings\\.rs:\\d+:(31|36):.*replace && with \\|\\| in (activate_clicked_field|handle_settings_key)",
+    "settings\\.rs:\\d+:(45|51):.*replace > with .* in (activate_clicked_field|handle_settings_key)",
+
+    # `jump_to_field`: `self.field < self.scroll` scroll-back guard (col 23).
+    # `<→<=` fires when field == scroll, executing `self.scroll = self.field` — a no-op
+    # (scroll is already equal to field).  Same argument as the move_up entry above.
+    "settings\\.rs:\\d+:23:.*replace < with <= in SettingsModal::jump_to_field",
+
+    # `handle_settings_key` char-filter guard: `CONTROL | ALT | SUPER` (cols 43 and 63).
+    # Non-overlapping bits — `A ^ B == A | B` for all distinct flag pairs.
+    # Same argument as the existing entries for handle_key_event and handle_search_key.
+    "settings\\.rs:\\d+:43:.*replace \\| with \\^ in handle_settings_key",
+    "settings\\.rs:\\d+:63:.*replace \\| with \\^ in handle_settings_key",
+
+    # `hit_test` tab-separator `if i + 1 < TAB_NAMES.len()` guard (col 22 and 26).
+    # Both mutations fire the separator check for the last tab (i == len-1) that the
+    # original skips.  The extra check always returns Inert (either `rel < x+3` or the
+    # loop end), which equals the original fallback Inert.  Clicking past the last tab
+    # name yields Inert either way; no test can observe a difference.
+    "settings\\.rs:\\d+:22:.*replace \\+ with \\* in SettingsModal::hit_test",
+    "settings\\.rs:\\d+:26:.*replace < with <= in SettingsModal::hit_test",
 
     # ---------------------------------------------------------------------------
-    # input.rs — Cmd+Shift+Z redo guard (non-overlapping bitmask no-op)
+    # input.rs — Cmd+Shift+Z redo guard
     # ---------------------------------------------------------------------------
-
-    # `mods == KeyModifiers::SUPER | KeyModifiers::SHIFT` guard in handle_key_event.
-    # SUPER (bit 3) and SHIFT (bit 0) occupy non-overlapping bits; for any two
-    # non-overlapping flags A and B, `A | B == A ^ B`.  No test can distinguish
-    # the bitwise-OR from the bitwise-XOR form.
-    "input\\.rs:755:67:.*replace \\| with \\^ in handle_key_event",
+    # `mods == KeyModifiers::SUPER | KeyModifiers::SHIFT` in handle_key_event (col 67).
+    # SUPER and SHIFT are non-overlapping bits → covered by the \d+:67 entry above.
 
     # ---------------------------------------------------------------------------
     # preview.rs — render_lines span-filter boundary no-ops

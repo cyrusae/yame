@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [1.0.0] — 2026-06-16
 
 ### Added
+- auto-close pairs feature (#243)
 - Settings modal: mouse click support for tab/field selection and selector cycling (#224)
 - Extend heading underline to match background width (#217)
 - Style image embeds: italicize+underline path, accent-color alt text (#223)
@@ -23,6 +24,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - feat: `yame --preview <file>` — headless ANSI render for lf/file-manager previewers; respects `$COLUMNS`; full decoration and syntax-highlight pipeline; bg colours suppressed for clean integration (#190)
 
 ### Changed
+- debounce search match updates to avoid blocking on large files (#248)
+- detect_frontmatter called twice per decoration pass (#246)
+- use split_whitespace for word count on non-Markdown files (#245)
+- clamp_scroll O(N) scan causes paste-lag spike (#244)
+- test: kill apply_replace_all stale-match guard mutant (< → <=) (#250)
+- test: kill handle_key_event select-all arm and Cmd+Shift+Z modifier mutants (#256)
+- test: kill handle_auto_close mutants (bracket arms, closer ==, modifier check) (#255)
+- test: kill compact_table has_sep boundary mutants (&&→||, >→>=) (#254)
+- test: kill handle_settings_key modifier-flag and expand-collapse mutants (#253)
+- test: kill settings field_value / commit_input / jump_to_field / activate_clicked_field / commit_editor mutants (#252)
+- test: kill settings hit_test coordinate geometry mutants (12 missed) (#251)
+- test: kill clamp_scroll pre-clamp guard mutants (>==, >>=) (#249)
 - Settings modal: mouse click support with scroll routing (#236)
 - investigate startup/render performance gap vs installed binary (#242)
 - feat: Copied./Pasted. status bar notifications (#235)
@@ -58,6 +71,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - chore: v0.2.1 version bump (#188)
 
 ### Fixed
+- zero-width regex match advances byte_pos by 1 — may break UTF-8 boundary (#247)
 - Smart pair wrap: ctrl+z requires 3 steps instead of 1 to undo surround (#239)
 - fix: initial decoration lag - run synchronously before alternate screen (#241)
 - perf: slow decoration updates and theme transitions (#240)
