@@ -17,20 +17,20 @@ It can also be used as a distraction-free text editor!
 - Opens and saves Markdown files with live inline decoration: headings, bold, italic, inline code, fenced blocks, blockquotes, links, lists, todo checkboxes, tables, strikethrough, horizontal rules, `==highlights==`, YAML/TOML frontmatter
 - Syntax highlighting in fenced code blocks for over 150 languages
 - Centered editing column with soft word wrap (wide/CJK character aware)
-- 14 built-in palette presets (Catppuccin ×4, Dracula, Nord, Gruvbox, Solarized ×2, Tokyo Night, Rose Piné ×3, GitHub Light); fully configurable via `~/.config/yame/config.toml`
+- 14 built-in palette presets (Catppuccin ×4, Dracula, Nord, Gruvbox, Solarized ×2, Tokyo Night, Rose Piné ×3, GitHub Light); fully configurable via `~/.config/yame/config.toml` or in-app settings menu
 - System clipboard (`Ctrl+C` / `Ctrl+V` / `Ctrl+X` cut)
 - Smart pair wrapping: select text, press `(`, `[`, `"`, `` ` ``, `*`, etc. to wrap it
 - Auto-close pairs (opt-in): typing `(` inserts `()` with the cursor between; typing `)` when already before one skips over it instead of duplicating; same for `[ ] { } " ' \` * _`
 - Decoupled viewport scrolling — scroll to read without moving the cursor
 - Undo/redo via `Ctrl+Z` / `Ctrl+Y`
-- Live config reload with `Ctrl+R`
+- Live config reload with `Ctrl+R`; live in-app settings editor
 - Search and find/replace (`Ctrl+F` / `Ctrl+H`) with regex support
 - `Ctrl+O` file picker — opens lf or fzf without leaving the editor
 - Untitled buffer mode — `yame` with no arguments starts a blank file; `Ctrl+S` prompts for a name
 - `yame --preview <file>` — headless ANSI render for lf/file-manager previewers
 - Optional line numbers, focus mode, and typewriter mode
 
-## What it doesn't do yet
+## What it doesn't do right now
 
 - No tab completion or split panes
 
@@ -129,8 +129,10 @@ Without `fd`, replace `fd --type f --extension md` with `find . -name "*.md"`.
 | `Ctrl+D` | Toggle focus mode |
 | `Alt+T` | Reformat GFM table |
 | `F1` | Keybinding reference (in-app cheatsheet) |
+| `F2` | Settings modal (in-app UI) |
 | Arrow keys | Move cursor |
 | `Shift+Arrow` | Select text |
+| `Ctrl+A` | Select all |
 | `Home` / `End` | Start / end of line |
 | `PgUp` / `PgDn` | Scroll by page |
 | `Ctrl+Up` / `Ctrl+Down` | Scroll viewport without moving cursor |
