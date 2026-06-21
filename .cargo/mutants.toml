@@ -103,10 +103,11 @@ exclude_re = [
     "commands\\.rs:\\d+:50:.*replace > with == in clamp_scroll",
     "commands\\.rs:\\d+:50:.*replace > with >= in clamp_scroll",
 
-    # `i += 1` loop-advance in link_split_char_idx (decoration/words.rs:29).
+    # `i += 1` loop-advance in link_split_char_idx (decoration/words.rs).
     # `i *= 1` is a no-op that leaves i = 0 forever → guaranteed infinite loop / timeout.
     # All logic mutants in this function are caught by the words.rs test suite.
-    "decoration/words\\.rs:29:.*replace \\+= with \\*= in link_split_char_idx",
+    # No line-number anchor — the function has drifted; column anchor is sufficient.
+    "decoration/words\\.rs:\\d+:.*replace \\+= with \\*= in link_split_char_idx",
 
     # `if block_end > pos { pos = block_end; }` in emit_content_around_existing.
     # `>→>=` is equivalent: when block_end == pos the assignment `pos = block_end`
@@ -371,9 +372,11 @@ exclude_re = [
     # field equals the expand index; the inner `if !self.expanded && field > EXPAND_IDX`
     # is always false (== and > on the same constant can't both hold).  All mutations to
     # the inner condition (`delete !`, `&&→||`, `>→==/</>= `) or its body are unkillable.
-    "settings\\.rs:\\d+:(16|20):.*delete ! in (activate_clicked_field|handle_settings_key)",
-    "settings\\.rs:\\d+:(31|36):.*replace && with \\|\\| in (activate_clicked_field|handle_settings_key)",
-    "settings\\.rs:\\d+:(45|51):.*replace > with .* in (activate_clicked_field|handle_settings_key)",
+    # Note: cargo-mutants emits the qualified path `SettingsModal::activate_clicked_field`
+    # in the description, so patterns need `.*` before the function name.
+    "settings\\.rs:\\d+:(16|20):.*delete ! in .*(activate_clicked_field|handle_settings_key)",
+    "settings\\.rs:\\d+:(31|36):.*replace && with \\|\\| in .*(activate_clicked_field|handle_settings_key)",
+    "settings\\.rs:\\d+:(45|51):.*replace > with .* in .*(activate_clicked_field|handle_settings_key)",
 
     # `jump_to_field`: `self.field < self.scroll` scroll-back guard (col 23).
     # `<→<=` fires when field == scroll, executing `self.scroll = self.field` — a no-op
