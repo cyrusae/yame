@@ -43,6 +43,7 @@ fn make_app() -> App {
         file_mode: yame::app::FileMode::Markdown,
         show_line_numbers: false,
         search: None,
+        search_last_typed: None,
         typewriter_mode: false,
         focus_mode: false,
         show_shortcuts: false,

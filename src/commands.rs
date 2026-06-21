@@ -85,6 +85,15 @@ pub(super) fn clamp_scroll(app: &mut App, editor_area: Rect, bottom_padding: usi
         app.scroll_top = cursor_row;
     }
 
+    // Pre-clamp: if scroll_top is more than visible_rows logical lines above
+    // the cursor, advance it before the expensive wrap scan below.  Each
+    // logical line occupies ≥1 visual row, so visible_rows is a safe upper
+    // bound — the forward scan becomes O(visible_rows) rather than
+    // O(cursor_row − scroll_top), which matters after a large paste.
+    if cursor_row.saturating_sub(app.scroll_top) > visible_rows {
+        app.scroll_top = cursor_row.saturating_sub(visible_rows);
+    }
+
     // Scroll down: check cursor's visual (post-wrap) position
     let above_visual: usize = lines
         .get(app.scroll_top..cursor_row.min(lines.len()))
@@ -184,6 +193,7 @@ mod tests {
             file_mode: FileMode::Markdown,
             show_line_numbers: false,
             search: None,
+            search_last_typed: None,
             typewriter_mode: false,
             focus_mode: false,
             show_shortcuts: false,
@@ -238,6 +248,34 @@ mod tests {
             app.scroll_top, 1,
             "cursor on the 2nd visual row of line 2 (total vis=3) must \
              cause scroll_top to advance to 1 so the cursor remains visible"
+        );
+    }
+
+    // Kills the pre-clamp added for #244: if the guard `cursor_row - scroll_top >
+    // visible_rows` is removed (or the assignment dropped), scroll_top stays at 0
+    // and the expensive O(N) scan runs over all 20 lines instead of at most 5.
+    // More concretely: after the pre-clamp, scroll_top must be ≥ cursor_row −
+    // visible_rows = 20 − 5 = 15.  Without the pre-clamp it stays at 0.
+    #[test]
+    fn clamp_scroll_preclamp_limits_scan_after_large_jump() {
+        // 21 short lines, cursor jumps to row 20, visible_rows = 5.
+        // scroll_top starts at 0 (as if a large paste moved cursor far down).
+        let lines: Vec<&str> = (0..21).map(|_| "x").collect();
+        let mut app = make_app(lines, 80);
+        app.scroll_top = 0;
+
+        use tui_textarea::CursorMove;
+        app.textarea.move_cursor(CursorMove::Jump(20, 0));
+
+        let area = Rect { x: 0, y: 0, width: 82, height: 5 };
+        clamp_scroll(&mut app, area, 0);
+
+        // After clamping, cursor (row 20) must be visible within 5 rows.
+        // scroll_top must be in [16, 20].
+        assert!(
+            app.scroll_top >= 16,
+            "scroll_top ({}) should be ≥ 16 so cursor at row 20 fits in 5 visible rows",
+            app.scroll_top
         );
     }
 }

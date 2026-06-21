@@ -103,22 +103,25 @@ impl SearchState {
         }
     }
 
-    /// Append a character to the active field and refresh matches if needed.
-    pub fn push_char(&mut self, c: char, lines: &[String]) {
+    /// Append a character to the active field.
+    ///
+    /// Does **not** call `update_matches` — the event loop fires that after the
+    /// search debounce timer elapses (see `App::search_last_typed`).
+    pub fn push_char(&mut self, c: char) {
         if self.focus_search {
             self.query.push(c);
-            self.update_matches(lines);
         } else {
             self.replace.push(c);
-            // Replace-field edits do not change match positions.
         }
     }
 
-    /// Delete the last character from the active field and refresh matches.
-    pub fn pop_char(&mut self, lines: &[String]) {
+    /// Delete the last character from the active field.
+    ///
+    /// Does **not** call `update_matches` — the event loop fires that after the
+    /// search debounce timer elapses (see `App::search_last_typed`).
+    pub fn pop_char(&mut self) {
         if self.focus_search {
             self.query.pop();
-            self.update_matches(lines);
         } else {
             self.replace.pop();
         }
@@ -211,12 +214,11 @@ fn escape_literal(s: &str) -> String {
 ///
 /// # Mutation notes
 /// The zero-width-match guard (`m.end() == m.start()`) and the advance expression
-/// (`m.start() + 1`) are `#[mutants::skip]`-protected:
+/// are `#[mutants::skip]`-protected:
 /// - `== → !=` inverts the guard, causing the loop to advance on every *normal* match
 ///   while stalling on zero-width ones → infinite loop.
-/// - `+ → -` on the advance makes `byte_pos = m.start() - 1` when a zero-width match
-///   occurs at byte 0, wrapping to `usize::MAX` → infinite loop or panic.
-/// - `+ → *` gives `m.start() * 1 = m.start()` → byte_pos unchanged → infinite loop.
+/// - Mutations to the char-boundary advance produce either an infinite loop (no
+///   progress) or a panic (mid-codepoint byte index into `find_from_pos`).
 #[mutants::skip]
 fn find_all_matches(re: &Regex, lines: &[String]) -> Vec<Match> {
     let mut out = Vec::new();
@@ -226,8 +228,13 @@ fn find_all_matches(re: &Regex, lines: &[String]) -> Vec<Match> {
             match re.find_from_pos(line, byte_pos) {
                 Ok(Some(m)) => {
                     if m.end() == m.start() {
-                        // Zero-width match — advance one byte to avoid infinite loop.
-                        byte_pos = m.start() + 1;
+                        // Zero-width match — advance to the next UTF-8 char boundary
+                        // to avoid both an infinite loop and a mid-codepoint index.
+                        let step = line[m.start()..]
+                            .chars()
+                            .next()
+                            .map_or(1, |c| c.len_utf8());
+                        byte_pos = m.start() + step;
                         continue;
                     }
                     let char_start = line[..m.start()].chars().count();
@@ -267,13 +274,16 @@ mod tests {
     }
 
     #[test]
-    fn push_char_appends_and_updates() {
+    fn push_char_appends_query() {
         let mut s = SearchState::new(false);
         let d = doc("hello world\nhello again");
         for c in "hello".chars() {
-            s.push_char(c, &d);
+            s.push_char(c);
         }
         assert_eq!(s.query, "hello");
+        // Matches are now updated via the event-loop debounce, not inline.
+        // Call update_matches explicitly to verify the query is correct.
+        s.update_matches(&d);
         assert_eq!(s.matches.len(), 2);
     }
 
@@ -332,7 +342,7 @@ mod tests {
         let d = doc("hello");
         s.query = "hell".to_string();
         s.update_matches(&d);
-        s.pop_char(&d);
+        s.pop_char();
         assert_eq!(s.query, "hel");
     }
 
@@ -427,14 +437,14 @@ mod tests {
         s.query = "hello".to_string();
         s.update_matches(&d);
         let before = s.matches.len();
-        s.push_char('x', &d);
+        s.push_char('x');
         assert_eq!(s.replace, "x");
         assert_eq!(
             s.matches.len(),
             before,
             "replace-field edit must not clear matches"
         );
-        s.pop_char(&d);
+        s.pop_char();
         assert_eq!(s.replace, "");
         assert_eq!(s.matches.len(), before);
     }
@@ -641,5 +651,24 @@ mod tests {
             "must find exactly the 'aa' match and terminate"
         );
         assert_eq!(s.matches[0], (0, 0, 2));
+    }
+
+    // ---- T-25: zero-width match on a multi-byte UTF-8 line does not panic ----
+
+    #[test]
+    fn find_all_matches_zero_width_match_respects_utf8_boundaries() {
+        // `^` produces a zero-width match at byte 0.  With the old `+ 1` advance,
+        // byte_pos becomes 1 — the middle of the 2-byte sequence for `é` (\xc3\xa9)
+        // — causing `find_from_pos` to panic on the next iteration.  The fixed code
+        // advances by the byte-length of the char at m.start(), so byte_pos jumps
+        // to 2 (past `é`), then finds no further `^` anchors and terminates.
+        let mut s = SearchState::new(false);
+        s.regex_mode = true;
+        let d = doc("élan");
+        s.query = "^".to_string();
+        s.update_matches(&d);
+        // `^` anchors don't produce a visible match we count (zero-width, skipped),
+        // so no matches in the output — but the important thing is: no panic.
+        assert_eq!(s.matches.len(), 0, "zero-width anchor must not panic and must produce no match");
     }
 }

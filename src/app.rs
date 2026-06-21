@@ -184,6 +184,10 @@ pub struct App {
     pub file_mode: FileMode,
     /// Active search/replace session, or `None` when the search bar is closed.
     pub search: Option<SearchState>,
+    /// Set when the search query is modified; cleared after `update_matches` fires.
+    /// The event loop waits for this to elapse before running the expensive full-document
+    /// match scan, so rapid typing does not block the UI on every character.
+    pub search_last_typed: Option<Instant>,
     /// When true, the viewport is kept centred on the cursor line after every
     /// non-free-scroll keypress (typewriter mode).  Toggled by Ctrl+T.
     /// Free-scrolling (mouse wheel, Ctrl+Up/Down) still works; the view
@@ -265,6 +269,7 @@ impl App {
             file_mode,
             show_line_numbers,
             search: None,
+            search_last_typed: None,
             typewriter_mode: false,
             focus_mode: false,
             show_shortcuts: false,
@@ -484,6 +489,7 @@ mod tests {
             file_mode: FileMode::Markdown,
             show_line_numbers: false,
             search: None,
+            search_last_typed: None,
             typewriter_mode: false,
             focus_mode: false,
             show_shortcuts: false,

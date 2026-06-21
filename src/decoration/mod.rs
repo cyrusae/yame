@@ -13,7 +13,7 @@ pub use builder::build_decoration_map;
 pub use frontmatter::detect_frontmatter;
 pub use spans::{byte_to_line_char, line_start_bytes};
 pub use types::{DecorationMap, StyledSpan};
-pub use words::count_words;
+pub use words::{count_words, count_words_plain};
 
 // ---------------------------------------------------------------------------
 // Tests

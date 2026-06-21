@@ -13,7 +13,7 @@ use tui_textarea::CursorMove;
 use yame::app::{App, FileMode, get_selection_text, resolve_file_mode};
 use yame::config::{LayoutConfig, Theme, load_config, write_config};
 use yame::decoration::{
-    DecorationMap, block_highlights_to_decoration_map, build_decoration_map, count_words,
+    DecorationMap, block_highlights_to_decoration_map, build_decoration_map, count_words_plain,
 };
 use yame::highlighting::HighlightCache;
 use yame::layout::{DEFAULT_MIN_COLS, compute_layout};
@@ -88,10 +88,10 @@ fn run_decorate(req: &DecorateRequest) -> (DecorationMap, usize) {
                 .and_then(|cache| cache.highlight_block(lang, &req.text))
                 .map(|hl| block_highlights_to_decoration_map(&hl, 0))
                 .unwrap_or_default();
-            let wc = count_words(&req.text);
+            let wc = count_words_plain(&req.text);
             (map, wc)
         }
-        FileMode::PlainText => (DecorationMap::default(), count_words(&req.text)),
+        FileMode::PlainText => (DecorationMap::default(), count_words_plain(&req.text)),
     }
 }
 
@@ -445,6 +445,7 @@ pub(super) fn handle_search_key(app: &mut App, k: crossterm::event::KeyEvent) ->
         // Close search.
         (KeyModifiers::NONE, KeyCode::Esc) => {
             app.search = None;
+            app.search_last_typed = None;
         }
 
         // Save still works inside search mode.
@@ -488,18 +489,22 @@ pub(super) fn handle_search_key(app: &mut App, k: crossterm::event::KeyEvent) ->
 
         // Delete last char of the active field.
         (KeyModifiers::NONE, KeyCode::Backspace) => {
-            let lines: Vec<String> = app.textarea.lines().iter().map(|s| s.to_string()).collect();
             if let Some(s) = &mut app.search {
-                s.pop_char(&lines);
+                let was_search = s.focus_search;
+                s.pop_char();
+                if was_search {
+                    app.search_last_typed = Some(std::time::Instant::now());
+                }
             }
         }
 
-        // Toggle regex mode.
+        // Toggle regex mode — takes effect immediately (not debounced).
         (KeyModifiers::ALT, KeyCode::Char('r')) => {
             let lines: Vec<String> = app.textarea.lines().iter().map(|s| s.to_string()).collect();
             if let Some(s) = &mut app.search {
                 s.regex_mode = !s.regex_mode;
                 s.update_matches(&lines);
+                app.search_last_typed = None;
             }
         }
 
@@ -529,11 +534,13 @@ pub(super) fn handle_search_key(app: &mut App, k: crossterm::event::KeyEvent) ->
 
         // Printable character with no control modifier → feed active field.
         _ if !has_ctrl_alt_super(k.modifiers) && matches!(k.code, KeyCode::Char(_)) => {
-            if let KeyCode::Char(c) = k.code {
-                let lines: Vec<String> =
-                    app.textarea.lines().iter().map(|s| s.to_string()).collect();
-                if let Some(s) = &mut app.search {
-                    s.push_char(c, &lines);
+            if let KeyCode::Char(c) = k.code
+                && let Some(s) = &mut app.search
+            {
+                let was_search = s.focus_search;
+                s.push_char(c);
+                if was_search {
+                    app.search_last_typed = Some(std::time::Instant::now());
                 }
             }
         }
@@ -1319,6 +1326,7 @@ where
 {
     const POLL_TIMEOUT: Duration = Duration::from_millis(16);
     const DEBOUNCE: Duration = Duration::from_millis(50);
+    const SEARCH_DEBOUNCE: Duration = Duration::from_millis(100);
     const BOTTOM_PADDING: usize = 3;
     const SCROLL_LINES: usize = 3;
 
@@ -1378,6 +1386,15 @@ where
             app.last_keystroke = None;
             app.force_redecorate = false;
         }
+
+        if app.search_last_typed.is_some_and(|t| t.elapsed() >= SEARCH_DEBOUNCE) {
+            let lines: Vec<String> = app.textarea.lines().iter().map(|s| s.to_string()).collect();
+            if let Some(s) = &mut app.search {
+                s.update_matches(&lines);
+            }
+            app.search_last_typed = None;
+        }
+
         app.status.tick();
 
         // Pre-draw scroll clamp
@@ -1791,6 +1808,7 @@ mod tests {
             file_mode: FileMode::Markdown,
             show_line_numbers: false,
             search: None,
+            search_last_typed: None,
             typewriter_mode: false,
             focus_mode: false,
             show_shortcuts: false,

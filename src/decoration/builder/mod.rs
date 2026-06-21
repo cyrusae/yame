@@ -43,6 +43,12 @@ pub(crate) struct BuildState<'a> {
     pub in_table_head: Option<std::ops::Range<usize>>,
     pub code_block_lines: HashSet<usize>,
     pub in_heading_bg: Option<Color>,
+
+    // --- cached single-pass results ---
+    /// Line index of the last line of the frontmatter block, or `None` if
+    /// the document has no frontmatter.  Set once by the frontmatter post-pass
+    /// and read by the ==highlight== post-pass to avoid a second scan.
+    pub frontmatter_end: Option<usize>,
 }
 
 impl<'a> BuildState<'a> {
@@ -66,6 +72,7 @@ impl<'a> BuildState<'a> {
             in_table_head: None,
             code_block_lines: HashSet::new(),
             in_heading_bg: None,
+            frontmatter_end: None,
         }
     }
 }
@@ -156,16 +163,20 @@ pub fn build_decoration_map(
     // Frontmatter post-pass: detect and restyle YAML/TOML frontmatter blocks.
     // Must run after the markdown parser so its rule-spans on the `---` delimiter
     // lines can be removed and replaced with frontmatter-specific styling.
-    if let Some(end_line) = detect_frontmatter(text) {
+    s.frontmatter_end = detect_frontmatter(text);
+    if let Some(end_line) = s.frontmatter_end {
         apply_frontmatter_spans(&mut s.map, &s.line_starts, text, end_line, s.theme);
     }
 
     // ==highlight== post-pass: scan non-code, non-frontmatter lines for ==...==.
+    // Passes the already-computed frontmatter_end so detect_frontmatter is not
+    // called a second time.
     apply_highlight_spans(
         &mut s.map,
         text,
         &s.line_starts,
         &s.code_block_lines,
+        s.frontmatter_end,
         s.theme,
     );
 
