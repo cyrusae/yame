@@ -2256,6 +2256,32 @@ mod tests {
         );
     }
 
+    // Kills: opening/closing fence char_start accounts for leading spaces (indented fence).
+    #[test]
+    fn indented_fenced_code_delimiter_spans_skip_leading_spaces() {
+        // A fenced block indented 3 spaces (valid GFM inside a list item).
+        // Opening ``` at chars 3..6, lang tag "toml" at chars 6..10.
+        // Closing ``` at chars 3..6.
+        let text = "1. item\n\n   ```toml\n   key = 1\n   ```\n";
+        let map = build_map(text, &make_theme(), false);
+        // Line 2 is "   ```toml"
+        let opening = map.get(&2).expect("opening indented fence line must have spans");
+        assert!(
+            opening.iter().any(|s| s.char_start == 3 && s.char_end == 6),
+            "opening ``` of indented fence must be at chars 3..6; got: {opening:?}"
+        );
+        assert!(
+            opening.iter().any(|s| s.char_start == 6 && s.char_end == 10),
+            "language tag 'toml' of indented fence must be at chars 6..10; got: {opening:?}"
+        );
+        // Line 4 is "   ```"
+        let closing = map.get(&4).expect("closing indented fence line must have spans");
+        assert!(
+            closing.iter().any(|s| s.char_start == 3 && s.char_end == 6),
+            "closing ``` of indented fence must be at chars 3..6; got: {closing:?}"
+        );
+    }
+
     // ---- Link ASCII exact span positions ----
     //
     // Kills the arithmetic in Event::Start(Tag::Link{..}):
