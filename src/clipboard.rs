@@ -26,7 +26,8 @@ pub fn handle_copy(app: &mut App) {
         app.status
             .set_dismissible(format!("⚠ Clipboard unavailable: {e}"));
     } else {
-        app.status.set_timed(lines_msg("Copied", n), Duration::from_secs(2));
+        app.status
+            .set_timed(lines_msg("Copied", n), Duration::from_secs(2));
     }
 }
 
@@ -56,7 +57,8 @@ pub fn handle_cut(app: &mut App) {
     // delete is exactly what we want.
     app.textarea.cut();
     app.mark_keystroke();
-    app.status.set_timed(lines_msg("Cut", n), Duration::from_secs(2));
+    app.status
+        .set_timed(lines_msg("Cut", n), Duration::from_secs(2));
 }
 
 /// Paste from the system clipboard into the buffer.
@@ -73,7 +75,8 @@ pub fn handle_paste(app: &mut App) {
             let n = text.lines().count().max(1);
             app.textarea.insert_str(&text);
             app.mark_keystroke();
-            app.status.set_timed(lines_msg("Pasted", n), Duration::from_secs(2));
+            app.status
+                .set_timed(lines_msg("Pasted", n), Duration::from_secs(2));
         }
         Err(e) => {
             app.status

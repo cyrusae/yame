@@ -739,7 +739,15 @@ mod tests {
         let lines = s(&["| A | B |", "| C | D |"]);
         let result = compact_table(&lines);
         assert_eq!(result.len(), 2);
-        assert!(!result[1].contains("---"), "row 1 must not be separator-formatted: {:?}", result[1]);
-        assert!(result[1].contains('C'), "row 1 content must survive: {:?}", result[1]);
+        assert!(
+            !result[1].contains("---"),
+            "row 1 must not be separator-formatted: {:?}",
+            result[1]
+        );
+        assert!(
+            result[1].contains('C'),
+            "row 1 content must survive: {:?}",
+            result[1]
+        );
     }
 }

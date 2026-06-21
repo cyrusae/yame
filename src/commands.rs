@@ -267,7 +267,12 @@ mod tests {
         use tui_textarea::CursorMove;
         app.textarea.move_cursor(CursorMove::Jump(20, 0));
 
-        let area = Rect { x: 0, y: 0, width: 82, height: 5 };
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 82,
+            height: 5,
+        };
         clamp_scroll(&mut app, area, 0);
 
         // After clamping, cursor (row 20) must be visible within 5 rows.

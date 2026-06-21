@@ -230,10 +230,7 @@ fn find_all_matches(re: &Regex, lines: &[String]) -> Vec<Match> {
                     if m.end() == m.start() {
                         // Zero-width match — advance to the next UTF-8 char boundary
                         // to avoid both an infinite loop and a mid-codepoint index.
-                        let step = line[m.start()..]
-                            .chars()
-                            .next()
-                            .map_or(1, |c| c.len_utf8());
+                        let step = line[m.start()..].chars().next().map_or(1, |c| c.len_utf8());
                         byte_pos = m.start() + step;
                         continue;
                     }
@@ -669,6 +666,10 @@ mod tests {
         s.update_matches(&d);
         // `^` anchors don't produce a visible match we count (zero-width, skipped),
         // so no matches in the output — but the important thing is: no panic.
-        assert_eq!(s.matches.len(), 0, "zero-width anchor must not panic and must produce no match");
+        assert_eq!(
+            s.matches.len(),
+            0,
+            "zero-width anchor must not panic and must produce no match"
+        );
     }
 }

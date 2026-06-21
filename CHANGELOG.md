@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [1.0.0] — 2026-06-16
+## [1.0.0] — 2026-06-21
 
 ### Added
 - **Auto-close pairs** (opt-in) — typing `(` inserts `()` with the cursor placed between; typing `)` when already before one skips over it instead of inserting a duplicate. Same for `[ ] { } " ' \` * _`. Enable with `auto_close_pairs = true` under `[layout]` in config (#243)

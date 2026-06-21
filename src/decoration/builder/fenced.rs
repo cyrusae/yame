@@ -225,7 +225,9 @@ pub(super) fn on_start(s: &mut BuildState, lang: &CowStr, range: std::ops::Range
             end_line,
             StyledSpan {
                 char_start: close_leading,
-                char_end: (close_leading + close_fence).max(close_leading + 1).min(close_len),
+                char_end: (close_leading + close_fence)
+                    .max(close_leading + 1)
+                    .min(close_len),
                 style: fence_delim_style,
                 full_line_bg: Some(s.theme.fenced_bg),
                 ..Default::default()

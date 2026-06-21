@@ -2265,17 +2265,23 @@ mod tests {
         let text = "1. item\n\n   ```toml\n   key = 1\n   ```\n";
         let map = build_map(text, &make_theme(), false);
         // Line 2 is "   ```toml"
-        let opening = map.get(&2).expect("opening indented fence line must have spans");
+        let opening = map
+            .get(&2)
+            .expect("opening indented fence line must have spans");
         assert!(
             opening.iter().any(|s| s.char_start == 3 && s.char_end == 6),
             "opening ``` of indented fence must be at chars 3..6; got: {opening:?}"
         );
         assert!(
-            opening.iter().any(|s| s.char_start == 6 && s.char_end == 10),
+            opening
+                .iter()
+                .any(|s| s.char_start == 6 && s.char_end == 10),
             "language tag 'toml' of indented fence must be at chars 6..10; got: {opening:?}"
         );
         // Line 4 is "   ```"
-        let closing = map.get(&4).expect("closing indented fence line must have spans");
+        let closing = map
+            .get(&4)
+            .expect("closing indented fence line must have spans");
         assert!(
             closing.iter().any(|s| s.char_start == 3 && s.char_end == 6),
             "closing ``` of indented fence must be at chars 3..6; got: {closing:?}"
@@ -3992,7 +3998,9 @@ mod tests {
         // Line 0: "# Heading", line 1: blank, line 2: "text `code` text"
         let text = "# Heading\n\ntext `code` text";
         let map = build_map(text, &theme, true);
-        let spans = map.get(&2).expect("line 2 (inline code line) must have spans");
+        let spans = map
+            .get(&2)
+            .expect("line 2 (inline code line) must have spans");
         let code_span = spans
             .iter()
             .find(|s| s.style.bg.is_some())

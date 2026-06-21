@@ -1781,11 +1781,7 @@ mod tests {
         let mut m = make_modal();
         m.editing = true;
         m.input_buf = "ab".to_string();
-        handle_settings_key(
-            &mut m,
-            key_mod(KeyCode::Char('x'), KeyModifiers::ALT),
-            10,
-        );
+        handle_settings_key(&mut m, key_mod(KeyCode::Char('x'), KeyModifiers::ALT), 10);
         assert_eq!(m.input_buf, "ab");
     }
 
@@ -2074,7 +2070,12 @@ mod tests {
     //   "Appearance" x=34..43, " · " x=44..46, "Editor" x=47..52, " · " x=53..55, "File" x=56..59
     // field rows: y=14..25  (by+3 .. by+3+12)
     fn test_area() -> Rect {
-        Rect { x: 0, y: 0, width: 120, height: 40 }
+        Rect {
+            x: 0,
+            y: 0,
+            width: 120,
+            height: 40,
+        }
     }
 
     #[test]
@@ -2330,7 +2331,12 @@ mod tests {
     // ---------------------------------------------------------------------------
 
     fn area() -> Rect {
-        Rect { x: 0, y: 0, width: 100, height: 50 }
+        Rect {
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 50,
+        }
     }
 
     // Kills 635:16 `< → <=`: mutant treats the left modal edge (col == bx) as Outside.

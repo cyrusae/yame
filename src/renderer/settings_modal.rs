@@ -8,7 +8,9 @@ use ratatui::{
 };
 
 use crate::app::App;
-use crate::settings::{APPEARANCE_EXPAND_IDX, FieldKind, MODAL_H, MODAL_W, SettingsModal, TAB_NAMES, VISIBLE_FIELDS};
+use crate::settings::{
+    APPEARANCE_EXPAND_IDX, FieldKind, MODAL_H, MODAL_W, SettingsModal, TAB_NAMES, VISIBLE_FIELDS,
+};
 
 use super::search_bar::flood_reset;
 

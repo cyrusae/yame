@@ -828,8 +828,10 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
 
         (KeyModifiers::CONTROL, KeyCode::Char('a')) | (KeyModifiers::SUPER, KeyCode::Char('a')) => {
             let n = select_all(app);
-            app.status
-                .set_timed(yame::clipboard::lines_msg("Selected", n), Duration::from_secs(2));
+            app.status.set_timed(
+                yame::clipboard::lines_msg("Selected", n),
+                Duration::from_secs(2),
+            );
             KeyOutcome::Continue
         }
 
@@ -1264,7 +1266,12 @@ fn handle_visual_move(app: &mut App, go_down: bool, selecting: bool) -> KeyOutco
 #[mutants::skip] // Performs disk I/O (write_config) and terminal-state mutation.
 fn do_commit_settings(app: &mut App, deco_tx: &std::sync::mpsc::Sender<DecorateRequest>) {
     let (cfg, new_tw, new_fm, new_ro) = match &app.settings {
-        Some(m) => (m.config.clone(), m.typewriter_mode, m.focus_mode, m.read_only),
+        Some(m) => (
+            m.config.clone(),
+            m.typewriter_mode,
+            m.focus_mode,
+            m.read_only,
+        ),
         None => return,
     };
     match write_config(&cfg) {
@@ -1272,9 +1279,10 @@ fn do_commit_settings(app: &mut App, deco_tx: &std::sync::mpsc::Sender<DecorateR
             let mut warnings = Vec::new();
             app.theme = Theme::from_config(&cfg.palette, &cfg.theme, &cfg.headings, &mut warnings);
             app.highlight_cache = cfg.highlighting.enabled.then(|| {
-                let palette_theme = cfg.highlighting.use_palette_colors.then(|| {
-                    yame::highlighting::build_palette_theme(&app.theme)
-                });
+                let palette_theme = cfg
+                    .highlighting
+                    .use_palette_colors
+                    .then(|| yame::highlighting::build_palette_theme(&app.theme));
                 Arc::new(yame::highlighting::HighlightCache::new(
                     true,
                     cfg.highlighting.syntect_theme.clone(),
@@ -1387,7 +1395,10 @@ where
             app.force_redecorate = false;
         }
 
-        if app.search_last_typed.is_some_and(|t| t.elapsed() >= SEARCH_DEBOUNCE) {
+        if app
+            .search_last_typed
+            .is_some_and(|t| t.elapsed() >= SEARCH_DEBOUNCE)
+        {
             let lines: Vec<String> = app.textarea.lines().iter().map(|s| s.to_string()).collect();
             if let Some(s) = &mut app.search {
                 s.update_matches(&lines);
@@ -1545,9 +1556,12 @@ where
                 // a Ctrl+Z produces a bare `(NONE, Char('z'), Release)` that
                 // bypasses the CONTROL match arm and inserts 'z'.
                 Event::Key(k) if k.kind != crossterm::event::KeyEventKind::Release => {
+                    let prev_free_scroll = app.free_scroll;
                     match handle_key_event(app, k) {
                         KeyOutcome::Continue => {}
                         KeyOutcome::Save => {
+                            // Save doesn't move the cursor, so keep the viewport where it was.
+                            app.free_scroll = prev_free_scroll;
                             handle_save(app)?;
                         }
                         KeyOutcome::SaveAndExit => {
@@ -1583,7 +1597,8 @@ where
                                 app.file_mode = resolve_file_mode(p, &new_config.filetype);
                             }
                             app.show_line_numbers = new_config.layout.line_numbers.unwrap_or(false);
-                            app.auto_close_pairs = new_config.layout.auto_close_pairs.unwrap_or(false);
+                            app.auto_close_pairs =
+                                new_config.layout.auto_close_pairs.unwrap_or(false);
                             app.config_warnings = warnings;
                             app.status
                                 .set_timed("Config reloaded.", Duration::from_millis(1500));
@@ -1914,7 +1929,11 @@ mod tests {
         app.auto_close_pairs = true;
         handle_key_event(&mut app, key(KeyCode::Char('(')));
         assert_eq!(app.textarea.lines()[0], "()");
-        assert_eq!(app.textarea.cursor(), (0, 1), "cursor must sit between the pair");
+        assert_eq!(
+            app.textarea.cursor(),
+            (0, 1),
+            "cursor must sit between the pair"
+        );
     }
 
     // Kills: `delete move_cursor(Back)` — cursor would land after the pair, not between.
@@ -1936,7 +1955,11 @@ mod tests {
         // cursor is at col 1 inside "()"
         handle_key_event(&mut app, key(KeyCode::Char(')')));
         assert_eq!(app.textarea.lines()[0], "()", "no duplicate close inserted");
-        assert_eq!(app.textarea.cursor(), (0, 2), "cursor must be past the closer");
+        assert_eq!(
+            app.textarea.cursor(),
+            (0, 2),
+            "cursor must be past the closer"
+        );
     }
 
     // Kills: `delete Some(c) ==` guard — symmetric char would always insert a pair
@@ -1978,7 +2001,11 @@ mod tests {
             KeyEvent::new(KeyCode::Char('('), KeyModifiers::CONTROL),
         );
         assert!(!handled, "Ctrl+( must not trigger auto-close");
-        assert_eq!(app.textarea.lines()[0], "", "no characters must be inserted");
+        assert_eq!(
+            app.textarea.lines()[0],
+            "",
+            "no characters must be inserted"
+        );
     }
 
     // Kills: input.rs:319:9 delete match arm '['.
@@ -2012,7 +2039,11 @@ mod tests {
         handle_key_event(&mut app, key(KeyCode::Char('[')));
         handle_key_event(&mut app, key(KeyCode::Char(']')));
         assert_eq!(app.textarea.lines()[0], "[]", "no duplicate ] inserted");
-        assert_eq!(app.textarea.cursor(), (0, 2), "cursor must be past the closer");
+        assert_eq!(
+            app.textarea.cursor(),
+            (0, 2),
+            "cursor must be past the closer"
+        );
     }
 
     // Kills: input.rs:346:9 delete match arm '}' and 347:26 replace == with !=.
@@ -2023,7 +2054,11 @@ mod tests {
         handle_key_event(&mut app, key(KeyCode::Char('{')));
         handle_key_event(&mut app, key(KeyCode::Char('}')));
         assert_eq!(app.textarea.lines()[0], "{}", "no duplicate }} inserted");
-        assert_eq!(app.textarea.cursor(), (0, 2), "cursor must be past the closer");
+        assert_eq!(
+            app.textarea.cursor(),
+            (0, 2),
+            "cursor must be past the closer"
+        );
     }
 
     // Kills: input.rs:355:9 delete match arm '"' | '\'' | '`' | '*' | '_'.
@@ -2035,8 +2070,16 @@ mod tests {
         let mut app = make_app();
         app.auto_close_pairs = true;
         handle_key_event(&mut app, key(KeyCode::Char('"')));
-        assert_eq!(app.textarea.lines()[0], "\"\"", "symmetric char must insert pair");
-        assert_eq!(app.textarea.cursor(), (0, 1), "cursor must sit between the pair");
+        assert_eq!(
+            app.textarea.lines()[0],
+            "\"\"",
+            "symmetric char must insert pair"
+        );
+        assert_eq!(
+            app.textarea.cursor(),
+            (0, 1),
+            "cursor must sit between the pair"
+        );
     }
 
     // Kills: input.rs:275:47 replace != with == in handle_key_event.
@@ -3445,10 +3488,8 @@ mod tests {
     #[test]
     fn select_all_creates_active_selection() {
         let mut app = make_app();
-        app.textarea = tui_textarea::TextArea::new(vec![
-            "first line".to_string(),
-            "second line".to_string(),
-        ]);
+        app.textarea =
+            tui_textarea::TextArea::new(vec!["first line".to_string(), "second line".to_string()]);
         select_all(&mut app);
         assert!(
             app.textarea.selection_range().is_some(),
@@ -3461,10 +3502,8 @@ mod tests {
     #[test]
     fn select_all_places_cursor_at_end_of_last_line() {
         let mut app = make_app();
-        app.textarea = tui_textarea::TextArea::new(vec![
-            "line one".to_string(),
-            "line two".to_string(),
-        ]);
+        app.textarea =
+            tui_textarea::TextArea::new(vec!["line one".to_string(), "line two".to_string()]);
         select_all(&mut app);
         let (row, col) = app.textarea.cursor();
         assert_eq!(row, 1, "cursor row must be the last line after select_all");
@@ -3480,11 +3519,11 @@ mod tests {
     #[test]
     fn ctrl_a_selects_all_text() {
         let mut app = make_app();
-        app.textarea = tui_textarea::TextArea::new(vec![
-            "hello".to_string(),
-            "world".to_string(),
-        ]);
-        handle_key_event(&mut app, KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL));
+        app.textarea = tui_textarea::TextArea::new(vec!["hello".to_string(), "world".to_string()]);
+        handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL),
+        );
         assert!(
             app.textarea.selection_range().is_some(),
             "Ctrl+A must create an active selection"
