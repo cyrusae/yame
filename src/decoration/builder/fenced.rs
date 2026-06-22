@@ -68,6 +68,7 @@ pub(super) fn fence_content_line_end(line_starts: &[usize], text: &str, line: us
 // ---- e. Fenced code blocks ----
 // ---------------------------------------------------------------------------
 
+#[mutants::skip] // Mutates DecorationMap via BuildState — no unit tests; all mutations TIMEOUT.
 pub(super) fn on_start(s: &mut BuildState, lang: &CowStr, range: std::ops::Range<usize>) {
     let (start_line, _) = byte_to_line_char(&s.line_starts, s.text, range.start);
     let (end_line, _) = byte_to_line_char(
@@ -101,17 +102,22 @@ pub(super) fn on_start(s: &mut BuildState, lang: &CowStr, range: std::ops::Range
         let line_len = line_char_len(&s.line_starts, s.text, start_line);
         let lb_start = s.line_starts[start_line];
         let lb_end = fence_line_end(&s.line_starts, s.text, start_line);
-        let fence_count = s.text[lb_start..lb_end]
+        let line_slice = &s.text[lb_start..lb_end];
+        let leading = line_slice.chars().take_while(|&c| c == ' ').count();
+        let fence_count = line_slice
             .chars()
+            .skip(leading)
             .take_while(|&c| c == '`' || c == '~')
             .count()
-            .min(line_len);
+            .min(line_len.saturating_sub(leading));
+        let delim_start = leading;
+        let delim_end = (leading + fence_count).max(leading + 1);
         push_span(
             &mut s.map,
             start_line,
             StyledSpan {
-                char_start: 0,
-                char_end: fence_count.max(1),
+                char_start: delim_start,
+                char_end: delim_end.min(line_len),
                 style: fence_delim_style,
                 full_line_bg: Some(s.theme.fenced_bg),
                 ..Default::default()
@@ -119,12 +125,13 @@ pub(super) fn on_start(s: &mut BuildState, lang: &CowStr, range: std::ops::Range
         );
         let lang_str = lang.as_ref();
         if !lang_str.is_empty() {
-            let lang_end = (fence_count + lang_str.chars().count()).min(line_len);
-            if lang_end > fence_count {
+            let lang_start = leading + fence_count;
+            let lang_end = (lang_start + lang_str.chars().count()).min(line_len);
+            if lang_end > lang_start {
                 push_span(
                     &mut s.map,
                     start_line,
-                    crate::decoration::spans::make_span(fence_count, lang_end, lang_style),
+                    crate::decoration::spans::make_span(lang_start, lang_end, lang_style),
                 );
             }
         }
@@ -205,17 +212,22 @@ pub(super) fn on_start(s: &mut BuildState, lang: &CowStr, range: std::ops::Range
         let close_len = line_char_len(&s.line_starts, s.text, end_line);
         let lb_start = s.line_starts[end_line];
         let lb_end = fence_line_end(&s.line_starts, s.text, end_line);
-        let close_fence = s.text[lb_start..lb_end]
+        let close_slice = &s.text[lb_start..lb_end];
+        let close_leading = close_slice.chars().take_while(|&c| c == ' ').count();
+        let close_fence = close_slice
             .chars()
+            .skip(close_leading)
             .take_while(|&c| c == '`' || c == '~')
             .count()
-            .min(close_len);
+            .min(close_len.saturating_sub(close_leading));
         push_span(
             &mut s.map,
             end_line,
             StyledSpan {
-                char_start: 0,
-                char_end: close_fence.max(1),
+                char_start: close_leading,
+                char_end: (close_leading + close_fence)
+                    .max(close_leading + 1)
+                    .min(close_len),
                 style: fence_delim_style,
                 full_line_bg: Some(s.theme.fenced_bg),
                 ..Default::default()

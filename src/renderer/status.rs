@@ -3,7 +3,7 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::Paragraph,
+    widgets::{Clear, Paragraph},
 };
 
 use crate::app::App;
@@ -87,6 +87,16 @@ pub fn render_status_bar(f: &mut Frame, area: Rect, app: &App) {
         StatusMode::Normal => build_normal_status_bar(app),
 
         StatusMode::GoToLine { input } => build_goto_line_bar(app, input),
+
+        StatusMode::SaveAs { input, .. } => build_save_as_bar(app, input),
+
+        StatusMode::SwitchFilePrompt => Line::from(vec![Span::styled(
+            " Unsaved changes will be lost — switch file? [Y]es  [N]o ",
+            Style::default()
+                .fg(warning_fg)
+                .bg(hints_bg)
+                .add_modifier(Modifier::BOLD),
+        )]),
     };
 
     let para = Paragraph::new(content).style(Style::default().bg(canvas_bg));
@@ -142,9 +152,9 @@ pub(super) fn build_normal_status_bar(app: &App) -> Line<'static> {
     let cap1 = Span::styled(sep.clone(), Style::default().fg(pill_bg).bg(hints_bg));
 
     let hints_text = if app.read_only {
-        " ^E Unlock  ^X Exit  ^F Search  F1 Keys "
+        " ^E Unlock  ^Q Quit  F1 Keys  F2 Settings "
     } else {
-        " ^S Save  ^X Exit  ^F Search  F1 Keys "
+        " ^S Save  ^Q Quit  ^O Open  F1 Keys  F2 Settings "
     };
     let hints = Span::styled(hints_text, Style::default().fg(muted_fg).bg(hints_bg));
     let cap2 = Span::styled(sep, Style::default().fg(hints_bg).bg(canvas_bg));
@@ -172,6 +182,26 @@ pub(super) fn build_goto_line_bar(app: &App, input: &str) -> Line<'static> {
     )])
 }
 
+/// Build the status bar for the save-as prompt (untitled buffer first save).
+///
+/// Shows `" Save as: {input}_ "` in accent colour on `hints_bg`, matching the
+/// go-to-line prompt style so the two prompts feel visually consistent.
+#[mutants::skip] // Only called from #[mutants::skip] render_status_bar; no standalone test path.
+pub(super) fn build_save_as_bar(app: &App, input: &str) -> Line<'static> {
+    let theme = &app.theme;
+    let hints_bg = theme.ui_bg;
+    let accent_fg = theme.accent;
+
+    let content = format!(" Save as: {input}_ ");
+    Line::from(vec![Span::styled(
+        content,
+        Style::default()
+            .fg(accent_fg)
+            .bg(hints_bg)
+            .add_modifier(Modifier::BOLD),
+    )])
+}
+
 /// Nerd Font typewriter icon (nf-md-typewriter, U+F04C3).  Requires a patched font.
 const TYPEWRITER_GLYPH: &str = "󰓃";
 /// ASCII fallback for the typewriter mode indicator.
@@ -182,14 +212,20 @@ const FOCUS_GLYPH: &str = "󰛐";
 const FOCUS_ASCII: &str = "[F]";
 
 /// Render the second-to-last row: cursor position, word count, and mode indicators.
+///
+/// Builds the entire row as a **single** `Line` covering the full `area` width so
+/// that every cell receives an explicit (char, style) pair in one pass.  Using
+/// multiple narrow `Paragraph` renders (clear + text + indicators) left gaps where
+/// only the style was set but no character was written, which could expose stale
+/// buffer content from the previous frame on certain terminals.
 #[mutants::skip] // Writes into ratatui Buffer — void, not testable via return value.
 pub fn render_info_line(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
 
-    f.render_widget(
-        Paragraph::new("").style(Style::default().bg(theme.bg)),
-        area,
-    );
+    // Hard-clear the row first so no stale cell content can survive from any
+    // prior frame.  `Clear` writes Cell::default() (space + default style) to
+    // every cell, giving us a clean slate before our spans land on top.
+    f.render_widget(Clear, area);
 
     let (row, col) = app.textarea.cursor();
     let text = format!(
@@ -198,19 +234,10 @@ pub fn render_info_line(f: &mut Frame, area: Rect, app: &App) {
         format_thousands(col + 1),
         format_thousands(app.word_count),
     );
-    let text_width = (text.chars().count() as u16).min(area.width);
-    let text_area = Rect {
-        width: text_width,
-        ..area
-    };
-    f.render_widget(
-        Paragraph::new(text).style(Style::default().fg(theme.muted).bg(theme.bg)),
-        text_area,
-    );
 
     // Mode indicators — right-aligned, accent coloured.
-    // Each active mode contributes a token; they are concatenated and rendered
-    // as a single right-aligned widget so they stack naturally.
+    // Each active mode contributes a token; they are concatenated into a single
+    // right-aligned span so they stack naturally.
     let mut indicators = String::new();
     if app.focus_mode {
         let icon = if app.powerline_glyphs {
@@ -228,18 +255,29 @@ pub fn render_info_line(f: &mut Frame, area: Rect, app: &App) {
         };
         indicators.push_str(&format!(" {icon} "));
     }
-    if !indicators.is_empty() {
-        let iw = indicators.chars().count() as u16;
-        if iw <= area.width {
-            let indicator_area = Rect {
-                x: area.x + area.width - iw,
-                width: iw,
-                ..area
-            };
-            f.render_widget(
-                Paragraph::new(indicators).style(Style::default().fg(theme.accent).bg(theme.bg)),
-                indicator_area,
-            );
-        }
-    }
+
+    let text_style = Style::default().fg(theme.muted).bg(theme.bg);
+    let ind_style = Style::default().fg(theme.accent).bg(theme.bg);
+    let bg_style = Style::default().bg(theme.bg);
+
+    // How many display columns are available for each zone.
+    let text_width = (text.chars().count() as u16).min(area.width);
+    let remaining = area.width.saturating_sub(text_width);
+    let ind_width = (indicators.chars().count() as u16).min(remaining);
+    let gap_width = remaining.saturating_sub(ind_width);
+
+    // Char-safe truncation (the widths above are in chars, not bytes).
+    let text_str: String = text.chars().take(text_width as usize).collect();
+    let ind_str: String = indicators.chars().take(ind_width as usize).collect();
+    let gap_str = " ".repeat(gap_width as usize);
+
+    // Render the entire row in one shot: [word-count][gap][indicators]
+    // Every cell in `area` gets an explicit character + style so the diff
+    // correctly replaces any previous content.
+    let line = Line::from(vec![
+        Span::styled(text_str, text_style),
+        Span::styled(gap_str, bg_style),
+        Span::styled(ind_str, ind_style),
+    ]);
+    f.render_widget(Paragraph::new(line).style(bg_style), area);
 }

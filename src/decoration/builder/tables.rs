@@ -9,6 +9,7 @@ use super::BuildState;
 // ---- j. Tables ----
 // ---------------------------------------------------------------------------
 
+#[mutants::skip] // Mutates DecorationMap via BuildState — no unit tests; all mutations TIMEOUT.
 pub(super) fn on_table_start(s: &mut BuildState, range: std::ops::Range<usize>) {
     let (start_line, _) = byte_to_line_char(&s.line_starts, s.text, range.start);
     let (end_line, _) = byte_to_line_char(

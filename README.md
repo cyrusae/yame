@@ -2,13 +2,13 @@
 
 **Yet Another Markdown Editor** — a lightweight terminal editor for Markdown files.
 
-The goal is something meaningfully lighter than VS Code for editing READMEs, notes, and CLAUDE.mds, while being more capable than nano for Markdown specifically. 
+The goal is something meaningfully lighter than VS Code for editing READMEs, notes, and documentation, while being more capable than nano for Markdown specifically.
 
 It can also be used as a distraction-free text editor!
 
-> **v0.2.1.** Core editing, decoration, and theming are solid. Keybindings and config keys are stable. Active development - check in for new features!
+> **v1.0.0.** Core editing, decoration, and theming are solid. Keybindings and config keys are stable. Feature requests and issues are welcome!
 
-<!-- screenshot or demo GIF goes here -->
+![A screenshot of this README shown in yame.](./_info/readme-screenshot.png)
 
 ---
 
@@ -17,18 +17,24 @@ It can also be used as a distraction-free text editor!
 - Opens and saves Markdown files with live inline decoration: headings, bold, italic, inline code, fenced blocks, blockquotes, links, lists, todo checkboxes, tables, strikethrough, horizontal rules, `==highlights==`, YAML/TOML frontmatter
 - Syntax highlighting in fenced code blocks for over 150 languages
 - Centered editing column with soft word wrap (wide/CJK character aware)
-- Catppuccin Mocha theme by default, fully configurable via `~/.config/yame/config.toml`
-- System clipboard (`Ctrl+C` / `Ctrl+V`)
+- 14 built-in palette presets (Catppuccin ×4, Dracula, Nord, Gruvbox, Solarized ×2, Tokyo Night, Rose Piné ×3, GitHub Light); fully configurable via `~/.config/yame/config.toml` or in-app settings menu
+- System clipboard (`Ctrl+C` / `Ctrl+V` / `Ctrl+X` cut)
 - Smart pair wrapping: select text, press `(`, `[`, `"`, `` ` ``, `*`, etc. to wrap it
+- Auto-close pairs (opt-in): typing `(` inserts `()` with the cursor between; typing `)` when already before one skips over it instead of duplicating; same for `[ ] { } " ' \` * _`
 - Decoupled viewport scrolling — scroll to read without moving the cursor
 - Undo/redo via `Ctrl+Z` / `Ctrl+Y`
-- Live config reload with `Ctrl+R`
+- Live config reload with `Ctrl+R`; live in-app settings editor
 - Search and find/replace (`Ctrl+F` / `Ctrl+H`) with regex support
+- `Ctrl+O` file picker — opens lf or fzf without leaving the editor
+- Untitled buffer mode — `yame` with no arguments starts a blank file; `Ctrl+S` prompts for a name
+- `yame --preview <file>` — headless ANSI render for lf/file-manager previewers
 - Optional line numbers, focus mode, and typewriter mode
 
-## What it doesn't do yet
+## What it doesn't do right now
 
-- No tab completion, file browser, or split panes
+- No tab completion or split panes
+
+![A screenshot demonstrating frontmatter highlighting in yame.](./_info/frontmatter-screenshot.png)
 
 ---
 
@@ -48,7 +54,7 @@ cargo install --path .
 
 ### Platform support
 
-Tested on macOS. Should work on Linux and Windows; untested. Issues and pull requests welcome.
+Tested on macOS and Linux. Should work on Windows; untested. Issues and pull requests welcome.
 
 ---
 
@@ -56,7 +62,9 @@ Tested on macOS. Should work on Linux and Windows; untested. Issues and pull req
 
 ```
 yame <file>           Open <file> for editing (created if it doesn't exist)
+yame                  Open an untitled buffer (Ctrl+S prompts for a filename)
 yame -r <file>        Open <file> in read-only mode (no edits, no save)
+yame --preview <file> Render <file> to stdout with ANSI colour (for lf previewer)
 yame init             Print shell integration function for your shell
 yame write-config     Write a commented default config to ~/.config/yame/config.toml
 yame --help           Show help
@@ -102,13 +110,16 @@ Without `fd`, replace `fd --type f --extension md` with `find . -name "*.md"`.
 ## Keybindings
 
 | Key | Action |
-|-----|--------|
+| --- | --- |
 | `Ctrl+S` | Save |
-| `Ctrl+X` · `Esc` | Exit (prompts if unsaved changes) |
+| `Ctrl+Q` · `Esc` | Quit (prompts if unsaved changes) |
 | `Ctrl+Z` | Undo |
 | `Ctrl+Y` | Redo |
 | `Ctrl+C` | Copy selection |
+| `Ctrl+X` | Cut selection |
 | `Ctrl+V` | Paste from system clipboard |
+| `Ctrl+O` | Open file picker (lf → fzf → `$YAME_PICKER`) |
+| `Ctrl+I` | Insert fenced code block |
 | `Ctrl+R` | Reload config file |
 | `Ctrl+E` | Toggle read-only mode |
 | `Ctrl+F` | Search |
@@ -116,10 +127,12 @@ Without `fd`, replace `fd --type f --extension md` with `find . -name "*.md"`.
 | `Ctrl+G` | Go to line |
 | `Ctrl+T` | Toggle typewriter mode |
 | `Ctrl+D` | Toggle focus mode |
-| `Alt+T` | Reformat table |
-| `F1` | Keybinding reference |
+| `Alt+T` | Reformat GFM table |
+| `F1` | Keybinding reference (in-app cheatsheet) |
+| `F2` | Settings modal (in-app UI) |
 | Arrow keys | Move cursor |
 | `Shift+Arrow` | Select text |
+| `Ctrl+A` | Select all |
 | `Home` / `End` | Start / end of line |
 | `PgUp` / `PgDn` | Scroll by page |
 | `Ctrl+Up` / `Ctrl+Down` | Scroll viewport without moving cursor |
@@ -136,20 +149,37 @@ Config file: `~/.config/yame/config.toml`
 
 The file is optional. Run `yame write-config` to write a fully-commented template to the default path. All values below are the defaults (Catppuccin Mocha). You can set any subset — missing keys fall back to the default.
 
+### Palette presets
+
+Switch to a built-in palette by name:
+
+```toml
+[palette]
+preset = "dracula"
+```
+
+Available presets: `catppuccin-mocha` (default), `catppuccin-latte`, `catppuccin-frappe`, `catppuccin-macchiato`, `dracula`, `nord`, `gruvbox-dark`, `solarized-dark`, `solarized-light`, `tokyo-night`, `rose-pine`, `rose-pine-moon`, `rose-pine-dawn`, `github-light`.
+
+Append `-expanded` to any name (e.g. `"dracula-expanded"`) for rainbow per-level heading colors and a per-theme italic tint.
+
+See [`_info/THEMES.md`](_info/THEMES.md) for the full preset list, override order, and per-element reference.
+
 ### Base palette
 
 ```toml
 [palette]
-text    = "#cdd6f4"   # body text
-accent  = "#cba6f7"   # headings, links, bullets
-muted   = "#585b70"   # blockquotes, URLs, completed todos
-code    = "#a6e3a1"   # inline code and fenced blocks
-bg      = "#1e1e2e"   # editor background
-warning = "#f38ba8"   # dirty flag, warnings
+# preset  = "catppuccin-mocha"   # switch to any named preset (see above)
+# text    = "#cdd6f4"   # body text
+# accent  = "#cba6f7"   # headings, links, bullets
+# muted   = "#585b70"   # blockquotes, URLs, completed todos
+# code    = "#a6e3a1"   # inline code and fenced blocks
+# bg      = "#11111b"   # editor background
+# warning = "#f38ba8"   # dirty flag, warnings
 ```
 
-Setting these six colors gives you a coherent theme. All other colors derive from
-them automatically.
+Setting these six colors gives you a coherent theme. All other colors derive from them automatically. Individual fields override the preset when both are set.
+
+![Screenshot of yame's settings modal.](./_info/settings-modal-screenshot.png)
 
 ### Theme overrides
 
@@ -196,11 +226,12 @@ Optional per-element overrides. These take precedence over the derived defaults.
 
 ```toml
 [layout]
-# min_cols         = 60     # minimum editing column width in characters
-# max_cols         = 88     # maximum editing column width — caps the prose wrap margin on wide terminals
-# tab_width        = 4      # spaces per tab character (tabs are expanded on load)
-# line_numbers     = false  # set true to show line numbers in the left gutter
-# powerline_glyphs = true   # set false to use the universal │ separator instead
+# min_cols          = 60     # minimum editing column width in characters
+# max_cols          = 88     # maximum editing column width — caps the prose wrap margin on wide terminals
+# tab_width         = 4      # spaces per tab character (tabs are expanded on load)
+# line_numbers      = false  # set true to show line numbers in the left gutter
+# powerline_glyphs  = true   # set false to use the universal │ separator instead
+# auto_close_pairs  = false  # set true to auto-insert closing delimiters: ( → (), [ → [], " → "", etc.
 ```
 
 > **Note:** Nerd Font arrow separators are on by default. If your terminal font doesn't include glyph U+E0B0 and the status bar shows a box character, add `powerline_glyphs = false` to your config. 
@@ -210,6 +241,10 @@ Optional per-element overrides. These take precedence over the derived defaults.
 ### Error handling
 
 If the config file has invalid TOML, yame falls back to defaults and prints a warning to stderr. If an individual color value is malformed, that field falls back to its default and a dismissible warning banner appears at the top of the editor.
+
+### How do you pronounce it?
+
+Think "Se llame *yame*."
 
 ---
 

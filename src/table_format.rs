@@ -232,10 +232,63 @@ pub fn format_table(lines: &[String]) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------
+// Public: compact (strip padding)
+// ---------------------------------------------------------------------------
+
+/// Rebuild each table row with no cross-row alignment: content cells keep only
+/// their own content (no trailing spaces), separator cells use the minimum
+/// width of 3 with alignment markers preserved.
+///
+/// The result is a valid GFM table where rows may have different total widths.
+/// This is the inverse of `format_table`.
+pub fn compact_table(lines: &[String]) -> Vec<String> {
+    let rows: Vec<Vec<String>> = lines.iter().map(|l| parse_row(l)).collect();
+    let ncols = rows.iter().map(|r| r.len()).max().unwrap_or(0);
+    if ncols == 0 {
+        return lines.to_vec();
+    }
+
+    let sep_row_idx = 1;
+    let has_sep = rows.len() > sep_row_idx && is_separator_row(&rows[sep_row_idx]);
+    let alignments: Vec<ColAlign> = if has_sep {
+        let mut a: Vec<ColAlign> = rows[sep_row_idx]
+            .iter()
+            .map(|c| parse_alignment(c))
+            .collect();
+        a.resize(ncols, ColAlign::None);
+        a
+    } else {
+        vec![ColAlign::None; ncols]
+    };
+
+    rows.iter()
+        .enumerate()
+        .map(|(ri, row)| {
+            let is_sep = ri == sep_row_idx && has_sep;
+            // Per-cell widths: separator gets minimum 3; content gets own length.
+            let widths: Vec<usize> = (0..ncols)
+                .map(|ci| {
+                    if is_sep {
+                        3
+                    } else {
+                        row.get(ci).map(|c| c.chars().count()).unwrap_or(0).max(1)
+                    }
+                })
+                .collect();
+            format_row(row, &widths, &alignments, is_sep)
+        })
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
 // Public: editor command
 // ---------------------------------------------------------------------------
 
-/// Replace the table under the cursor with a uniformly-padded version.
+/// Replace the table under the cursor with a uniformly-padded version, or
+/// strip it back to compact form if it is already uniform.
+///
+/// - First press (non-uniform table): pad every column to its maximum width.
+/// - Second press (already-uniform table): strip padding back to compact form.
 ///
 /// Bound to `Alt+T` in normal editing mode.  Does nothing (shows a status
 /// hint) if the cursor is not inside a GFM pipe table.
@@ -252,10 +305,17 @@ pub fn handle_format_table(app: &mut App) {
 
     let table_lines = lines[start..=end].to_vec();
     let formatted = format_table(&table_lines);
+    let already_uniform = formatted == table_lines;
+
+    let result = if already_uniform {
+        compact_table(&table_lines)
+    } else {
+        formatted
+    };
 
     // Replace each line in place (top-to-bottom; line indices stay stable
     // because we never add or remove rows, only rewrite their content).
-    for (i, new_line) in formatted.iter().enumerate() {
+    for (i, new_line) in result.iter().enumerate() {
         let row = start + i;
         app.textarea.move_cursor(CursorMove::Jump(row as u16, 0));
         app.textarea.delete_line_by_end();
@@ -270,8 +330,13 @@ pub fn handle_format_table(app: &mut App) {
     app.mark_keystroke();
     app.recompute_dirty();
 
+    let msg = if already_uniform {
+        "Table compacted."
+    } else {
+        "Table formatted."
+    };
     app.status
-        .set_timed("Table formatted.".to_string(), Duration::from_millis(1500));
+        .set_timed(msg.to_string(), Duration::from_millis(1500));
 }
 
 // ---------------------------------------------------------------------------
@@ -566,6 +631,74 @@ mod tests {
         );
     }
 
+    // ── compact_table ────────────────────────────────────────────────────────
+
+    #[test]
+    fn compact_table_removes_trailing_padding() {
+        // A uniformly-padded table should become compact (no trailing spaces in cells).
+        let lines = s(&["| Name   | Age |", "| ------ | --- |", "| Alice  | 30  |"]);
+        let result = compact_table(&lines);
+        assert_eq!(result[0], "| Name | Age |");
+        assert_eq!(result[2], "| Alice | 30 |");
+    }
+
+    #[test]
+    fn compact_table_separator_uses_minimum_width() {
+        let lines = s(&[
+            "| Long header column |",
+            "| ------------------ |",
+            "| x                  |",
+        ]);
+        let result = compact_table(&lines);
+        let sep_cell = parse_row(&result[1]).into_iter().next().unwrap_or_default();
+        assert_eq!(sep_cell, "---", "compact sep cell must be minimum '---'");
+    }
+
+    #[test]
+    fn compact_table_preserves_alignment_markers() {
+        let lines = s(&[
+            "| Left   | Center  | Right  |",
+            "| :----- | :-----: | -----: |",
+            "| a      | b       | c      |",
+        ]);
+        let result = compact_table(&lines);
+        let sep_cells = parse_row(&result[1]);
+        assert_eq!(parse_alignment(&sep_cells[0]), ColAlign::Left);
+        assert_eq!(parse_alignment(&sep_cells[1]), ColAlign::Center);
+        assert_eq!(parse_alignment(&sep_cells[2]), ColAlign::Right);
+    }
+
+    #[test]
+    fn compact_table_is_idempotent() {
+        let lines = s(&["| A | B |", "| - | - |", "| x | y |"]);
+        let once = compact_table(&lines);
+        let twice = compact_table(&once);
+        assert_eq!(once, twice, "compact_table must be idempotent");
+    }
+
+    #[test]
+    fn format_then_compact_returns_to_compact_form() {
+        // Round-trip: compact → format → compact must restore the compact form.
+        // Use sep cells that are already at min width (3) so the separator is
+        // unchanged by the round-trip; only content padding is stripped.
+        let compact = s(&["| Name | Age |", "| --- | --- |", "| Alice | 30 |"]);
+        let formatted = format_table(&compact);
+        assert_ne!(formatted, compact, "format must change a compact table");
+        let back = compact_table(&formatted);
+        assert_eq!(back, compact, "compact after format must restore original");
+    }
+
+    #[test]
+    fn already_uniform_table_detected_correctly() {
+        // format_table on a uniformly-padded table must be identity.
+        let uniform = s(&["| Name  | Age |", "| ----- | --- |", "| Alice | 30  |"]);
+        let again = format_table(&uniform);
+        assert_eq!(
+            again, uniform,
+            "uniform table must be fixed point of format_table"
+        );
+    }
+
     // ---- T-22: format_table with single-row input (no separator row) ----
 
     #[test]
@@ -584,6 +717,37 @@ mod tests {
             result[0].contains('|'),
             "output must still be a pipe-table row: {:?}",
             result
+        );
+    }
+
+    #[test]
+    fn compact_table_single_row_does_not_panic() {
+        // Kills compact_table 252:30 (`>→>=`) and 252:44 (`&&→||`).
+        // With `>→>=`: `1 >= 1` is true → rows[1] OOB panic.
+        // With `&&→||`: `false || rows[1]` → same OOB panic.
+        let lines = s(&["| A | B |"]);
+        let result = compact_table(&lines);
+        assert_eq!(result.len(), 1, "single-row compact must produce one row");
+        assert!(result[0].contains('|'));
+    }
+
+    #[test]
+    fn compact_table_two_rows_no_separator_preserved_as_content() {
+        // Kills compact_table 252:44 (`&&→||`) without relying on OOB.
+        // With `&&→||`: `rows.len() > 1 || ...` short-circuits to true, so row 1 is
+        // treated as a separator → formatted as `| --- | --- |` instead of content.
+        let lines = s(&["| A | B |", "| C | D |"]);
+        let result = compact_table(&lines);
+        assert_eq!(result.len(), 2);
+        assert!(
+            !result[1].contains("---"),
+            "row 1 must not be separator-formatted: {:?}",
+            result[1]
+        );
+        assert!(
+            result[1].contains('C'),
+            "row 1 content must survive: {:?}",
+            result[1]
         );
     }
 }

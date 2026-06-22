@@ -205,6 +205,15 @@ const HELP: &[(&str, &str, &str, &str)] = &[
 /// Height: top border + one row per entry + bottom border.
 const BOX_H: u16 = HELP.len() as u16 + 2;
 
+// Compile-time sanity checks.  Arithmetic mutations to the constants above
+// become UNVIABLE (compile error) rather than TIMEOUT.
+//   INNER_W = 2 + 13 + 1 + 11 + 1 + 12 + 1 + 11 + 1 = 53
+//   BOX_W   = 53 + 2 = 55
+//   BOX_H   = 4 + 2  = 6
+const _: () = assert!(INNER_W == 53, "INNER_W arithmetic is wrong");
+const _: () = assert!(BOX_W == 55, "BOX_W arithmetic is wrong");
+const _: () = assert!(BOX_H == 6, "BOX_H arithmetic is wrong");
+
 /// Render a floating keyboard-shortcut cheatsheet over `editor_area`.
 ///
 /// The box is centered horizontally and anchored at the top of the editor
@@ -328,7 +337,7 @@ pub fn render_search_help_modal(f: &mut Frame, editor_area: Rect, app: &App) {
 ///
 /// This must be called before drawing any border or content in a modal overlay.
 #[mutants::skip] // Writes into ratatui Buffer — void, not testable via return value.
-fn flood_reset(buf: &mut Buffer, area: Rect, fg: Color, bg: Color) {
+pub(crate) fn flood_reset(buf: &mut Buffer, area: Rect, fg: Color, bg: Color) {
     // Style::new() has empty add_modifier; remove_modifier(all) sets sub_modifier
     // to Modifier::all(), which clears every modifier bit when patched onto the
     // existing cell style via Cell::set_style → Style::patch.
@@ -356,12 +365,12 @@ enum HelpRow {
 /// All shortcuts shown in the modal, in display order.
 static SHORTCUTS: &[HelpRow] = &[
     HelpRow::Section("File"),
-    HelpRow::Entry("Ctrl+S / ⌘S", "Save", "Ctrl+X / Esc", "Exit"),
-    HelpRow::Entry("Ctrl+R", "Reload config", "", ""),
+    HelpRow::Entry("Ctrl+S / ⌘S", "Save", "Ctrl+Q / Esc", "Quit"),
+    HelpRow::Entry("Ctrl+O", "Open file", "Ctrl+R", "Reload config"),
     HelpRow::Section("Edit"),
     HelpRow::Entry("Ctrl+Z / ⌘Z", "Undo", "Ctrl+Y / ⌘Y / ⌘⇧Z", "Redo"),
     HelpRow::Entry("Ctrl+C / ⌘C", "Copy", "Ctrl+V / ⌘V", "Paste"),
-    HelpRow::Entry("Tab", "Indent", "", ""),
+    HelpRow::Entry("Ctrl+X / ⌘X", "Cut", "Tab", "Indent"),
     HelpRow::Section("Navigate"),
     HelpRow::Entry("↑ / ↓", "Move", "Shift+↑/↓", "Select"),
     HelpRow::Entry("Ctrl+↑/↓", "Scroll", "Ctrl+G", "Go to line"),
@@ -369,8 +378,9 @@ static SHORTCUTS: &[HelpRow] = &[
     HelpRow::Entry("Ctrl+F", "Search", "Ctrl+H", "Find & replace"),
     HelpRow::Section("View"),
     HelpRow::Entry("Ctrl+T", "Typewriter", "Ctrl+D", "Focus mode"),
+    HelpRow::Entry("F2", "Settings", "", ""),
     HelpRow::Section("Markdown"),
-    HelpRow::Entry("Ctrl+K", "Code block", "Alt+T", "Format table"),
+    HelpRow::Entry("Ctrl+K", "Code block", "Alt/Opt+T", "Format table"),
     HelpRow::Entry("()[]{}'\"*_``", "Auto-pair", "F1 / Esc", "Close help"),
 ];
 
@@ -394,6 +404,7 @@ const _: () = assert!(SC_INNER_W == 60, "SC_INNER_W arithmetic is wrong");
 const _: () = assert!(SC_BOX_W == 62, "SC_BOX_W arithmetic is wrong");
 /// Total box height: top border + one row per SHORTCUTS entry + bottom border.
 const SC_BOX_H: u16 = SHORTCUTS.len() as u16 + 2;
+const _: () = assert!(SC_BOX_H == 20, "SC_BOX_H arithmetic is wrong");
 
 /// Render the full keybindings reference modal, centred over `editor_area`.
 ///

@@ -1,0 +1,33 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "schedule": ["before 6am on monday"],
+  "packageRules": [
+    {
+      "matchManagers": ["cargo"],
+      "matchUpdateTypes": ["patch"],
+      "automerge": true,
+      "automergeType": "pr",
+      "automergeStrategy": "squash"
+    },
+    {
+      "matchManagers": ["cargo"],
+      "matchUpdateTypes": ["minor", "major"],
+      "automerge": false
+    },
+    {
+      "matchDepNames": ["syntect", "two-face", "fancy-regex"],
+      "groupName": "syntect family",
+      "automerge": false
+    },
+    {
+      "matchDepNames": ["ratatui", "tui-textarea-2", "crossterm"],
+      "groupName": "TUI stack",
+      "automerge": false
+    }
+  ],
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 6am on monday"]
+  }
+}

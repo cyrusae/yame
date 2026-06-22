@@ -1,5 +1,10 @@
 use pulldown_cmark::{Event, Parser};
 
+/// Count words in plain text (no Markdown parsing).
+pub fn count_words_plain(text: &str) -> usize {
+    text.split_whitespace().count()
+}
+
 /// Count words in Markdown text, excluding syntax characters.
 pub fn count_words(text: &str) -> usize {
     Parser::new(text)
@@ -104,5 +109,30 @@ mod tests {
     #[test]
     fn split_empty() {
         assert_eq!(link_split_char_idx(&[]), None);
+    }
+
+    // ---- count_words_plain ----
+
+    #[test]
+    fn plain_empty_is_zero() {
+        assert_eq!(count_words_plain(""), 0);
+    }
+
+    #[test]
+    fn plain_counts_words() {
+        assert_eq!(count_words_plain("one two three"), 3);
+    }
+
+    // Markdown syntax is not stripped — asterisks count as part of a word.
+    #[test]
+    fn plain_does_not_strip_markdown() {
+        assert_eq!(count_words_plain("**hello**"), 1);
+        assert_eq!(count_words_plain("# Title"), 2);
+    }
+
+    // Kills: `count` → `0` (always returns 0).
+    #[test]
+    fn plain_multiline() {
+        assert_eq!(count_words_plain("foo\nbar\nbaz"), 3);
     }
 }

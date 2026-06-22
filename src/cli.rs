@@ -10,9 +10,19 @@ use std::path::PathBuf;
 // ---------------------------------------------------------------------------
 
 pub(super) enum Command {
-    Edit { path: PathBuf, read_only: bool },
-    Init { shell: Option<String> },
+    /// Open a file for editing, or start with an untitled buffer (`path = None`).
+    Edit {
+        path: Option<PathBuf>,
+        read_only: bool,
+    },
+    Init {
+        shell: Option<String>,
+    },
     WriteConfig,
+    /// Render a file to stdout with ANSI colour codes (for file-manager previewers).
+    Preview {
+        path: PathBuf,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -103,7 +113,9 @@ pub(super) fn print_help() {
     println!();
     println!("USAGE");
     println!("  yame <file>           Open <file> for editing (created if it doesn't exist)");
+    println!("  yame                  Open an untitled buffer (save-as on first Ctrl+S)");
     println!("  yame -r <file>        Open <file> in read-only mode (no edits, no save)");
+    println!("  yame --preview <file> Render <file> to stdout with ANSI colours (for lf/etc)");
     println!("  yame init             Print shell integration function (eval in .bashrc/.zshrc)");
     println!("  yame write-config     Write default config to ~/.config/yame/config.toml");
     println!(
@@ -113,8 +125,8 @@ pub(super) fn print_help() {
     println!();
     println!("KEYBINDINGS");
     println!("  Ctrl+S  Save          Ctrl+Z  Undo        Ctrl+C  Copy selection");
-    println!("  Ctrl+X  Exit          Ctrl+Y  Redo        Ctrl+V  Paste");
-    println!("  Ctrl+R  Reload config");
+    println!("  Ctrl+Q  Quit          Ctrl+Y  Redo        Ctrl+V  Paste");
+    println!("  Ctrl+X  Cut           Ctrl+R  Reload config");
     println!("  Arrow keys · Home/End · PgUp/PgDn · mouse click / drag / scroll");
     println!();
     #[cfg(not(windows))]
@@ -151,28 +163,32 @@ pub(super) fn parse_args() -> Result<Command, ()> {
     }
 
     match args.as_slice() {
-        [] => {
-            print_help();
-            std::process::exit(0);
-        }
+        // No arguments → open an untitled buffer.
+        [] => Ok(Command::Edit {
+            path: None,
+            read_only: false,
+        }),
         [a] if a == "init" => Ok(Command::Init { shell: None }),
         [a, s] if a == "init" => Ok(Command::Init {
             shell: Some(s.clone()),
         }),
         [a] if a == "write-config" => Ok(Command::WriteConfig),
-        [path] if !path.starts_with('-') => Ok(Command::Edit {
+        [flag, path] if flag == "--preview" && !path.starts_with('-') => Ok(Command::Preview {
             path: PathBuf::from(path),
+        }),
+        [path] if !path.starts_with('-') => Ok(Command::Edit {
+            path: Some(PathBuf::from(path)),
             read_only: false,
         }),
         [flag, path] if (flag == "-r" || flag == "--read-only") && !path.starts_with('-') => {
             Ok(Command::Edit {
-                path: PathBuf::from(path),
+                path: Some(PathBuf::from(path)),
                 read_only: true,
             })
         }
         [path, flag] if (flag == "-r" || flag == "--read-only") && !path.starts_with('-') => {
             Ok(Command::Edit {
-                path: PathBuf::from(path),
+                path: Some(PathBuf::from(path)),
                 read_only: true,
             })
         }

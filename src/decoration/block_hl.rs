@@ -34,6 +34,7 @@ pub fn block_highlights_to_decoration_map(
                 full_line_bg: None,
                 border_bottom: None,
                 is_rule: false,
+                line_default_style: None,
             };
             map.entry(log_line).or_default().push(span);
         }

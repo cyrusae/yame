@@ -35,6 +35,11 @@ pub struct StyledSpan {
     pub border_bottom: Option<Color>,
     /// When true, renderer replaces line content with a `─` rule pattern.
     pub is_rule: bool,
+    /// When set, renderer uses this as the default `Style` for unstyled text on
+    /// the line instead of the global editor default.  Used by headings so that
+    /// inline decorations (code, bold, italic, links) can emit their own spans
+    /// without the wide content span blocking them.
+    pub line_default_style: Option<Style>,
 }
 
 /// Maps logical line index → list of styled spans on that line.

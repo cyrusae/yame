@@ -20,7 +20,7 @@ use yame::app::get_selection_text;
 fn make_app() -> App {
     App {
         textarea: TextArea::default(),
-        file_path: PathBuf::from("test.md"),
+        file_path: Some(PathBuf::from("test.md")),
         is_dirty: false,
         saved_content: None,
         theme: Theme::default_theme(),
@@ -43,10 +43,13 @@ fn make_app() -> App {
         file_mode: yame::app::FileMode::Markdown,
         show_line_numbers: false,
         search: None,
+        search_last_typed: None,
         typewriter_mode: false,
         focus_mode: false,
         show_shortcuts: false,
         read_only: false,
+        auto_close_pairs: false,
+        settings: None,
     }
 }
 
@@ -929,22 +932,22 @@ fn handle_key_event_ctrl_s_returns_save() {
 }
 
 #[test]
-fn handle_key_event_ctrl_x_clean_returns_exit() {
+fn handle_key_event_ctrl_q_clean_returns_exit() {
     let mut app = make_app();
     app.is_dirty = false;
-    let k = ctrl_key(KeyCode::Char('x'));
+    let k = ctrl_key(KeyCode::Char('q'));
     assert_eq!(handle_key_event(&mut app, k), KeyOutcome::Exit);
 }
 
 #[test]
-fn handle_key_event_ctrl_x_dirty_shows_prompt() {
+fn handle_key_event_ctrl_q_dirty_shows_prompt() {
     let mut app = make_app();
     app.is_dirty = true;
-    let k = ctrl_key(KeyCode::Char('x'));
+    let k = ctrl_key(KeyCode::Char('q'));
     assert_eq!(handle_key_event(&mut app, k), KeyOutcome::Continue);
     assert!(
         matches!(app.status.mode, StatusMode::ExitPrompt),
-        "dirty Ctrl+X must raise ExitPrompt"
+        "dirty Ctrl+Q must raise ExitPrompt"
     );
 }
 

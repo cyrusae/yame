@@ -6,12 +6,11 @@ use std::time::Instant;
 use tui_textarea::TextArea;
 
 use crate::config::{FiletypeConfig, Theme};
-use crate::decoration::{
-    DecorationMap, block_highlights_to_decoration_map, build_decoration_map, count_words,
-};
+use crate::decoration::DecorationMap;
 use crate::highlighting::HighlightCache;
 use crate::renderer::shorten_path;
 use crate::search::SearchState;
+use crate::settings::SettingsModal;
 use crate::status::StatusLine;
 
 // ---------------------------------------------------------------------------
@@ -121,10 +120,14 @@ pub enum ClipboardState {
 /// All mutable application state.
 pub struct App {
     pub textarea: TextArea<'static>,
-    pub file_path: PathBuf,
+    /// The path of the file being edited, or `None` for an untitled buffer
+    /// (launched with no arguments).  Set to `Some` on the first successful
+    /// save-as from an untitled buffer.
+    pub file_path: Option<PathBuf>,
     /// Pre-computed display string for the file path (shortened to 3 trailing
-    /// components).  Cached here so the render hot-path does not re-allocate on
-    /// every frame.  Updated whenever `file_path` changes.
+    /// components), or `"(untitled)"` when `file_path` is `None`.  Cached here
+    /// so the render hot-path does not re-allocate on every frame.  Updated
+    /// whenever `file_path` changes.
     pub shortened_path: String,
     pub is_dirty: bool,
     /// Snapshot of lines at last save, for dirty-flag recomputation after undo/redo.
@@ -181,6 +184,10 @@ pub struct App {
     pub file_mode: FileMode,
     /// Active search/replace session, or `None` when the search bar is closed.
     pub search: Option<SearchState>,
+    /// Set when the search query is modified; cleared after `update_matches` fires.
+    /// The event loop waits for this to elapse before running the expensive full-document
+    /// match scan, so rapid typing does not block the UI on every character.
+    pub search_last_typed: Option<Instant>,
     /// When true, the viewport is kept centred on the cursor line after every
     /// non-free-scroll keypress (typewriter mode).  Toggled by Ctrl+T.
     /// Free-scrolling (mouse wheel, Ctrl+Up/Down) still works; the view
@@ -197,6 +204,13 @@ pub struct App {
     /// Set at startup via the `-r` / `--read-only` CLI flag; never toggled at
     /// runtime.
     pub read_only: bool,
+    /// When true, typing an opener like `(` inserts `(|)` with the cursor placed
+    /// between the pair; typing the matching closer when already before it skips
+    /// over instead of inserting a duplicate.  Mirrors `[layout] auto_close_pairs`
+    /// from config.  Default false.
+    pub auto_close_pairs: bool,
+    /// Open settings modal (F2).  `None` when the modal is closed.
+    pub settings: Option<SettingsModal>,
 }
 
 impl App {
@@ -204,7 +218,7 @@ impl App {
     #[mutants::skip] // Calls load_file (fs I/O) and returns a struct — mutations masked by I/O.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        file_path: PathBuf,
+        file_path: Option<PathBuf>,
         theme: Theme,
         italic_support: bool,
         powerline_glyphs: bool,
@@ -214,49 +228,35 @@ impl App {
         file_mode: FileMode,
         show_line_numbers: bool,
     ) -> io::Result<Self> {
-        let textarea = load_file(&file_path, tab_width)?;
+        let textarea = match &file_path {
+            Some(p) => load_file(p, tab_width)?,
+            None => TextArea::default(),
+        };
         // Snapshot the initial content so recompute_dirty() has a baseline for both
         // existing files (undo back to load state → clean) and new files (empty baseline).
         let saved_content = Some(textarea.lines().to_vec());
-        let shortened_path = shorten_path(&file_path, 3);
+        let shortened_path = match &file_path {
+            Some(p) => shorten_path(p, 3),
+            None => "(untitled)".to_string(),
+        };
 
         // Wrap the cache in Arc now so the background decoration worker can hold
         // a reference without cloning the expensive SyntaxSet/ThemeSet payloads.
         let highlight_cache: Option<Arc<HighlightCache>> = highlight_cache.map(Arc::new);
 
-        // Pre-compute the initial decoration map before entering the alternate screen
-        // so the event loop's first draw is immediate with fully-styled content,
-        // eliminating the blank-frame flash on startup.
-        let text = textarea.lines().join("\n");
-        let (decoration_map, word_count) = match &file_mode {
-            FileMode::Markdown => {
-                build_decoration_map(&text, &theme, italic_support, highlight_cache.as_deref())
-            }
-            FileMode::PlainHighlight(lang) => {
-                let map = highlight_cache
-                    .as_deref()
-                    .and_then(|cache| cache.highlight_block(lang, &text))
-                    .map(|hl| block_highlights_to_decoration_map(&hl, 0))
-                    .unwrap_or_default();
-                let wc = count_words(&text);
-                (map, wc)
-            }
-            FileMode::PlainText => (DecorationMap::default(), count_words(&text)),
-        };
-
         Ok(Self {
             textarea,
             shortened_path,
-            file_path,
+            file_path, // already Option<PathBuf>
             is_dirty: false,
             saved_content,
             theme,
             italic_support,
             powerline_glyphs,
             last_keystroke: None,
-            force_redecorate: false,
-            decoration_map,
-            word_count,
+            force_redecorate: true,
+            decoration_map: DecorationMap::default(),
+            word_count: 0,
             status: StatusLine::default(),
             config_warnings,
             scroll_top: 0,
@@ -269,11 +269,42 @@ impl App {
             file_mode,
             show_line_numbers,
             search: None,
+            search_last_typed: None,
             typewriter_mode: false,
             focus_mode: false,
             show_shortcuts: false,
             read_only: false, // set by caller via app.read_only = read_only after new()
+            auto_close_pairs: false, // set by caller via app.auto_close_pairs after new()
+            settings: None,
         })
+    }
+
+    /// Replace the current buffer with the contents of `path`.
+    ///
+    /// Resets all per-file state (scroll, search, sticky column, status) so the
+    /// editor feels like a fresh open.  `file_mode` is left unchanged — the
+    /// caller is responsible for re-resolving it after this returns.
+    #[mutants::skip] // Calls load_file (fs I/O) — mutations masked by OS state.
+    pub fn load_new_file(&mut self, path: PathBuf, tab_width: usize) -> io::Result<()> {
+        let textarea = load_file(&path, tab_width)?;
+        let saved_content = Some(textarea.lines().to_vec());
+        let shortened_path = shorten_path(&path, 3);
+
+        self.textarea = textarea;
+        self.file_path = Some(path);
+        self.shortened_path = shortened_path;
+        self.saved_content = saved_content;
+        self.is_dirty = false;
+        self.scroll_top = 0;
+        self.search = None;
+        self.decoration_map = DecorationMap::default();
+        self.last_keystroke = Some(std::time::Instant::now());
+        self.force_redecorate = true;
+        self.sticky_col = None;
+        self.free_scroll = false;
+        self.status = crate::status::StatusLine::default();
+        self.word_count = 0;
+        Ok(())
     }
 
     /// Record that a keystroke occurred: start the debounce timer and recompute
@@ -435,7 +466,7 @@ mod tests {
     fn make_app() -> App {
         App {
             textarea: TextArea::default(),
-            file_path: PathBuf::from("test.md"),
+            file_path: Some(PathBuf::from("test.md")),
             shortened_path: "test.md".to_string(),
             is_dirty: false,
             saved_content: None,
@@ -458,10 +489,13 @@ mod tests {
             file_mode: FileMode::Markdown,
             show_line_numbers: false,
             search: None,
+            search_last_typed: None,
             typewriter_mode: false,
             focus_mode: false,
             show_shortcuts: false,
             read_only: false,
+            auto_close_pairs: false,
+            settings: None,
         }
     }
 

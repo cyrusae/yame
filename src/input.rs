@@ -11,17 +11,19 @@ use ratatui::{Terminal, layout::Rect, style::Style, widgets::Paragraph};
 use tui_textarea::CursorMove;
 
 use yame::app::{App, FileMode, get_selection_text, resolve_file_mode};
-use yame::config::{LayoutConfig, Theme, load_config};
+use yame::config::{LayoutConfig, Theme, load_config, write_config};
 use yame::decoration::{
-    DecorationMap, block_highlights_to_decoration_map, build_decoration_map, count_words,
+    DecorationMap, block_highlights_to_decoration_map, build_decoration_map, count_words_plain,
 };
 use yame::highlighting::HighlightCache;
 use yame::layout::{DEFAULT_MIN_COLS, compute_layout};
 use yame::renderer;
 use yame::search::SearchState;
+use yame::settings::{SettingsModal, SettingsOutcome, handle_settings_key};
 use yame::status::StatusMode;
 
-use super::commands::{center_scroll, clamp_scroll, handle_exit, handle_save};
+use super::commands::{center_scroll, clamp_scroll, handle_exit, handle_save, handle_save_to_path};
+use super::picker;
 
 // ---------------------------------------------------------------------------
 // Key-event outcome
@@ -39,10 +41,19 @@ pub(super) enum KeyOutcome {
     Save,
     /// ExitPrompt Y: persist buffer to disk, then exit the loop.
     SaveAndExit,
-    /// ExitPrompt N / Ctrl+X on a clean buffer: exit without saving.
+    /// ExitPrompt N / Ctrl+Q on a clean buffer: exit without saving.
     Exit,
     /// Ctrl+R: reload config from disk and redisplay a confirmation banner.
     ReloadConfig,
+    /// User confirmed a filename in the save-as prompt.  Carries the typed path
+    /// and whether to exit after saving (triggered by the exit-prompt Y path).
+    SaveAs { filename: String, then_exit: bool },
+    /// Ctrl+O: suspend TUI, run the file picker, load the selected file.
+    OpenPicker,
+    /// F2: open the settings modal, loading current config from disk.
+    OpenSettings,
+    /// Settings field committed — write config to disk and apply it.
+    CommitSettings,
 }
 
 // ---------------------------------------------------------------------------
@@ -77,10 +88,10 @@ fn run_decorate(req: &DecorateRequest) -> (DecorationMap, usize) {
                 .and_then(|cache| cache.highlight_block(lang, &req.text))
                 .map(|hl| block_highlights_to_decoration_map(&hl, 0))
                 .unwrap_or_default();
-            let wc = count_words(&req.text);
+            let wc = count_words_plain(&req.text);
             (map, wc)
         }
-        FileMode::PlainText => (DecorationMap::default(), count_words(&req.text)),
+        FileMode::PlainText => (DecorationMap::default(), count_words_plain(&req.text)),
     }
 }
 
@@ -213,7 +224,7 @@ pub(super) fn is_ro_allowed(mods: KeyModifiers, code: KeyCode) -> bool {
         )
         // ── Exit ─────────────────────────────────────────────────────────────
         | (KeyModifiers::NONE, KeyCode::Esc)
-        | (KeyModifiers::CONTROL, KeyCode::Char('x'))
+        | (KeyModifiers::CONTROL, KeyCode::Char('q'))
         // ── Copy (not paste) ─────────────────────────────────────────────────
         | (KeyModifiers::CONTROL, KeyCode::Char('c'))
         | (KeyModifiers::SUPER, KeyCode::Char('c'))
@@ -227,8 +238,12 @@ pub(super) fn is_ro_allowed(mods: KeyModifiers, code: KeyCode) -> bool {
         | (KeyModifiers::CONTROL, KeyCode::Char('t'))
         | (KeyModifiers::CONTROL, KeyCode::Char('d'))
         | (KeyModifiers::CONTROL, KeyCode::Char('e'))
-        // ── Shortcuts modal ───────────────────────────────────────────────────
+        // ── Select all (non-destructive selection) ───────────────────────────
+        | (KeyModifiers::CONTROL, KeyCode::Char('a'))
+        | (KeyModifiers::SUPER, KeyCode::Char('a'))
+        // ── Shortcuts / settings modals ────────────────────────────────────────
         | (KeyModifiers::NONE, KeyCode::F(1))
+        | (KeyModifiers::NONE, KeyCode::F(2))
     )
 }
 
@@ -238,24 +253,117 @@ pub(super) fn handle_pair_wrap(app: &mut App, k: crossterm::event::KeyEvent) -> 
     {
         return false;
     }
-    let close = match k.code {
-        KeyCode::Char('(') => ')',
-        KeyCode::Char('[') => ']',
-        KeyCode::Char('{') => '}',
-        KeyCode::Char('"') => '"',
-        KeyCode::Char('\'') => '\'',
-        KeyCode::Char('`') => '`',
-        KeyCode::Char('*') => '*',
-        KeyCode::Char('_') => '_',
+    let (open, close) = match k.code {
+        KeyCode::Char('(') => ('(', ')'),
+        KeyCode::Char('[') => ('[', ']'),
+        KeyCode::Char('{') => ('{', '}'),
+        KeyCode::Char('"') => ('"', '"'),
+        KeyCode::Char('\'') => ('\'', '\''),
+        KeyCode::Char('`') => ('`', '`'),
+        KeyCode::Char('*') => ('*', '*'),
+        KeyCode::Char('_') => ('_', '_'),
         _ => return false,
     };
     let selected = match get_selection_text(app) {
         Some(s) => s,
         None => return false,
     };
-    app.textarea.input(k);
-    app.textarea.insert_str(format!("{selected}{close}"));
+    // Single insert_str while selection is active: delete selection (1 undo entry) +
+    // insert wrapped text (1 undo entry) = 2 steps, down from 3 with input() + insert_str().
+    app.textarea.insert_str(format!("{open}{selected}{close}"));
     true
+}
+
+/// When `app.auto_close_pairs` is enabled and there is no active selection,
+/// handle a key event as an auto-close pair action:
+///
+/// - Asymmetric openers `( [ {` always insert the open+close pair and place
+///   the cursor between them (one `Back` step).
+/// - Asymmetric closers `) ] }` skip over the next char if it matches; otherwise
+///   return `false` so the caller falls through to normal `textarea.input`.
+/// - Symmetric chars `" ' \` * _` skip over if the next char matches; otherwise
+///   insert the pair and place the cursor between them.
+///
+/// Returns `true` when the event was fully handled, `false` when the caller
+/// should fall through to the normal `textarea.input` path.
+pub(super) fn handle_auto_close(app: &mut App, k: crossterm::event::KeyEvent) -> bool {
+    if !app.auto_close_pairs {
+        return false;
+    }
+    if k.modifiers
+        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+    {
+        return false;
+    }
+    if app.textarea.selection_range().is_some() {
+        return false;
+    }
+    let KeyCode::Char(c) = k.code else {
+        return false;
+    };
+
+    let (row, col) = app.textarea.cursor();
+    let next_char = app
+        .textarea
+        .lines()
+        .get(row)
+        .and_then(|line| line.chars().nth(col));
+
+    match c {
+        // Asymmetric openers: always insert pair.
+        '(' => {
+            app.textarea.insert_str("()");
+            app.textarea.move_cursor(CursorMove::Back);
+            true
+        }
+        '[' => {
+            app.textarea.insert_str("[]");
+            app.textarea.move_cursor(CursorMove::Back);
+            true
+        }
+        '{' => {
+            app.textarea.insert_str("{}");
+            app.textarea.move_cursor(CursorMove::Back);
+            true
+        }
+        // Asymmetric closers: skip-over only.
+        ')' => {
+            if next_char == Some(')') {
+                app.textarea.move_cursor(CursorMove::Forward);
+                true
+            } else {
+                false
+            }
+        }
+        ']' => {
+            if next_char == Some(']') {
+                app.textarea.move_cursor(CursorMove::Forward);
+                true
+            } else {
+                false
+            }
+        }
+        '}' => {
+            if next_char == Some('}') {
+                app.textarea.move_cursor(CursorMove::Forward);
+                true
+            } else {
+                false
+            }
+        }
+        // Symmetric chars: skip-over if next matches, else insert pair.
+        '"' | '\'' | '`' | '*' | '_' => {
+            if next_char == Some(c) {
+                app.textarea.move_cursor(CursorMove::Forward);
+                true
+            } else {
+                app.textarea.insert_str(format!("{c}{c}"));
+                app.textarea.move_cursor(CursorMove::Back);
+                true
+            }
+        }
+        _ => false,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -337,6 +445,7 @@ pub(super) fn handle_search_key(app: &mut App, k: crossterm::event::KeyEvent) ->
         // Close search.
         (KeyModifiers::NONE, KeyCode::Esc) => {
             app.search = None;
+            app.search_last_typed = None;
         }
 
         // Save still works inside search mode.
@@ -380,18 +489,22 @@ pub(super) fn handle_search_key(app: &mut App, k: crossterm::event::KeyEvent) ->
 
         // Delete last char of the active field.
         (KeyModifiers::NONE, KeyCode::Backspace) => {
-            let lines: Vec<String> = app.textarea.lines().iter().map(|s| s.to_string()).collect();
             if let Some(s) = &mut app.search {
-                s.pop_char(&lines);
+                let was_search = s.focus_search;
+                s.pop_char();
+                if was_search {
+                    app.search_last_typed = Some(std::time::Instant::now());
+                }
             }
         }
 
-        // Toggle regex mode.
+        // Toggle regex mode — takes effect immediately (not debounced).
         (KeyModifiers::ALT, KeyCode::Char('r')) => {
             let lines: Vec<String> = app.textarea.lines().iter().map(|s| s.to_string()).collect();
             if let Some(s) = &mut app.search {
                 s.regex_mode = !s.regex_mode;
                 s.update_matches(&lines);
+                app.search_last_typed = None;
             }
         }
 
@@ -421,11 +534,13 @@ pub(super) fn handle_search_key(app: &mut App, k: crossterm::event::KeyEvent) ->
 
         // Printable character with no control modifier → feed active field.
         _ if !has_ctrl_alt_super(k.modifiers) && matches!(k.code, KeyCode::Char(_)) => {
-            if let KeyCode::Char(c) = k.code {
-                let lines: Vec<String> =
-                    app.textarea.lines().iter().map(|s| s.to_string()).collect();
-                if let Some(s) = &mut app.search {
-                    s.push_char(c, &lines);
+            if let KeyCode::Char(c) = k.code
+                && let Some(s) = &mut app.search
+            {
+                let was_search = s.focus_search;
+                s.push_char(c);
+                if was_search {
+                    app.search_last_typed = Some(std::time::Instant::now());
                 }
             }
         }
@@ -481,6 +596,50 @@ pub(super) fn handle_goto_line_key(app: &mut App, k: crossterm::event::KeyEvent)
 }
 
 // ---------------------------------------------------------------------------
+// Save-as key dispatcher
+// ---------------------------------------------------------------------------
+
+/// Handle a key event while the save-as prompt is active (untitled buffer).
+///
+/// Printable characters are appended to the filename buffer; Backspace edits
+/// it; Enter confirms (emitting `KeyOutcome::SaveAs`); Esc cancels and returns
+/// to `Normal` mode without saving.
+pub(super) fn handle_save_as_key(app: &mut App, k: crossterm::event::KeyEvent) -> KeyOutcome {
+    match (k.modifiers, k.code) {
+        (KeyModifiers::NONE, KeyCode::Esc) => {
+            app.status.mode = StatusMode::Normal;
+        }
+
+        (KeyModifiers::NONE, KeyCode::Enter) => {
+            if let Some((input, then_exit)) = app.status.save_as_state() {
+                let filename = input.trim().to_string();
+                if filename.is_empty() {
+                    // Nothing typed — stay in the prompt.
+                    return KeyOutcome::Continue;
+                }
+                app.status.mode = StatusMode::Normal;
+                return KeyOutcome::SaveAs {
+                    filename,
+                    then_exit,
+                };
+            }
+        }
+
+        (KeyModifiers::NONE, KeyCode::Backspace) => {
+            app.status.save_as_pop();
+        }
+
+        // Accept any printable character.
+        (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(c)) => {
+            app.status.save_as_push(c);
+        }
+
+        _ => {}
+    }
+    KeyOutcome::Continue
+}
+
+// ---------------------------------------------------------------------------
 // Key-event dispatcher (pure — no file I/O, no terminal I/O)
 // ---------------------------------------------------------------------------
 
@@ -496,6 +655,17 @@ fn has_ctrl_alt_super(mods: KeyModifiers) -> bool {
     mods.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
 }
 
+/// Select every character in the buffer and return the total line count.
+fn select_all(app: &mut App) -> usize {
+    let n = app.textarea.lines().len();
+    app.textarea.cancel_selection();
+    app.textarea.move_cursor(CursorMove::Top);
+    app.textarea.start_selection();
+    app.textarea.move_cursor(CursorMove::Bottom);
+    app.textarea.move_cursor(CursorMove::End);
+    n
+}
+
 /// Returns a [`KeyOutcome`] telling the caller what (if any) I/O action to
 /// perform next. File writes, config reloads, and loop termination are the
 /// responsibility of the caller (`event_loop`).  This separation makes the
@@ -509,20 +679,24 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
     if matches!(app.status.mode, StatusMode::ExitPrompt) {
         // Guard the destructive y/n responses: Ctrl+Y must not trigger SaveAndExit
         // and Ctrl+N must not trigger Exit.  Other modifier+char combos (Ctrl+C,
-        // Ctrl+X …) still pass through so they continue to act as cancel shortcuts.
+        // Ctrl+Q …) still pass through so they continue to act as cancel shortcuts.
         if has_ctrl_alt_super(k.modifiers)
             && matches!(k.code, KeyCode::Char('y') | KeyCode::Char('n'))
         {
             return KeyOutcome::Continue;
         }
         return match k.code {
-            KeyCode::Char('y') | KeyCode::Char('Y') => KeyOutcome::SaveAndExit,
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                if app.file_path.is_none() {
+                    // Untitled buffer — prompt for a filename; exit after save.
+                    app.status.start_save_as(true);
+                    KeyOutcome::Continue
+                } else {
+                    KeyOutcome::SaveAndExit
+                }
+            }
             KeyCode::Char('n') | KeyCode::Char('N') => KeyOutcome::Exit,
-            KeyCode::Esc
-            | KeyCode::Char('c')
-            | KeyCode::Char('C')
-            | KeyCode::Char('x')
-            | KeyCode::Char('X') => {
+            KeyCode::Esc | KeyCode::Char('c') | KeyCode::Char('C') => {
                 app.status.mode = StatusMode::Normal;
                 KeyOutcome::Continue
             }
@@ -541,6 +715,47 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
         return KeyOutcome::Continue;
     }
 
+    // ── Settings modal — delegate to settings key handler ────────────────────
+    if app.settings.is_some() {
+        use yame::settings::VISIBLE_FIELDS;
+        let outcome = {
+            let modal = app.settings.as_mut().unwrap();
+            handle_settings_key(modal, k, VISIBLE_FIELDS)
+        };
+        return match outcome {
+            SettingsOutcome::Continue => KeyOutcome::Continue,
+            SettingsOutcome::Close => {
+                app.settings = None;
+                KeyOutcome::Continue
+            }
+            SettingsOutcome::Committed => KeyOutcome::CommitSettings,
+        };
+    }
+
+    // ── Save-as mode — intercepts all keys while the prompt is open ─────
+    if matches!(app.status.mode, StatusMode::SaveAs { .. }) {
+        return handle_save_as_key(app, k);
+    }
+
+    // ── Switch-file prompt — dirty-buffer confirmation for Ctrl+O ────────
+    if matches!(app.status.mode, StatusMode::SwitchFilePrompt) {
+        return match k.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                app.status.mode = StatusMode::Normal;
+                KeyOutcome::OpenPicker
+            }
+            KeyCode::Char('n')
+            | KeyCode::Char('N')
+            | KeyCode::Esc
+            | KeyCode::Char('c')
+            | KeyCode::Char('C') => {
+                app.status.mode = StatusMode::Normal;
+                KeyOutcome::Continue
+            }
+            _ => KeyOutcome::Continue,
+        };
+    }
+
     // ── Go-to-line mode — intercepts all keys while the prompt is open ────
     if matches!(app.status.mode, StatusMode::GoToLine { .. }) {
         return handle_goto_line_key(app, k);
@@ -554,14 +769,31 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
     // ── Read-only guard ─────────────────────────────────────────────────────
     if app.read_only && !is_ro_allowed(k.modifiers, k.code) {
         app.status
-            .set_timed("Read-only — ^X to exit", Duration::from_secs(2));
+            .set_timed("Read-only — ^Q to quit", Duration::from_secs(2));
         return KeyOutcome::Continue;
     }
 
     // ── Normal editing mode ─────────────────────────────────────────────────
     match (k.modifiers, k.code) {
         (KeyModifiers::CONTROL, KeyCode::Char('s')) | (KeyModifiers::SUPER, KeyCode::Char('s')) => {
-            KeyOutcome::Save
+            if app.file_path.is_none() {
+                // Untitled buffer — open the save-as prompt instead.
+                app.status.start_save_as(false);
+                KeyOutcome::Continue
+            } else {
+                KeyOutcome::Save
+            }
+        }
+
+        // Ctrl+O / Cmd+O: open file picker.  If the current buffer is dirty,
+        // ask the user to confirm discarding changes before suspending the TUI.
+        (KeyModifiers::CONTROL, KeyCode::Char('o')) | (KeyModifiers::SUPER, KeyCode::Char('o')) => {
+            if app.is_dirty {
+                app.status.mode = StatusMode::SwitchFilePrompt;
+                KeyOutcome::Continue
+            } else {
+                KeyOutcome::OpenPicker
+            }
         }
 
         // Open search bar.
@@ -586,7 +818,7 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
             KeyOutcome::Continue
         }
 
-        (KeyModifiers::CONTROL, KeyCode::Char('x')) | (KeyModifiers::NONE, KeyCode::Esc) => {
+        (KeyModifiers::CONTROL, KeyCode::Char('q')) | (KeyModifiers::NONE, KeyCode::Esc) => {
             if handle_exit(app) {
                 KeyOutcome::Exit
             } else {
@@ -594,8 +826,24 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
             }
         }
 
+        (KeyModifiers::CONTROL, KeyCode::Char('a')) | (KeyModifiers::SUPER, KeyCode::Char('a')) => {
+            let n = select_all(app);
+            app.status.set_timed(
+                yame::clipboard::lines_msg("Selected", n),
+                Duration::from_secs(2),
+            );
+            KeyOutcome::Continue
+        }
+
         (KeyModifiers::CONTROL, KeyCode::Char('c')) | (KeyModifiers::SUPER, KeyCode::Char('c')) => {
             yame::clipboard::handle_copy(app);
+            KeyOutcome::Continue
+        }
+
+        (KeyModifiers::CONTROL, KeyCode::Char('x')) | (KeyModifiers::SUPER, KeyCode::Char('x')) => {
+            yame::clipboard::handle_cut(app);
+            app.force_redecorate = true;
+            app.recompute_dirty();
             KeyOutcome::Continue
         }
 
@@ -672,10 +920,16 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
             KeyOutcome::Continue
         }
 
+        // F2: open the settings modal.
+        (KeyModifiers::NONE, KeyCode::F(2)) => KeyOutcome::OpenSettings,
+
         (KeyModifiers::CONTROL, KeyCode::Char('r')) => KeyOutcome::ReloadConfig,
 
-        // Alt+T: reflow the GFM table under the cursor to uniform column widths.
-        (KeyModifiers::ALT, KeyCode::Char('t')) => {
+        // Alt+T / Option+T: reflow the GFM table under the cursor to uniform column widths.
+        // On macOS, most terminals (Ghostty, Terminal.app) send '†' (U+2020, DAGGER) when
+        // Option+T is pressed instead of a proper Alt sequence.  Both forms are caught here
+        // so the binding works regardless of whether the terminal is configured to send Meta.
+        (KeyModifiers::ALT, KeyCode::Char('t')) | (KeyModifiers::NONE, KeyCode::Char('†')) => {
             yame::table_format::handle_format_table(app);
             KeyOutcome::Continue
         }
@@ -734,6 +988,13 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
             KeyOutcome::Continue
         }
 
+        (KeyModifiers::NONE, KeyCode::Enter) => {
+            app.sticky_col = None;
+            app.status.dismiss();
+            app.config_warnings.clear();
+            handle_enter(app)
+        }
+
         _ => {
             // Any non-vertical-nav key ends the sticky-column gesture.
             app.sticky_col = None;
@@ -741,7 +1002,7 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
             app.config_warnings.clear();
             let is_nav = is_navigation_key(&k);
 
-            if !is_nav && handle_pair_wrap(app, k) {
+            if !is_nav && (handle_pair_wrap(app, k) || handle_auto_close(app, k)) {
                 app.force_redecorate = true;
                 app.mark_keystroke();
             } else {
@@ -760,6 +1021,115 @@ pub(super) fn handle_key_event(app: &mut App, k: crossterm::event::KeyEvent) -> 
             KeyOutcome::Continue
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// List continuation
+// ---------------------------------------------------------------------------
+
+/// Detect the list item prefix at the start of `line`.
+///
+/// Returns `(current_prefix, next_prefix)` where `current_prefix` is the
+/// exact prefix characters on this line (e.g., `"- "`, `"  1. "`, `"- [ ] "`)
+/// and `next_prefix` is the prefix to insert on the continuation line (same
+/// for unordered; incremented number for ordered; always unchecked for tasks).
+///
+/// Returns `None` if the line does not start with a list item marker.
+pub(super) fn detect_list_prefix(line: &str) -> Option<(String, String)> {
+    let indent_len = line.len() - line.trim_start_matches(' ').len();
+    let indent = &line[..indent_len];
+    let rest = &line[indent_len..];
+
+    // Task list (check before plain unordered to avoid `- [ ]` matching as `- `).
+    // Pattern: `[-*+] [ ] `, `[-*+] [x] `, `[-*+] [X] `
+    if let Some(bullet) = rest.chars().next().filter(|c| matches!(c, '-' | '*' | '+')) {
+        let after_bullet = &rest[1..]; // all are ASCII (len_utf8 == 1)
+        for mark in &[" [ ] ", " [x] ", " [X] "] {
+            if after_bullet.starts_with(mark) {
+                let current = format!("{indent}{bullet}{mark}");
+                let next = format!("{indent}{bullet} [ ] ");
+                return Some((current, next));
+            }
+        }
+        // Plain unordered.
+        if after_bullet.starts_with(' ') {
+            let prefix = format!("{indent}{bullet} ");
+            return Some((prefix.clone(), prefix));
+        }
+    }
+
+    // Ordered list: one or more digits, then '.' or ')', then a space.
+    let digit_end = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(0);
+    if digit_end > 0 {
+        let digits = &rest[..digit_end];
+        let after_digits = &rest[digit_end..];
+        if let Some(punct) = after_digits
+            .chars()
+            .next()
+            .filter(|p| matches!(p, '.' | ')') && after_digits[1..].starts_with(' '))
+        {
+            let num: u64 = digits.parse().unwrap_or(1);
+            let current = format!("{indent}{digits}{punct} ");
+            let next = format!("{indent}{}{punct} ", num + 1);
+            return Some((current, next));
+        }
+    }
+
+    None
+}
+
+/// Handle the Enter key in normal editing mode, with list continuation.
+///
+/// - If the cursor is on a list item whose content after the prefix is empty,
+///   the prefix is stripped from the current line (exit list).
+/// - If the cursor is on a list item with content, a newline is inserted
+///   followed by the continuation prefix (ordered numbers increment).
+/// - Otherwise falls through to a plain newline.
+fn handle_enter(app: &mut App) -> KeyOutcome {
+    // Don't intercept Enter while a selection is active — let tui-textarea
+    // handle the delete-selection-then-newline sequence normally.
+    if app.textarea.selection_range().is_some() {
+        app.textarea.insert_newline();
+        app.force_redecorate = true;
+        app.mark_keystroke();
+        return KeyOutcome::Continue;
+    }
+
+    let (row, _col) = app.textarea.cursor();
+    let line = app
+        .textarea
+        .lines()
+        .get(row)
+        .map(|s| s.as_str())
+        .unwrap_or("")
+        .to_owned();
+
+    if let Some((current_prefix, next_prefix)) = detect_list_prefix(&line) {
+        let content_after = &line[current_prefix.len()..];
+        if content_after.trim().is_empty() {
+            // Empty list item → exit list: remove the prefix, leave a blank line.
+            let prefix_char_count = current_prefix.chars().count();
+            app.textarea
+                .move_cursor(CursorMove::Jump(row as u16, prefix_char_count as u16));
+            app.textarea.delete_line_by_head();
+        } else {
+            // List item with content → insert newline then continuation prefix.
+            app.textarea.insert_newline();
+            app.textarea.insert_str(&next_prefix);
+        }
+        app.force_redecorate = true;
+        app.mark_keystroke();
+        return KeyOutcome::Continue;
+    }
+
+    // Plain Enter — same as the `_` arm for a non-nav key that doesn't pair-wrap.
+    let prev_line_count = app.textarea.lines().len();
+    app.textarea.insert_newline();
+    if app.textarea.lines().len() != prev_line_count {
+        app.force_redecorate = true;
+    }
+    app.mark_keystroke();
+    KeyOutcome::Continue
 }
 
 // ---------------------------------------------------------------------------
@@ -891,6 +1261,68 @@ fn handle_visual_move(app: &mut App, go_down: bool, selecting: bool) -> KeyOutco
 // Event loop
 // ---------------------------------------------------------------------------
 
+/// Apply a committed settings change: write config to disk, rebuild theme, and send a fresh
+/// decoration request.  Shared by the keyboard CommitSettings path and mouse click activation.
+#[mutants::skip] // Performs disk I/O (write_config) and terminal-state mutation.
+fn do_commit_settings(app: &mut App, deco_tx: &std::sync::mpsc::Sender<DecorateRequest>) {
+    let (cfg, new_tw, new_fm, new_ro) = match &app.settings {
+        Some(m) => (
+            m.config.clone(),
+            m.typewriter_mode,
+            m.focus_mode,
+            m.read_only,
+        ),
+        None => return,
+    };
+    match write_config(&cfg) {
+        Ok(()) => {
+            let mut warnings = Vec::new();
+            app.theme = Theme::from_config(&cfg.palette, &cfg.theme, &cfg.headings, &mut warnings);
+            app.highlight_cache = cfg.highlighting.enabled.then(|| {
+                let palette_theme = cfg
+                    .highlighting
+                    .use_palette_colors
+                    .then(|| yame::highlighting::build_palette_theme(&app.theme));
+                Arc::new(yame::highlighting::HighlightCache::new(
+                    true,
+                    cfg.highlighting.syntect_theme.clone(),
+                    palette_theme,
+                ))
+            });
+            if let Some(p) = &app.file_path {
+                app.file_mode = resolve_file_mode(p, &cfg.filetype);
+            }
+            app.show_line_numbers = cfg.layout.line_numbers.unwrap_or(false);
+            app.powerline_glyphs = cfg.layout.powerline_glyphs.unwrap_or(true);
+            app.tab_width = cfg.layout.tab_width.unwrap_or(4) as usize;
+            app.auto_close_pairs = cfg.layout.auto_close_pairs.unwrap_or(false);
+            app.typewriter_mode = new_tw;
+            app.focus_mode = new_fm;
+            app.read_only = new_ro;
+            app.config_warnings = warnings;
+            // Send a fresh decoration request immediately so the new theme is applied without
+            // waiting for the DEBOUNCE timer.  We do NOT clear decoration_map or drain deco_rx
+            // — the worker's own "latest wins" drain handles rapid cycling, and clearing would
+            // cause a visible flash to unstyled text.
+            let _ = deco_tx.send(DecorateRequest {
+                text: app.textarea.lines().join("\n"),
+                mode: app.file_mode.clone(),
+                theme: app.theme.clone(),
+                italic_support: app.italic_support,
+                cache: app.highlight_cache.clone(),
+            });
+            // Refresh the modal's resolved theme so derived defaults update immediately.
+            if let Some(modal) = app.settings.as_mut() {
+                modal.resolved = app.theme.clone();
+            }
+        }
+        Err(e) => {
+            app.status
+                .set_timed(format!("⚠ Settings error: {e}"), Duration::from_secs(3));
+        }
+    }
+}
+
 #[mutants::skip] // Terminal I/O loop — requires a real terminal backend + live event stream; not unit-testable.
 pub(super) fn event_loop<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
@@ -902,6 +1334,7 @@ where
 {
     const POLL_TIMEOUT: Duration = Duration::from_millis(16);
     const DEBOUNCE: Duration = Duration::from_millis(50);
+    const SEARCH_DEBOUNCE: Duration = Duration::from_millis(100);
     const BOTTOM_PADDING: usize = 3;
     const SCROLL_LINES: usize = 3;
 
@@ -934,8 +1367,9 @@ where
         })
         .expect("failed to spawn decoration worker");
 
-    // decoration_map and word_count are pre-computed in App::new() before the
-    // terminal enters the alternate screen, so the first draw is immediate.
+    // force_redecorate=true (set in App::new) triggers an immediate background
+    // decoration request on the first loop iteration.  Text is visible from the
+    // first draw; decorations arrive within one or two frames.
 
     let mut last_editor_area = Rect::default();
     let mut drag_selecting = false;
@@ -960,6 +1394,18 @@ where
             app.last_keystroke = None;
             app.force_redecorate = false;
         }
+
+        if app
+            .search_last_typed
+            .is_some_and(|t| t.elapsed() >= SEARCH_DEBOUNCE)
+        {
+            let lines: Vec<String> = app.textarea.lines().iter().map(|s| s.to_string()).collect();
+            if let Some(s) = &mut app.search {
+                s.update_matches(&lines);
+            }
+            app.search_last_typed = None;
+        }
+
         app.status.tick();
 
         // Pre-draw scroll clamp
@@ -1090,6 +1536,9 @@ where
             if app.show_shortcuts {
                 renderer::render_shortcuts_modal(f, editor_area, app);
             }
+            if app.settings.is_some() {
+                renderer::render_settings_modal(f, editor_area, app);
+            }
             renderer::render_status_bar(f, layout.status_bar, app);
             renderer::render_info_line(f, layout.info_line, app);
 
@@ -1107,9 +1556,12 @@ where
                 // a Ctrl+Z produces a bare `(NONE, Char('z'), Release)` that
                 // bypasses the CONTROL match arm and inserts 'z'.
                 Event::Key(k) if k.kind != crossterm::event::KeyEventKind::Release => {
+                    let prev_free_scroll = app.free_scroll;
                     match handle_key_event(app, k) {
                         KeyOutcome::Continue => {}
                         KeyOutcome::Save => {
+                            // Save doesn't move the cursor, so keep the viewport where it was.
+                            app.free_scroll = prev_free_scroll;
                             handle_save(app)?;
                         }
                         KeyOutcome::SaveAndExit => {
@@ -1140,63 +1592,189 @@ where
                                 ))
                             });
                             // Re-resolve file mode in case [filetype] config changed.
-                            app.file_mode = resolve_file_mode(&app.file_path, &new_config.filetype);
+                            // Untitled buffers stay in Markdown mode until saved.
+                            if let Some(p) = &app.file_path {
+                                app.file_mode = resolve_file_mode(p, &new_config.filetype);
+                            }
                             app.show_line_numbers = new_config.layout.line_numbers.unwrap_or(false);
+                            app.auto_close_pairs =
+                                new_config.layout.auto_close_pairs.unwrap_or(false);
                             app.config_warnings = warnings;
                             app.status
                                 .set_timed("Config reloaded.", Duration::from_millis(1500));
                             app.last_keystroke = Some(std::time::Instant::now());
                         }
+                        KeyOutcome::SaveAs {
+                            filename,
+                            then_exit,
+                        } => {
+                            let path = std::path::PathBuf::from(&filename);
+                            app.shortened_path = renderer::shorten_path(&path, 3);
+                            app.file_mode =
+                                resolve_file_mode(&path, &yame::config::FiletypeConfig::default());
+                            app.file_path = Some(path);
+                            handle_save_to_path(app)?;
+                            if then_exit {
+                                break;
+                            }
+                        }
+                        KeyOutcome::OpenSettings => {
+                            let (config, _) = load_config();
+                            let mut warnings = Vec::new();
+                            let resolved = Theme::from_config(
+                                &config.palette,
+                                &config.theme,
+                                &config.headings,
+                                &mut warnings,
+                            );
+                            app.settings = Some(SettingsModal::new(
+                                config,
+                                resolved,
+                                app.typewriter_mode,
+                                app.focus_mode,
+                                app.read_only,
+                            ));
+                        }
+                        KeyOutcome::CommitSettings => {
+                            do_commit_settings(app, &deco_tx);
+                        }
+                        KeyOutcome::OpenPicker => {
+                            match picker::pick_file() {
+                                Ok(Some(path)) => {
+                                    // No-op if the user picked the file already open.
+                                    let same = app.file_path.as_deref() == Some(path.as_path());
+                                    if !same {
+                                        match app.load_new_file(path, app.tab_width) {
+                                            Ok(()) => {
+                                                if let Some(p) = &app.file_path {
+                                                    app.file_mode = resolve_file_mode(
+                                                        p,
+                                                        &yame::config::FiletypeConfig::default(),
+                                                    );
+                                                }
+                                            }
+                                            Err(e) => {
+                                                app.status
+                                                    .set_dismissible(format!("⚠ Open failed: {e}"));
+                                            }
+                                        }
+                                    }
+                                }
+                                Ok(None) => {} // user cancelled
+                                Err(e) => {
+                                    app.status.set_dismissible(format!("⚠ Picker: {e}"));
+                                }
+                            }
+                            // Always force a full repaint after leaving/re-entering
+                            // alternate screen — the terminal may have been dirtied.
+                            terminal.clear()?;
+                        }
                     }
                 }
-                Event::Mouse(mouse) => match mouse.kind {
-                    MouseEventKind::ScrollDown => {
-                        let max = app.textarea.lines().len().saturating_sub(1);
-                        app.scroll_top = (app.scroll_top + SCROLL_LINES).min(max);
-                        app.free_scroll = true;
-                    }
-                    MouseEventKind::ScrollUp => {
-                        app.scroll_top = app.scroll_top.saturating_sub(SCROLL_LINES);
-                        app.free_scroll = true;
-                    }
-                    MouseEventKind::Down(MouseButton::Left) => {
-                        // Click re-engages cursor-clamping scroll.
-                        app.free_scroll = false;
-                        drag_selecting = false;
-                        if let Some((doc_row, doc_col)) = screen_to_doc(
-                            mouse.row,
-                            mouse.column,
-                            &last_editor_area,
-                            app.scroll_top,
-                            app.textarea.lines(),
-                            &app.decoration_map,
-                            app.show_line_numbers,
-                        ) {
-                            app.textarea.cancel_selection();
-                            app.textarea.move_cursor(CursorMove::Jump(doc_row, doc_col));
-                        }
-                    }
-                    MouseEventKind::Drag(MouseButton::Left) => {
-                        // Drag moves the cursor, so re-engage cursor-clamping scroll.
-                        app.free_scroll = false;
-                        if let Some((doc_row, doc_col)) = screen_to_doc(
-                            mouse.row,
-                            mouse.column,
-                            &last_editor_area,
-                            app.scroll_top,
-                            app.textarea.lines(),
-                            &app.decoration_map,
-                            app.show_line_numbers,
-                        ) {
-                            if !drag_selecting {
-                                app.textarea.start_selection();
-                                drag_selecting = true;
+                Event::Mouse(mouse) => {
+                    use yame::settings::{ModalHit, VISIBLE_FIELDS};
+                    // Compute hit while the borrow of app.settings is scoped separately.
+                    let modal_hit = app
+                        .settings
+                        .as_ref()
+                        .map(|m| m.hit_test(mouse.row, mouse.column, last_editor_area));
+                    match mouse.kind {
+                        MouseEventKind::ScrollDown => {
+                            // Scroll inside modal → move field cursor; outside → scroll editor.
+                            if matches!(modal_hit, Some(ModalHit::Field(_) | ModalHit::Tab(_))) {
+                                app.settings.as_mut().unwrap().move_down(VISIBLE_FIELDS);
+                            } else {
+                                let max = app.textarea.lines().len().saturating_sub(1);
+                                app.scroll_top = (app.scroll_top + SCROLL_LINES).min(max);
+                                app.free_scroll = true;
                             }
-                            app.textarea.move_cursor(CursorMove::Jump(doc_row, doc_col));
                         }
+                        MouseEventKind::ScrollUp => {
+                            if matches!(modal_hit, Some(ModalHit::Field(_) | ModalHit::Tab(_))) {
+                                app.settings.as_mut().unwrap().move_up();
+                            } else {
+                                app.scroll_top = app.scroll_top.saturating_sub(SCROLL_LINES);
+                                app.free_scroll = true;
+                            }
+                        }
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            use yame::settings::SettingsOutcome;
+                            match modal_hit {
+                                Some(ModalHit::Tab(t)) => {
+                                    app.settings.as_mut().unwrap().switch_to_tab(t);
+                                }
+                                Some(ModalHit::Field(f)) => {
+                                    // Navigate to the clicked field, then activate it if it's a
+                                    // toggle, cycler, or expand row (text/color fields need Enter).
+                                    let outcome = {
+                                        let modal = app.settings.as_mut().unwrap();
+                                        modal.jump_to_field(f);
+                                        modal.activate_clicked_field()
+                                    };
+                                    if matches!(outcome, SettingsOutcome::Committed) {
+                                        do_commit_settings(app, &deco_tx);
+                                    }
+                                }
+                                Some(ModalHit::Outside) => {
+                                    // Click truly outside the modal bounds — dismiss.
+                                    app.settings = None;
+                                }
+                                Some(ModalHit::Inert) => {
+                                    // Click on non-interactive interior surface (border, separator,
+                                    // hint row) — keep the modal open, do nothing.
+                                }
+                                None => {
+                                    // No modal open — standard click behaviour.
+                                    app.free_scroll = false;
+                                    drag_selecting = false;
+                                    if let Some((doc_row, doc_col)) = screen_to_doc(
+                                        mouse.row,
+                                        mouse.column,
+                                        &last_editor_area,
+                                        app.scroll_top,
+                                        app.textarea.lines(),
+                                        &app.decoration_map,
+                                        app.show_line_numbers,
+                                    ) {
+                                        app.textarea.cancel_selection();
+                                        app.textarea
+                                            .move_cursor(CursorMove::Jump(doc_row, doc_col));
+                                    }
+                                }
+                            }
+                        }
+                        MouseEventKind::Drag(MouseButton::Left) if modal_hit.is_none() => {
+                            // Drag moves the cursor, so re-engage cursor-clamping scroll.
+                            app.free_scroll = false;
+                            if let Some((doc_row, doc_col)) = screen_to_doc(
+                                mouse.row,
+                                mouse.column,
+                                &last_editor_area,
+                                app.scroll_top,
+                                app.textarea.lines(),
+                                &app.decoration_map,
+                                app.show_line_numbers,
+                            ) {
+                                if !drag_selecting {
+                                    app.textarea.start_selection();
+                                    drag_selecting = true;
+                                }
+                                app.textarea.move_cursor(CursorMove::Jump(doc_row, doc_col));
+                            }
+                        }
+                        _ => {}
                     }
-                    _ => {}
-                },
+                }
+                Event::Paste(text) => {
+                    // Bracketed paste: the terminal has wrapped the pasted content
+                    // in escape sequences so crossterm delivers the entire payload
+                    // as a single event.  Insert it directly — bypassing
+                    // handle_enter so list-continuation logic never fires on the
+                    // embedded newlines.
+                    app.textarea.insert_str(&text);
+                    app.force_redecorate = true;
+                    app.mark_keystroke();
+                }
                 Event::Resize(_, _) => {
                     // Viewport geometry changed — re-engage cursor-clamping scroll
                     // so the cursor is guaranteed visible after the resize.
@@ -1232,7 +1810,7 @@ mod tests {
     fn make_app() -> App {
         App {
             textarea: TextArea::default(),
-            file_path: PathBuf::from("test.md"),
+            file_path: Some(PathBuf::from("test.md")),
             shortened_path: "test.md".to_string(),
             is_dirty: false,
             saved_content: None,
@@ -1255,10 +1833,13 @@ mod tests {
             file_mode: FileMode::Markdown,
             show_line_numbers: false,
             search: None,
+            search_last_typed: None,
             typewriter_mode: false,
             focus_mode: false,
             show_shortcuts: false,
             read_only: false,
+            auto_close_pairs: false,
+            settings: None,
         }
     }
 
@@ -1297,6 +1878,207 @@ mod tests {
             app.textarea.lines()[0],
             "(hello)",
             "pair-wrap must wrap the selection"
+        );
+    }
+
+    // Kills: the insert_str(open+selected+close) line being split back into two calls.
+    // Two undo steps restore the buffer fully; a third undo would over-shoot into the
+    // pre-"hello" state, proving the wrap is recorded as exactly 2 history entries.
+    #[test]
+    fn pair_wrap_undoes_in_two_steps() {
+        let mut app = make_app();
+        app.textarea.insert_str("hello");
+        app.textarea.move_cursor(CursorMove::Head);
+        app.textarea.start_selection();
+        app.textarea.move_cursor(CursorMove::End);
+        handle_key_event(&mut app, key(KeyCode::Char('(')));
+        assert_eq!(app.textarea.lines()[0], "(hello)");
+
+        app.textarea.undo(); // remove "(hello)" insertion
+        app.textarea.undo(); // restore "hello" by un-deleting the selection
+        assert_eq!(
+            app.textarea.lines()[0],
+            "hello",
+            "two undos must fully restore the pre-wrap state"
+        );
+
+        // A third undo would overshoot into blank — verify it does nothing more.
+        app.textarea.undo();
+        assert_eq!(
+            app.textarea.lines()[0],
+            "",
+            "third undo removes the original 'hello' insert, not some phantom entry"
+        );
+    }
+
+    // ── Auto-close pairs ─────────────────────────────────────────────────────
+
+    // Kills: `delete !app.auto_close_pairs` guard — with the guard removed,
+    // typing `(` would insert `()` even when the feature is off.
+    #[test]
+    fn auto_close_off_typing_open_inserts_single_char() {
+        let mut app = make_app(); // auto_close_pairs = false
+        handle_key_event(&mut app, key(KeyCode::Char('(')));
+        assert_eq!(app.textarea.lines()[0], "(");
+    }
+
+    // Kills: `delete insert_str("()")` branch — the opener would do nothing.
+    #[test]
+    fn auto_close_on_typing_open_inserts_pair() {
+        let mut app = make_app();
+        app.auto_close_pairs = true;
+        handle_key_event(&mut app, key(KeyCode::Char('(')));
+        assert_eq!(app.textarea.lines()[0], "()");
+        assert_eq!(
+            app.textarea.cursor(),
+            (0, 1),
+            "cursor must sit between the pair"
+        );
+    }
+
+    // Kills: `delete move_cursor(Back)` — cursor would land after the pair, not between.
+    #[test]
+    fn auto_close_on_cursor_placed_between_pair() {
+        let mut app = make_app();
+        app.auto_close_pairs = true;
+        handle_key_event(&mut app, key(KeyCode::Char('[')));
+        assert_eq!(app.textarea.cursor(), (0, 1));
+    }
+
+    // Kills: `delete move_cursor(Forward)` in skip-over branch — closer would be
+    // inserted as a duplicate instead of consumed.
+    #[test]
+    fn auto_close_on_typing_closer_skips_over() {
+        let mut app = make_app();
+        app.auto_close_pairs = true;
+        handle_key_event(&mut app, key(KeyCode::Char('(')));
+        // cursor is at col 1 inside "()"
+        handle_key_event(&mut app, key(KeyCode::Char(')')));
+        assert_eq!(app.textarea.lines()[0], "()", "no duplicate close inserted");
+        assert_eq!(
+            app.textarea.cursor(),
+            (0, 2),
+            "cursor must be past the closer"
+        );
+    }
+
+    // Kills: `delete Some(c) ==` guard — symmetric char would always insert a pair
+    // instead of skipping over the existing one.
+    #[test]
+    fn auto_close_on_symmetric_char_skips_over_existing() {
+        let mut app = make_app();
+        app.auto_close_pairs = true;
+        handle_key_event(&mut app, key(KeyCode::Char('"')));
+        // cursor between the two quotes: `"|"`
+        handle_key_event(&mut app, key(KeyCode::Char('"')));
+        assert_eq!(app.textarea.lines()[0], "\"\"", "no triple-quote produced");
+        assert_eq!(app.textarea.cursor(), (0, 2));
+    }
+
+    // Kills: `delete selection_range().is_some()` guard — with the guard removed,
+    // auto_close would fire on top of pair_wrap (selection case).
+    #[test]
+    fn auto_close_on_with_selection_still_wraps() {
+        let mut app = make_app();
+        app.auto_close_pairs = true;
+        app.textarea.insert_str("hello");
+        app.textarea.move_cursor(CursorMove::Head);
+        app.textarea.start_selection();
+        app.textarea.move_cursor(CursorMove::End);
+        handle_key_event(&mut app, key(KeyCode::Char('(')));
+        assert_eq!(app.textarea.lines()[0], "(hello)");
+    }
+
+    // Kills: input.rs:294:43 replace | with & in handle_auto_close.
+    // With |→&, CONTROL & ALT = 0 (non-overlapping bits), so intersects(0) is always
+    // false — Ctrl+( bypasses the modifier guard and auto-closes to "()".
+    #[test]
+    fn auto_close_ctrl_char_not_handled() {
+        let mut app = make_app();
+        app.auto_close_pairs = true;
+        let handled = handle_auto_close(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('('), KeyModifiers::CONTROL),
+        );
+        assert!(!handled, "Ctrl+( must not trigger auto-close");
+        assert_eq!(
+            app.textarea.lines()[0],
+            "",
+            "no characters must be inserted"
+        );
+    }
+
+    // Kills: input.rs:319:9 delete match arm '['.
+    // With arm deleted [ falls to _ → returns false; caller inserts just "[" not "[]".
+    #[test]
+    fn auto_close_square_bracket_inserts_pair() {
+        let mut app = make_app();
+        app.auto_close_pairs = true;
+        handle_key_event(&mut app, key(KeyCode::Char('[')));
+        assert_eq!(app.textarea.lines()[0], "[]");
+        assert_eq!(app.textarea.cursor(), (0, 1));
+    }
+
+    // Kills: input.rs:324:9 delete match arm '{'.
+    #[test]
+    fn auto_close_curly_brace_inserts_pair() {
+        let mut app = make_app();
+        app.auto_close_pairs = true;
+        handle_key_event(&mut app, key(KeyCode::Char('{')));
+        assert_eq!(app.textarea.lines()[0], "{}");
+        assert_eq!(app.textarea.cursor(), (0, 1));
+    }
+
+    // Kills: input.rs:338:9 delete match arm ']' and 339:26 replace == with !=.
+    // Arm deleted: ] falls to _ → inserts ], giving "[]" → "]" = "[]]".
+    // ==→!=: next_char IS ] → condition false → inserts ], same "[]]".
+    #[test]
+    fn auto_close_square_closer_skips_over() {
+        let mut app = make_app();
+        app.auto_close_pairs = true;
+        handle_key_event(&mut app, key(KeyCode::Char('[')));
+        handle_key_event(&mut app, key(KeyCode::Char(']')));
+        assert_eq!(app.textarea.lines()[0], "[]", "no duplicate ] inserted");
+        assert_eq!(
+            app.textarea.cursor(),
+            (0, 2),
+            "cursor must be past the closer"
+        );
+    }
+
+    // Kills: input.rs:346:9 delete match arm '}' and 347:26 replace == with !=.
+    #[test]
+    fn auto_close_curly_closer_skips_over() {
+        let mut app = make_app();
+        app.auto_close_pairs = true;
+        handle_key_event(&mut app, key(KeyCode::Char('{')));
+        handle_key_event(&mut app, key(KeyCode::Char('}')));
+        assert_eq!(app.textarea.lines()[0], "{}", "no duplicate }} inserted");
+        assert_eq!(
+            app.textarea.cursor(),
+            (0, 2),
+            "cursor must be past the closer"
+        );
+    }
+
+    // Kills: input.rs:355:9 delete match arm '"' | '\'' | '`' | '*' | '_'.
+    // With arm deleted, " falls to _ → false → caller inserts single " not "".
+    // The existing skip-over test types " twice, so both mutations produce ""
+    // at cursor col 2 — that test does NOT distinguish. This one types " once.
+    #[test]
+    fn auto_close_symmetric_char_inserts_pair() {
+        let mut app = make_app();
+        app.auto_close_pairs = true;
+        handle_key_event(&mut app, key(KeyCode::Char('"')));
+        assert_eq!(
+            app.textarea.lines()[0],
+            "\"\"",
+            "symmetric char must insert pair"
+        );
+        assert_eq!(
+            app.textarea.cursor(),
+            (0, 1),
+            "cursor must sit between the pair"
         );
     }
 
@@ -2094,18 +2876,52 @@ mod tests {
         );
     }
 
-    // Kills :238:9 (delete Ctrl+X arm — falls to `_` → textarea input, Continue).
+    // Kills: delete Ctrl+Q arm — falls to `_` → textarea input, Continue.
     #[test]
-    fn ctrl_x_on_clean_file_returns_exit() {
+    fn ctrl_q_on_clean_file_returns_exit() {
         let mut app = make_app();
         // is_dirty=false (default make_app) → handle_exit returns true → Exit.
         assert_eq!(
             handle_key_event(
                 &mut app,
-                KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL)
+                KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL)
             ),
             KeyOutcome::Exit,
-            "Ctrl+X on a clean file must return Exit"
+            "Ctrl+Q on a clean file must return Exit"
+        );
+    }
+
+    // Kills: delete Ctrl+X cut arm — falls to `_` → textarea inserts 'x', Continue.
+    #[test]
+    fn ctrl_x_cuts_and_returns_continue() {
+        let mut app = make_app();
+        app.textarea = tui_textarea::TextArea::new(vec!["hello world".to_string()]);
+        // Pre-seed clipboard as unavailable so arboard is never called in CI.
+        // handle_cut is #[mutants::skip]; we only need to verify dispatch: the
+        // Ctrl+X arm must call handle_cut, not fall through to `_` which calls
+        // textarea.input(Ctrl+X) and inserts a literal 'x'.
+        app.clipboard = yame::app::ClipboardState::Unavailable;
+        // Select "hello".
+        app.textarea.move_cursor(CursorMove::Head);
+        app.textarea.start_selection();
+        for _ in 0..5 {
+            app.textarea.move_cursor(CursorMove::Forward);
+        }
+        let outcome = handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(
+            outcome,
+            KeyOutcome::Continue,
+            "Ctrl+X cut must return Continue"
+        );
+        // With the arm present, handle_cut runs (clipboard unavailable → no-op) and
+        // no 'x' is inserted.  The `_` fallthrough inserts a literal 'x'.
+        let text = app.textarea.lines()[0].clone();
+        assert!(
+            !text.contains('x'),
+            "Ctrl+X must not insert 'x' (got: {text:?})"
         );
     }
 
@@ -2532,19 +3348,19 @@ mod tests {
         );
     }
 
-    // Exit key (Ctrl+X) must still work in read-only mode.
+    // Quit key (Ctrl+Q) must still work in read-only mode.
     #[test]
-    fn read_only_allows_exit_key() {
+    fn read_only_allows_quit_key() {
         let mut app = make_app();
         app.read_only = true;
         let outcome = handle_key_event(
             &mut app,
-            KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL),
+            KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL),
         );
         assert_eq!(
             outcome,
             KeyOutcome::Exit,
-            "Ctrl+X must still exit in read-only mode"
+            "Ctrl+Q must still quit in read-only mode"
         );
     }
 
@@ -2646,6 +3462,78 @@ mod tests {
         assert!(
             is_ro_allowed(KeyModifiers::CONTROL, KeyCode::Char('e')),
             "Ctrl+E must be allowed in read-only mode so the toggle works"
+        );
+    }
+
+    // is_ro_allowed must permit Ctrl+A and Cmd+A (select-all is non-destructive).
+    #[test]
+    fn is_ro_allowed_permits_select_all() {
+        assert!(
+            is_ro_allowed(KeyModifiers::CONTROL, KeyCode::Char('a')),
+            "Ctrl+A must be allowed in read-only mode"
+        );
+        assert!(
+            is_ro_allowed(KeyModifiers::SUPER, KeyCode::Char('a')),
+            "Cmd+A must be allowed in read-only mode"
+        );
+    }
+
+    // Kills: `lines().len()` replaced by 0 or 1.
+    #[test]
+    fn select_all_returns_line_count() {
+        let mut app = make_app();
+        app.textarea = tui_textarea::TextArea::new(vec![
+            "alpha".to_string(),
+            "beta".to_string(),
+            "gamma".to_string(),
+        ]);
+        let n = select_all(&mut app);
+        assert_eq!(n, 3, "select_all must return the total line count");
+    }
+
+    // Kills: `start_selection()` deleted (no selection active after call).
+    #[test]
+    fn select_all_creates_active_selection() {
+        let mut app = make_app();
+        app.textarea =
+            tui_textarea::TextArea::new(vec!["first line".to_string(), "second line".to_string()]);
+        select_all(&mut app);
+        assert!(
+            app.textarea.selection_range().is_some(),
+            "select_all must leave an active selection"
+        );
+    }
+
+    // Kills: `move_cursor(CursorMove::Bottom)` or `move_cursor(CursorMove::End)` deleted
+    // (cursor would not reach the last character).
+    #[test]
+    fn select_all_places_cursor_at_end_of_last_line() {
+        let mut app = make_app();
+        app.textarea =
+            tui_textarea::TextArea::new(vec!["line one".to_string(), "line two".to_string()]);
+        select_all(&mut app);
+        let (row, col) = app.textarea.cursor();
+        assert_eq!(row, 1, "cursor row must be the last line after select_all");
+        assert_eq!(
+            col,
+            "line two".chars().count(),
+            "cursor col must be end of last line after select_all"
+        );
+    }
+
+    // Kills: input.rs:829:9 delete match arm Ctrl+A / Cmd+A in handle_key_event.
+    // With arm deleted, Ctrl+A falls through to wildcard — no selection created.
+    #[test]
+    fn ctrl_a_selects_all_text() {
+        let mut app = make_app();
+        app.textarea = tui_textarea::TextArea::new(vec!["hello".to_string(), "world".to_string()]);
+        handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL),
+        );
+        assert!(
+            app.textarea.selection_range().is_some(),
+            "Ctrl+A must create an active selection"
         );
     }
 
@@ -2926,5 +3814,504 @@ mod tests {
         let l2 = app.textarea.lines()[2].len();
         assert_eq!(l0, l2, "Alt+T must reformat table rows to equal length");
         assert!(l0 > 0, "reformatted table must be non-empty");
+    }
+
+    // ── handle_save_as_key ───────────────────────────────────────────────────
+
+    fn make_untitled_app() -> App {
+        let mut app = make_app();
+        app.file_path = None;
+        app.shortened_path = "(untitled)".to_string();
+        app.status.start_save_as(false);
+        app
+    }
+
+    // Kills: delete the Char arm → typed chars are swallowed without being pushed.
+    #[test]
+    fn save_as_key_char_appends_to_buffer() {
+        let mut app = make_untitled_app();
+        handle_save_as_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE),
+        );
+        handle_save_as_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE),
+        );
+        handle_save_as_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE),
+        );
+        assert_eq!(
+            app.status.save_as_state().map(|(i, _)| i),
+            Some("foo"),
+            "typed characters must accumulate in the save-as buffer"
+        );
+    }
+
+    // Kills: delete the Backspace arm → pop becomes a no-op.
+    #[test]
+    fn save_as_key_backspace_removes_last_char() {
+        let mut app = make_untitled_app();
+        handle_save_as_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE),
+        );
+        handle_save_as_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE),
+        );
+        handle_save_as_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
+        );
+        assert_eq!(
+            app.status.save_as_state().map(|(i, _)| i),
+            Some("f"),
+            "Backspace must remove the last character from the save-as buffer"
+        );
+    }
+
+    // Kills: delete the Esc arm → Esc becomes a no-op and mode stays SaveAs.
+    #[test]
+    fn save_as_key_esc_cancels_prompt() {
+        let mut app = make_untitled_app();
+        handle_save_as_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(
+            matches!(app.status.mode, yame::status::StatusMode::Normal),
+            "Esc must cancel the save-as prompt and return to Normal mode"
+        );
+    }
+
+    // Kills: delete Enter arm → Enter becomes a no-op (no SaveAs outcome).
+    #[test]
+    fn save_as_key_enter_with_filename_emits_save_as_outcome() {
+        let mut app = make_untitled_app();
+        handle_save_as_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
+        );
+        handle_save_as_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('.'), KeyModifiers::NONE),
+        );
+        handle_save_as_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE),
+        );
+        handle_save_as_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE),
+        );
+        let outcome =
+            handle_save_as_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(
+            matches!(outcome, KeyOutcome::SaveAs { ref filename, then_exit: false } if filename == "a.md"),
+            "Enter with a filename must emit SaveAs outcome with the typed path"
+        );
+    }
+
+    // Kills: invert `then_exit` when propagating from save_as_state → outcome.
+    #[test]
+    fn save_as_key_enter_propagates_then_exit_flag() {
+        let mut app = make_untitled_app();
+        app.status.start_save_as(true); // then_exit = true
+        handle_save_as_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE),
+        );
+        let outcome =
+            handle_save_as_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(
+            matches!(
+                outcome,
+                KeyOutcome::SaveAs {
+                    then_exit: true,
+                    ..
+                }
+            ),
+            "then_exit=true must be propagated to the SaveAs outcome"
+        );
+    }
+
+    // Kills: delete the empty-filename guard → Enter on empty buffer emits SaveAs("").
+    #[test]
+    fn save_as_key_enter_on_empty_buffer_stays_in_prompt() {
+        let mut app = make_untitled_app();
+        // No chars typed — buffer is empty.
+        let outcome =
+            handle_save_as_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(
+            outcome,
+            KeyOutcome::Continue,
+            "Enter on an empty filename must be ignored and keep the prompt open"
+        );
+        assert!(
+            matches!(app.status.mode, yame::status::StatusMode::SaveAs { .. }),
+            "prompt must remain open when Enter is pressed with no filename"
+        );
+    }
+
+    // Untitled buffer: Ctrl+S must open the save-as prompt, not return Save.
+    // Kills: removing the `file_path.is_none()` guard → Ctrl+S returns Save on
+    // untitled buffers, which would call handle_save_to_path on a None path and panic.
+    #[test]
+    fn ctrl_s_on_untitled_buffer_opens_save_as_prompt() {
+        let mut app = make_app();
+        app.file_path = None;
+        let outcome = handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(
+            outcome,
+            KeyOutcome::Continue,
+            "Ctrl+S on untitled buffer must return Continue (save-as prompt, not Save)"
+        );
+        assert!(
+            matches!(
+                app.status.mode,
+                yame::status::StatusMode::SaveAs {
+                    then_exit: false,
+                    ..
+                }
+            ),
+            "Ctrl+S on untitled buffer must open the save-as prompt"
+        );
+    }
+
+    // ── Ctrl+O / file picker ─────────────────────────────────────────────────
+
+    // Ctrl+O on a clean buffer should go straight to OpenPicker.
+    // Kills: removing the `is_dirty` branch → always sets SwitchFilePrompt.
+    #[test]
+    fn ctrl_o_on_clean_buffer_returns_open_picker() {
+        let mut app = make_app();
+        app.is_dirty = false;
+        let outcome = handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(
+            outcome,
+            KeyOutcome::OpenPicker,
+            "Ctrl+O on a clean buffer must return OpenPicker immediately"
+        );
+        assert!(
+            matches!(app.status.mode, yame::status::StatusMode::Normal),
+            "status must stay Normal when buffer is clean"
+        );
+    }
+
+    // Ctrl+O on a dirty buffer must show the confirmation prompt, not open picker.
+    // Kills: removing the `is_dirty` branch → dirty buffer opens picker without warning.
+    #[test]
+    fn ctrl_o_on_dirty_buffer_shows_switch_prompt() {
+        let mut app = make_app();
+        app.is_dirty = true;
+        let outcome = handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(
+            outcome,
+            KeyOutcome::Continue,
+            "Ctrl+O on a dirty buffer must return Continue (prompt shown, not picker)"
+        );
+        assert!(
+            matches!(app.status.mode, yame::status::StatusMode::SwitchFilePrompt),
+            "Ctrl+O on a dirty buffer must open the SwitchFilePrompt"
+        );
+    }
+
+    // SwitchFilePrompt: Y confirms and returns OpenPicker.
+    // Kills: Y arm returning Continue instead of OpenPicker.
+    #[test]
+    fn switch_file_prompt_y_returns_open_picker() {
+        let mut app = make_app();
+        app.status.mode = yame::status::StatusMode::SwitchFilePrompt;
+        let outcome = handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
+        );
+        assert_eq!(
+            outcome,
+            KeyOutcome::OpenPicker,
+            "Y in SwitchFilePrompt must return OpenPicker"
+        );
+        assert!(
+            matches!(app.status.mode, yame::status::StatusMode::Normal),
+            "status must return to Normal after confirming"
+        );
+    }
+
+    // SwitchFilePrompt: N cancels and stays Normal.
+    // Kills: N arm returning OpenPicker instead of Continue.
+    #[test]
+    fn switch_file_prompt_n_cancels() {
+        let mut app = make_app();
+        app.status.mode = yame::status::StatusMode::SwitchFilePrompt;
+        let outcome = handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE),
+        );
+        assert_eq!(
+            outcome,
+            KeyOutcome::Continue,
+            "N in SwitchFilePrompt must return Continue"
+        );
+        assert!(
+            matches!(app.status.mode, yame::status::StatusMode::Normal),
+            "status must return to Normal after cancelling"
+        );
+    }
+
+    // SwitchFilePrompt: Esc cancels.
+    // Kills: Esc arm missing → Esc becomes a no-op and mode stays SwitchFilePrompt.
+    #[test]
+    fn switch_file_prompt_esc_cancels() {
+        let mut app = make_app();
+        app.status.mode = yame::status::StatusMode::SwitchFilePrompt;
+        let outcome = handle_key_event(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(outcome, KeyOutcome::Continue);
+        assert!(
+            matches!(app.status.mode, yame::status::StatusMode::Normal),
+            "Esc must dismiss the SwitchFilePrompt"
+        );
+    }
+
+    // ---------------------------------------------------------------------------
+    // detect_list_prefix
+    // ---------------------------------------------------------------------------
+
+    // Kills: delete the unordered-list arm → unordered lines return None.
+    #[test]
+    fn detect_list_prefix_unordered_dash() {
+        let (cur, next) = detect_list_prefix("- item text").unwrap();
+        assert_eq!(cur, "- ");
+        assert_eq!(next, "- ");
+    }
+
+    // Kills: delete the unordered-list arm → `*` returns None.
+    #[test]
+    fn detect_list_prefix_unordered_star() {
+        let (cur, next) = detect_list_prefix("* item").unwrap();
+        assert_eq!(cur, "* ");
+        assert_eq!(next, "* ");
+    }
+
+    // Kills: delete indent handling → indented prefix drops leading spaces.
+    #[test]
+    fn detect_list_prefix_indented_unordered() {
+        let (cur, next) = detect_list_prefix("  - nested").unwrap();
+        assert_eq!(cur, "  - ");
+        assert_eq!(next, "  - ");
+    }
+
+    // Kills: delete ordered-list arm → ordered lines return None.
+    #[test]
+    fn detect_list_prefix_ordered_dot() {
+        let (cur, next) = detect_list_prefix("1. first").unwrap();
+        assert_eq!(cur, "1. ");
+        assert_eq!(next, "2. ");
+    }
+
+    // Kills: replace num+1 with num → ordered continuation doesn't increment.
+    #[test]
+    fn detect_list_prefix_ordered_increments() {
+        let (_, next) = detect_list_prefix("5. fifth").unwrap();
+        assert_eq!(next, "6. ");
+    }
+
+    // Kills: delete ')' branch → ordered list with paren returns None.
+    #[test]
+    fn detect_list_prefix_ordered_paren() {
+        let (cur, next) = detect_list_prefix("3) third").unwrap();
+        assert_eq!(cur, "3) ");
+        assert_eq!(next, "4) ");
+    }
+
+    // Kills: delete task-list arm → task items return the plain unordered prefix.
+    #[test]
+    fn detect_list_prefix_task_unchecked() {
+        let (cur, next) = detect_list_prefix("- [ ] task item").unwrap();
+        assert_eq!(cur, "- [ ] ");
+        assert_eq!(next, "- [ ] ");
+    }
+
+    // Kills: delete checked-task branch → checked task returns unchecked next.
+    #[test]
+    fn detect_list_prefix_task_checked_continues_unchecked() {
+        let (_, next) = detect_list_prefix("- [x] done").unwrap();
+        assert_eq!(next, "- [ ] ");
+    }
+
+    // Kills: delete None branch → non-list lines return Some instead of None.
+    #[test]
+    fn detect_list_prefix_plain_text_returns_none() {
+        assert!(detect_list_prefix("just a sentence").is_none());
+        assert!(detect_list_prefix("").is_none());
+        assert!(detect_list_prefix("  ").is_none());
+    }
+
+    // Heading lines must not be detected as list prefixes.
+    #[test]
+    fn detect_list_prefix_heading_returns_none() {
+        assert!(detect_list_prefix("# heading").is_none());
+    }
+
+    // ---------------------------------------------------------------------------
+    // handle_enter — list continuation
+    // ---------------------------------------------------------------------------
+
+    // Kills: delete list-continuation arm → Enter on list line inserts plain newline (no prefix).
+    #[test]
+    fn enter_on_list_item_inserts_prefix() {
+        let mut app = make_app();
+        app.textarea = TextArea::new(vec!["- item".to_string()]);
+        app.textarea.move_cursor(tui_textarea::CursorMove::End);
+        handle_key_event(&mut app, key(KeyCode::Enter));
+        assert_eq!(
+            app.textarea.lines()[1],
+            "- ",
+            "new line must start with list prefix"
+        );
+    }
+
+    // Kills: delete exit-list branch → Enter on empty item inserts another prefix instead of exiting.
+    #[test]
+    fn enter_on_empty_list_item_exits_list() {
+        let mut app = make_app();
+        app.textarea = TextArea::new(vec!["- ".to_string()]);
+        app.textarea.move_cursor(tui_textarea::CursorMove::End);
+        handle_key_event(&mut app, key(KeyCode::Enter));
+        // Line count unchanged: the prefix was stripped, no new line added.
+        assert_eq!(
+            app.textarea.lines().len(),
+            1,
+            "exit-list must not add a line"
+        );
+        assert_eq!(
+            app.textarea.lines()[0],
+            "",
+            "prefix must be stripped from empty item"
+        );
+    }
+
+    // Kills: delete ordered increment → ordered continuation repeats the same number.
+    #[test]
+    fn enter_on_ordered_list_item_increments_number() {
+        let mut app = make_app();
+        app.textarea = TextArea::new(vec!["3. third".to_string()]);
+        app.textarea.move_cursor(tui_textarea::CursorMove::End);
+        handle_key_event(&mut app, key(KeyCode::Enter));
+        assert_eq!(
+            app.textarea.lines()[1],
+            "4. ",
+            "ordered continuation must use next number"
+        );
+    }
+
+    // Kills: delete task-list branch → task item continuation uses wrong prefix.
+    #[test]
+    fn enter_on_task_item_continues_with_unchecked() {
+        let mut app = make_app();
+        app.textarea = TextArea::new(vec!["- [x] done".to_string()]);
+        app.textarea.move_cursor(tui_textarea::CursorMove::End);
+        handle_key_event(&mut app, key(KeyCode::Enter));
+        assert_eq!(
+            app.textarea.lines()[1],
+            "- [ ] ",
+            "task continuation must be unchecked"
+        );
+    }
+
+    // Kills: delete plain-Enter fallback → Enter on non-list line does nothing.
+    #[test]
+    fn enter_on_plain_text_inserts_newline() {
+        let mut app = make_app();
+        app.textarea = TextArea::new(vec!["hello world".to_string()]);
+        app.textarea.move_cursor(tui_textarea::CursorMove::End);
+        handle_key_event(&mut app, key(KeyCode::Enter));
+        assert_eq!(
+            app.textarea.lines().len(),
+            2,
+            "Enter on plain text must add a new line"
+        );
+        assert_eq!(app.textarea.lines()[1], "", "new line must be empty");
+    }
+
+    // ── Ctrl+X / F2 arms ────────────────────────────────────────────────────
+
+    // Kills: delete Ctrl+X arm — falls to `_` which only sets force_redecorate
+    // when line count changes.  Cutting a single-line selection preserves line
+    // count, so the _ fallthrough leaves force_redecorate=false.
+    #[test]
+    fn ctrl_x_sets_force_redecorate() {
+        let mut app = make_app();
+        app.textarea = TextArea::new(vec!["hello world".to_string()]);
+        app.textarea.move_cursor(tui_textarea::CursorMove::Head);
+        app.textarea.start_selection();
+        app.textarea.move_cursor(tui_textarea::CursorMove::Forward);
+        app.force_redecorate = false;
+        handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL),
+        );
+        assert!(
+            app.force_redecorate,
+            "Ctrl+X must set force_redecorate=true unconditionally"
+        );
+    }
+
+    // Kills: delete F(2) arm — falls to `_` which returns Continue, not OpenSettings.
+    #[test]
+    fn f2_returns_open_settings() {
+        let mut app = make_app();
+        assert_eq!(
+            handle_key_event(&mut app, KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE)),
+            KeyOutcome::OpenSettings,
+            "F2 must return OpenSettings"
+        );
+    }
+
+    // Kills: replace != with == in the line-count guard inside the `_` arm.
+    // With ==: force_redecorate is set when line count DOES NOT change (inverted).
+    // Typing a plain char never changes line count, so the mutation would set
+    // force_redecorate where the real code leaves it false.
+    #[test]
+    fn typing_char_does_not_set_force_redecorate() {
+        let mut app = make_app();
+        app.force_redecorate = false;
+        handle_key_event(&mut app, key(KeyCode::Char('a')));
+        assert!(
+            !app.force_redecorate,
+            "typing a plain char must not set force_redecorate (no line count change)"
+        );
+    }
+
+    // ── detect_list_prefix boundary cases ───────────────────────────────────
+
+    // Kills: replace > with >= in the ordered-list digit_end guard.
+    // With >=: digit_end==0 (no leading digits) enters the branch, incorrectly
+    // treating ". item" as an ordered list with an implicit "1." prefix.
+    #[test]
+    fn detect_list_prefix_dot_without_leading_digit_returns_none() {
+        assert!(
+            detect_list_prefix(". item").is_none(),
+            "a line starting with '.' but no leading digit must not match ordered list"
+        );
+    }
+
+    // Kills: replace && with || in the ordered-list punctuation filter.
+    // With ||: any char after the digits where the substring-after has a leading
+    // space also matches (e.g. "1x item" where 'x' is not '.'/')' but " item" starts
+    // with ' ').
+    #[test]
+    fn detect_list_prefix_digit_then_non_punct_returns_none() {
+        assert!(
+            detect_list_prefix("1x item").is_none(),
+            "a digit followed by non-punctuation must not match ordered list"
+        );
     }
 }

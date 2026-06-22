@@ -5,10 +5,12 @@
 //!
 //! ## Lazy initialisation
 //! `SyntaxSet` and `ThemeSet` are expensive to deserialise from their bundled
-//! binary assets.  Both are held in `OnceLock` fields and initialised on the
-//! first call to `highlight_block` — so files with no fenced code blocks pay
-//! zero startup cost.  On the default production path (`use_palette_colors =
-//! true`) the `ThemeSet` is never initialised at all.
+//! binary assets.  Both are stored in **process-level statics** (`OnceLock`)
+//! and initialised on the first call to `highlight_block` — so files with no
+//! fenced code blocks pay zero startup cost, and every `HighlightCache`
+//! instance (including new ones created on theme changes) reuses the already-
+//! loaded data without re-deserialising it.  On the default production path
+//! (`use_palette_colors = true`) the `ThemeSet` is never initialised at all.
 //!
 //! The highlight memo-cache is stored in a `Mutex` so that
 //! `build_decoration_map` can take `Option<&HighlightCache>` (immutable) while
@@ -41,6 +43,18 @@ use syntect::highlighting::{
 use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
 use two_face::syntax as tf_syntax;
+
+// ---------------------------------------------------------------------------
+// Process-level syntax / theme sets
+// ---------------------------------------------------------------------------
+
+// These three are loaded at most once per process lifetime.  Storing them as
+// statics (rather than OnceLock fields on HighlightCache) means that creating
+// a new HighlightCache — e.g. when the user changes theme in the settings
+// modal — never re-deserialises the binary assets.
+static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
+static EXTRA_SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
+static THEME_SET: OnceLock<ThemeSet> = OnceLock::new();
 
 // ---------------------------------------------------------------------------
 // Types
@@ -181,6 +195,10 @@ pub fn build_palette_theme(yame: &crate::config::Theme) -> SyntectTheme {
 }
 
 // ---------------------------------------------------------------------------
+// Pre-warming
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
 // HighlightCache
 // ---------------------------------------------------------------------------
 
@@ -195,19 +213,8 @@ pub fn build_palette_theme(yame: &crate::config::Theme) -> SyntectTheme {
 const MAX_CACHE_ENTRIES: usize = 256;
 
 pub struct HighlightCache {
-    /// Sublime Text 3 default syntaxes — lazily deserialised on first use.
-    syntax_set: OnceLock<SyntaxSet>,
-    /// Extra syntaxes from the bat/two-face collection (TOML, TypeScript,
-    /// Kotlin, Dockerfile, …) — lazily deserialised on first use.
-    /// Kept separate from `syntax_set` because syntect binds each
-    /// `SyntaxReference` to the `SyntaxSet` it was parsed from; the same set
-    /// must be passed to `HighlightLines::highlight_line`.
-    extra_syntax_set: OnceLock<SyntaxSet>,
-    /// Bundled syntect themes — lazily deserialised, and only when
-    /// `palette_theme` is `None` (i.e. never on the default production path).
-    theme_set: OnceLock<ThemeSet>,
-    /// Palette-derived theme, pre-built at startup when `use_palette_colors = true`.
-    /// When `Some`, this takes priority over `theme_name` and `theme_set` is
+    /// Palette-derived theme, pre-built when `use_palette_colors = true`.
+    /// When `Some`, this takes priority over `theme_name` and `THEME_SET` is
     /// never initialised.
     palette_theme: Option<SyntectTheme>,
     /// Named built-in theme fallback (used when `palette_theme` is `None`).
@@ -233,9 +240,6 @@ impl HighlightCache {
     /// named `theme_name` built-in.
     pub fn new(enabled: bool, theme_name: String, palette_theme: Option<SyntectTheme>) -> Self {
         Self {
-            syntax_set: OnceLock::new(),
-            extra_syntax_set: OnceLock::new(),
-            theme_set: OnceLock::new(),
             palette_theme,
             theme_name,
             cache: Mutex::new(HashMap::new()),
@@ -269,32 +273,30 @@ impl HighlightCache {
             return Some(cached);
         }
 
-        // Lazily initialise syntax sets on first cache miss.
+        // Lazily initialise the process-level syntax sets on the first cache miss.
         // Try the syntect defaults first; fall back to the two-face extras.
         // The active set must be threaded into highlight_line because syntect
         // binds SyntaxReferences to the SyntaxSet they were parsed from.
-        let default_set = self
-            .syntax_set
-            .get_or_init(SyntaxSet::load_defaults_newlines);
+        let default_set = SYNTAX_SET.get_or_init(SyntaxSet::load_defaults_newlines);
         let (syntax, active_set) = if let Some(s) = default_set
             .find_syntax_by_token(&lang_lower)
             .or_else(|| default_set.find_syntax_by_extension(&lang_lower))
         {
             (s, default_set)
         } else {
-            let extra_set = self.extra_syntax_set.get_or_init(tf_syntax::extra_newlines);
+            let extra_set = EXTRA_SYNTAX_SET.get_or_init(tf_syntax::extra_newlines);
             let s = extra_set
                 .find_syntax_by_token(&lang_lower)
                 .or_else(|| extra_set.find_syntax_by_extension(&lang_lower))?;
             (s, extra_set)
         };
 
-        // Resolve theme: palette first (ThemeSet never touched), then named
-        // built-in (ThemeSet lazily loaded on first non-palette use).
+        // Resolve theme: palette first (THEME_SET never touched), then named
+        // built-in (THEME_SET lazily loaded on first non-palette use).
         let theme: &SyntectTheme = if let Some(pt) = &self.palette_theme {
             pt
         } else {
-            let theme_set = self.theme_set.get_or_init(ThemeSet::load_defaults);
+            let theme_set = THEME_SET.get_or_init(ThemeSet::load_defaults);
             theme_set
                 .themes
                 .get(&self.theme_name)

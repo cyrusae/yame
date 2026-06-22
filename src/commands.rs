@@ -9,6 +9,19 @@ use yame::status::StatusMode;
 
 #[mutants::skip] // Calls std::fs::write — I/O side effect.
 pub(super) fn handle_save(app: &mut App) -> io::Result<()> {
+    // `KeyOutcome::Save` is only emitted when `file_path.is_some()` (the untitled
+    // path branches to `start_save_as` in `handle_key_event` and returns `Continue`),
+    // so reaching here with `file_path = None` would be a logic error.
+    handle_save_to_path(app)
+}
+
+/// Write the buffer to `app.file_path` (which must be `Some`).
+///
+/// Separated from `handle_save` so `handle_save_as_confirm` can reuse the same
+/// write logic after the path has been set.
+#[mutants::skip] // Calls std::fs::write — I/O side effect.
+pub(super) fn handle_save_to_path(app: &mut App) -> io::Result<()> {
+    let path = app.file_path.as_ref().expect("file_path must be Some");
     let lines = app.textarea.lines();
     // Always write 0 bytes for an empty buffer — consistent regardless of whether
     // the file was empty at open time.  A non-empty save always gets a POSIX newline.
@@ -18,14 +31,14 @@ pub(super) fn handle_save(app: &mut App) -> io::Result<()> {
         lines.join("\n") + "\n"
     };
     // Create parent directories if they don't exist (e.g. `yame notes/new.md`).
-    if let Some(parent) = app.file_path.parent()
+    if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
         && let Err(e) = std::fs::create_dir_all(parent)
     {
         app.status.set_dismissible(format!("⚠ Save failed: {e}"));
         return Ok(());
     }
-    match std::fs::write(&app.file_path, &content) {
+    match std::fs::write(path, &content) {
         Ok(()) => {
             app.saved_content = Some(app.textarea.lines().to_vec());
             app.is_dirty = false;
@@ -70,6 +83,15 @@ pub(super) fn clamp_scroll(app: &mut App, editor_area: Rect, bottom_padding: usi
     // behaviour and no test can distinguish them.
     if cursor_row < app.scroll_top {
         app.scroll_top = cursor_row;
+    }
+
+    // Pre-clamp: if scroll_top is more than visible_rows logical lines above
+    // the cursor, advance it before the expensive wrap scan below.  Each
+    // logical line occupies ≥1 visual row, so visible_rows is a safe upper
+    // bound — the forward scan becomes O(visible_rows) rather than
+    // O(cursor_row − scroll_top), which matters after a large paste.
+    if cursor_row.saturating_sub(app.scroll_top) > visible_rows {
+        app.scroll_top = cursor_row.saturating_sub(visible_rows);
     }
 
     // Scroll down: check cursor's visual (post-wrap) position
@@ -148,7 +170,7 @@ mod tests {
     fn make_app(lines: Vec<&str>, content_width: usize) -> App {
         App {
             textarea: TextArea::new(lines.into_iter().map(String::from).collect()),
-            file_path: PathBuf::from("test.md"),
+            file_path: Some(PathBuf::from("test.md")),
             shortened_path: "test.md".to_string(),
             is_dirty: false,
             saved_content: None,
@@ -171,10 +193,13 @@ mod tests {
             file_mode: FileMode::Markdown,
             show_line_numbers: false,
             search: None,
+            search_last_typed: None,
             typewriter_mode: false,
             focus_mode: false,
             show_shortcuts: false,
             read_only: false,
+            auto_close_pairs: false,
+            settings: None,
         }
     }
 
@@ -223,6 +248,39 @@ mod tests {
             app.scroll_top, 1,
             "cursor on the 2nd visual row of line 2 (total vis=3) must \
              cause scroll_top to advance to 1 so the cursor remains visible"
+        );
+    }
+
+    // Kills the pre-clamp added for #244: if the guard `cursor_row - scroll_top >
+    // visible_rows` is removed (or the assignment dropped), scroll_top stays at 0
+    // and the expensive O(N) scan runs over all 20 lines instead of at most 5.
+    // More concretely: after the pre-clamp, scroll_top must be ≥ cursor_row −
+    // visible_rows = 20 − 5 = 15.  Without the pre-clamp it stays at 0.
+    #[test]
+    fn clamp_scroll_preclamp_limits_scan_after_large_jump() {
+        // 21 short lines, cursor jumps to row 20, visible_rows = 5.
+        // scroll_top starts at 0 (as if a large paste moved cursor far down).
+        let lines: Vec<&str> = (0..21).map(|_| "x").collect();
+        let mut app = make_app(lines, 80);
+        app.scroll_top = 0;
+
+        use tui_textarea::CursorMove;
+        app.textarea.move_cursor(CursorMove::Jump(20, 0));
+
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 82,
+            height: 5,
+        };
+        clamp_scroll(&mut app, area, 0);
+
+        // After clamping, cursor (row 20) must be visible within 5 rows.
+        // scroll_top must be in [16, 20].
+        assert!(
+            app.scroll_top >= 16,
+            "scroll_top ({}) should be ≥ 16 so cursor at row 20 fits in 5 visible rows",
+            app.scroll_top
         );
     }
 }

@@ -8,5 +8,6 @@ pub mod highlighting;
 pub mod layout;
 pub mod renderer;
 pub mod search;
+pub mod settings;
 pub mod status;
 pub mod table_format;

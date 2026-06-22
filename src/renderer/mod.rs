@@ -8,12 +8,14 @@ use ratatui::{
 use crate::decoration::{DecorationMap, StyledSpan};
 use crate::search::Match as SearchMatch;
 
+pub(crate) mod settings_modal;
 mod status;
 mod utils;
 
 pub use self::search_bar::{
     render_search_bar, render_search_help_modal, render_shortcuts_modal, search_bar_height,
 };
+pub use self::settings_modal::render_settings_modal;
 pub use status::{render_info_line, render_status_bar};
 pub use utils::{format_thousands, shorten_path, split_into_spans};
 
@@ -159,6 +161,24 @@ pub fn wrap_line_indented(s: &str, first_width: usize, cont_width: usize) -> Vec
     let mut result = vec![first_row];
     result.extend(wrap_line(rest, cont_width.max(1)));
     result
+}
+
+/// Return the effective continuation indent for a logical line.
+///
+/// Prefers the `continuation_indent` from decoration spans (set for list
+/// bullets, blockquote indicators, etc.).  Falls back to the leading-space
+/// count of the raw line text so that fenced code blocks indented under a
+/// list item (e.g. `   ```toml`) keep soft-wrap continuations visually
+/// aligned instead of landing at column 0.
+fn effective_ci(line: &str, decs: Option<&Vec<StyledSpan>>) -> usize {
+    let from_spans = decs
+        .map(|d| d.iter().map(|s| s.continuation_indent).max().unwrap_or(0))
+        .unwrap_or(0) as usize;
+    if from_spans > 0 {
+        from_spans
+    } else {
+        line.bytes().take_while(|&b| b == b' ').count()
+    }
 }
 
 /// Compute the `(char_start, char_len)` pair for each element of a
@@ -369,14 +389,7 @@ impl Widget for MarkdownView<'_> {
             // effective width.
             // `line_ci` — continuation indent (wrap_idx > 0 only, e.g. list bullets).
             // `line_ri` — first-row indent (wrap_idx == 0, e.g. frontmatter content).
-            let line_ci = line_decs
-                .map(|decs| {
-                    decs.iter()
-                        .map(|s| s.continuation_indent)
-                        .max()
-                        .unwrap_or(0)
-                })
-                .unwrap_or(0) as usize;
+            let line_ci = effective_ci(line, line_decs);
             let line_ri = line_decs
                 .map(|decs| decs.iter().map(|s| s.row_indent).max().unwrap_or(0))
                 .unwrap_or(0) as usize;
@@ -412,6 +425,7 @@ impl Widget for MarkdownView<'_> {
                                 full_line_bg: s.full_line_bg,
                                 border_bottom: s.border_bottom,
                                 is_rule: s.is_rule,
+                                line_default_style: s.line_default_style,
                             })
                             .collect()
                     })
@@ -428,14 +442,7 @@ impl Widget for MarkdownView<'_> {
                 // continuation row — so it would be stripped from `row_spans` and the
                 // indent would compute to zero.
                 let continuation_indent: u16 = if wrap_idx > 0 {
-                    line_decs
-                        .map(|decs| {
-                            decs.iter()
-                                .map(|s| s.continuation_indent)
-                                .max()
-                                .unwrap_or(0)
-                        })
-                        .unwrap_or(0) as u16
+                    line_ci as u16
                 } else {
                     line_ri as u16
                 };
@@ -523,8 +530,15 @@ impl Widget for MarkdownView<'_> {
                     let is_blockquote_line = line_decs
                         .map(|decs| decs.iter().any(|s| s.is_blockquote))
                         .unwrap_or(false);
+                    // Heading lines carry `line_default_style` on their delimiter span
+                    // instead of emitting a wide content span that would block inline
+                    // decorations.  Read from `line_decs` so continuation rows inherit it.
+                    let heading_default =
+                        line_decs.and_then(|decs| decs.iter().find_map(|s| s.line_default_style));
                     let row_default = if is_blockquote_line {
                         Style::default().fg(self.theme.blockquote_color).bg(line_bg)
+                    } else if let Some(hd) = heading_default {
+                        hd.bg(line_bg)
                     } else {
                         default_style.bg(line_bg)
                     };
@@ -558,17 +572,23 @@ impl Widget for MarkdownView<'_> {
                 }
 
                 // Bottom border (H1–H3 heading underline, last visual row only).
-                // Starts after the gutter so the underline never bleeds into the
-                // line-number column.
+                // With line numbers: start after the gutter so the underline
+                // never bleeds into the number column.  Without line numbers:
+                // start at column 0 so the underline matches the heading bg.
                 if let Some(bc) = border_color
                     && is_last_wrap
                 {
                     use ratatui::layout::Rect as R;
+                    let ul_offset = if self.show_line_numbers {
+                        left_gutter
+                    } else {
+                        0
+                    };
                     buf.set_style(
                         R {
-                            x: area.x + left_gutter,
+                            x: area.x + ul_offset,
                             y,
-                            width: self.column_width.saturating_sub(left_gutter),
+                            width: self.column_width.saturating_sub(ul_offset),
                             height: 1,
                         },
                         Style::default()
@@ -643,19 +663,9 @@ fn apply_selection_overlay(
         }
 
         let line = &view.lines[log_row];
-        let line_ci = view
-            .decoration_map
-            .get(&log_row)
-            .map(|decs| {
-                decs.iter()
-                    .map(|s| s.continuation_indent)
-                    .max()
-                    .unwrap_or(0)
-            })
-            .unwrap_or(0) as usize;
-        let line_ri = view
-            .decoration_map
-            .get(&log_row)
+        let line_decs_sel = view.decoration_map.get(&log_row);
+        let line_ci = effective_ci(line, line_decs_sel);
+        let line_ri = line_decs_sel
             .map(|decs| decs.iter().map(|s| s.row_indent).max().unwrap_or(0))
             .unwrap_or(0) as usize;
         let wrapped = wrap_line_indented(
@@ -677,15 +687,7 @@ fn apply_selection_overlay(
             // Mirror the indent logic from render() so selection highlighting
             // respects the same left-margin offset.
             let continuation_indent: u16 = if wrap_idx > 0 {
-                view.decoration_map
-                    .get(&log_row)
-                    .map(|decs| {
-                        decs.iter()
-                            .map(|s| s.continuation_indent)
-                            .max()
-                            .unwrap_or(0)
-                    })
-                    .unwrap_or(0) as u16
+                line_ci as u16
             } else {
                 line_ri as u16
             };
@@ -761,16 +763,7 @@ fn apply_search_overlay(area: Rect, buf: &mut Buffer, view: &MarkdownView<'_>) {
     while visual_row < visible && log_row < total {
         if let Some(row_matches) = by_line.get(&log_row) {
             let line = &view.lines[log_row];
-            let line_ci = view
-                .decoration_map
-                .get(&log_row)
-                .map(|decs| {
-                    decs.iter()
-                        .map(|s| s.continuation_indent)
-                        .max()
-                        .unwrap_or(0)
-                })
-                .unwrap_or(0) as usize;
+            let line_ci = effective_ci(line, view.decoration_map.get(&log_row));
             let wrapped = wrap_line_indented(
                 line,
                 content_width.max(1),
@@ -785,19 +778,7 @@ fn apply_search_overlay(area: Rect, buf: &mut Buffer, view: &MarkdownView<'_>) {
                     break;
                 }
                 let char_end = char_start + char_len;
-                let continuation_indent: u16 = if wrap_idx > 0 {
-                    view.decoration_map
-                        .get(&log_row)
-                        .map(|decs| {
-                            decs.iter()
-                                .map(|s| s.continuation_indent)
-                                .max()
-                                .unwrap_or(0)
-                        })
-                        .unwrap_or(0) as u16
-                } else {
-                    0
-                };
+                let continuation_indent: u16 = if wrap_idx > 0 { line_ci as u16 } else { 0 };
 
                 for &(ms, me, is_current) in row_matches {
                     let row_ms = ms.max(char_start);
@@ -823,16 +804,7 @@ fn apply_search_overlay(area: Rect, buf: &mut Buffer, view: &MarkdownView<'_>) {
         } else {
             // No matches on this line — count its visual rows and move on.
             let line = &view.lines[log_row];
-            let line_ci = view
-                .decoration_map
-                .get(&log_row)
-                .map(|decs| {
-                    decs.iter()
-                        .map(|s| s.continuation_indent)
-                        .max()
-                        .unwrap_or(0)
-                })
-                .unwrap_or(0) as usize;
+            let line_ci = effective_ci(line, view.decoration_map.get(&log_row));
             let wrapped = wrap_line_indented(
                 line,
                 content_width.max(1),
@@ -976,7 +948,7 @@ mod tests {
     fn make_app() -> App {
         App {
             textarea: TextArea::default(),
-            file_path: PathBuf::from("notes/foo.md"),
+            file_path: Some(PathBuf::from("notes/foo.md")),
             is_dirty: false,
             saved_content: None,
             theme: Theme::default_theme(),
@@ -999,10 +971,13 @@ mod tests {
             file_mode: crate::app::FileMode::Markdown,
             show_line_numbers: false,
             search: None,
+            search_last_typed: None,
             typewriter_mode: false,
             focus_mode: false,
             show_shortcuts: false,
             read_only: false,
+            auto_close_pairs: false,
+            settings: None,
         }
     }
 

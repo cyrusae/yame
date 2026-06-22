@@ -6,7 +6,7 @@ use ratatui::style::Style;
 use crate::config::Theme;
 
 use super::DecorationMap;
-use super::frontmatter::detect_frontmatter;
+
 use super::spans::{make_span, push_span};
 use super::types::StyledSpan;
 
@@ -87,15 +87,13 @@ pub(crate) fn apply_highlight_spans(
     text: &str,
     line_starts: &[usize],
     code_block_lines: &HashSet<usize>,
+    frontmatter_end: Option<usize>,
     theme: &Theme,
 ) {
     // Fast bail-out: no `==` in the document at all.
     if !text.contains("==") {
         return;
     }
-
-    // Lines that belong to a frontmatter block must also be skipped.
-    let frontmatter_end: Option<usize> = detect_frontmatter(text);
 
     let delim_style = Style::default().fg(theme.muted);
     let content_style = Style::default()
