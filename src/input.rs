@@ -2919,7 +2919,10 @@ mod tests {
         // With the arm present, handle_cut runs (clipboard unavailable → no-op) and
         // no 'x' is inserted.  The `_` fallthrough inserts a literal 'x'.
         let text = app.textarea.lines()[0].clone();
-        assert!(!text.contains('x'), "Ctrl+X must not insert 'x' (got: {text:?})");
+        assert!(
+            !text.contains('x'),
+            "Ctrl+X must not insert 'x' (got: {text:?})"
+        );
     }
 
     // ── Shift+Down / Shift+Up visual-move-with-selection ────────────────────
