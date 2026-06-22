@@ -154,7 +154,7 @@ pub(super) fn build_normal_status_bar(app: &App) -> Line<'static> {
     let hints_text = if app.read_only {
         " ^E Unlock  ^Q Quit  F1 Keys  F2 Settings "
     } else {
-        " ^S Save  ^Q Quit  ^O Open  F1 Keys  F2 Settings "
+        " ^S Save  ^Q Quit  F1 Keys  F2 Settings "
     };
     let hints = Span::styled(hints_text, Style::default().fg(muted_fg).bg(hints_bg));
     let cap2 = Span::styled(sep, Style::default().fg(hints_bg).bg(canvas_bg));
