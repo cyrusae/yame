@@ -119,7 +119,7 @@ Without `fd`, replace `fd --type f --extension md` with `find . -name "*.md"`.
 | `Ctrl+X` | Cut selection |
 | `Ctrl+V` | Paste from system clipboard |
 | `Ctrl+O` | Open file picker (lf → fzf → `$YAME_PICKER`) |
-| `Ctrl+I` | Insert fenced code block |
+| `Ctrl+K` | Insert fenced code block |
 | `Ctrl+R` | Reload config file |
 | `Ctrl+E` | Toggle read-only mode |
 | `Ctrl+F` | Search |

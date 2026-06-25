@@ -17,7 +17,7 @@ jobs:
     name: Cargo Mutants (diff)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           # Full history needed so we can diff against the base.
           fetch-depth: 0
