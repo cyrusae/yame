@@ -194,6 +194,23 @@ pub fn render_settings_modal(f: &mut Frame, editor_area: Rect, app: &App) {
         }
     }
 
+    // Fill any leftover visual slots with empty bordered rows.  When field_count
+    // < VISIBLE_FIELDS (e.g. "See More" collapsed), the field loop above exits
+    // early and the remaining row cells are never touched, leaving them without
+    // border characters.
+    let rendered = end_idx - modal.scroll;
+    for row in rendered..VISIBLE_FIELDS {
+        let ry = fields_start_y + row as u16;
+        for col in 0..MODAL_W {
+            buf[(bx + col, ry)].set_char(' ').set_bg(bg);
+        }
+        buf[(bx, ry)].set_char('│').set_fg(border_fg).set_bg(bg);
+        buf[(bx + MODAL_W - 1, ry)]
+            .set_char('│')
+            .set_fg(border_fg)
+            .set_bg(bg);
+    }
+
     // ── Separator ─────────────────────────────────────────────────────────────
     let sep2_y = fields_start_y + VISIBLE_FIELDS as u16;
     draw_hline(buf, bx, sep2_y, MODAL_W, border_fg, bg);
