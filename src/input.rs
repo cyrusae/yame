@@ -1320,6 +1320,7 @@ fn do_commit_settings(app: &mut App, deco_tx: &std::sync::mpsc::Sender<DecorateR
             app.powerline_glyphs = cfg.layout.powerline_glyphs.unwrap_or(true);
             app.tab_width = cfg.layout.tab_width.unwrap_or(4) as usize;
             app.auto_close_pairs = cfg.layout.auto_close_pairs.unwrap_or(false);
+            app.autosave_secs = cfg.layout.autosave_seconds.map(|n| n as u64).unwrap_or(0);
             app.typewriter_mode = new_tw;
             app.focus_mode = new_fm;
             app.read_only = new_ro;
@@ -1397,6 +1398,7 @@ where
 
     let mut last_editor_area = Rect::default();
     let mut drag_selecting = false;
+    let mut last_autosave = std::time::Instant::now();
 
     loop {
         // Apply the latest completed decoration result from the background worker.
@@ -1428,6 +1430,16 @@ where
                 s.update_matches(&lines);
             }
             app.search_last_typed = None;
+        }
+
+        // Autosave: fire when enabled, dirty, file known, and interval elapsed.
+        if app.autosave_secs > 0
+            && app.is_dirty
+            && app.file_path.is_some()
+            && last_autosave.elapsed() >= Duration::from_secs(app.autosave_secs)
+        {
+            handle_save(app)?;
+            last_autosave = std::time::Instant::now();
         }
 
         app.status.tick();
@@ -1587,6 +1599,7 @@ where
                             // Save doesn't move the cursor, so keep the viewport where it was.
                             app.free_scroll = prev_free_scroll;
                             handle_save(app)?;
+                            last_autosave = std::time::Instant::now();
                         }
                         KeyOutcome::SaveAndExit => {
                             handle_save(app)?;
@@ -1623,6 +1636,11 @@ where
                             app.show_line_numbers = new_config.layout.line_numbers.unwrap_or(false);
                             app.auto_close_pairs =
                                 new_config.layout.auto_close_pairs.unwrap_or(false);
+                            app.autosave_secs = new_config
+                                .layout
+                                .autosave_seconds
+                                .map(|n| n as u64)
+                                .unwrap_or(0);
                             app.config_warnings = warnings;
                             app.status
                                 .set_timed("Config reloaded.", Duration::from_millis(1500));
@@ -1863,6 +1881,7 @@ mod tests {
             show_shortcuts: false,
             read_only: false,
             auto_close_pairs: false,
+            autosave_secs: 0,
             settings: None,
         }
     }

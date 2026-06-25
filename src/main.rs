@@ -99,6 +99,7 @@ fn run(file_path: Option<PathBuf>, read_only: bool) -> io::Result<()> {
 
     app.read_only = read_only;
     app.auto_close_pairs = config.layout.auto_close_pairs.unwrap_or(false);
+    app.autosave_secs = config.layout.autosave_seconds.map(|n| n as u64).unwrap_or(0);
 
     if read_only {
         app.status

@@ -209,6 +209,9 @@ pub struct App {
     /// over instead of inserting a duplicate.  Mirrors `[layout] auto_close_pairs`
     /// from config.  Default false.
     pub auto_close_pairs: bool,
+    /// Seconds between automatic saves.  0 = disabled.  Mirrors
+    /// `[layout] autosave_seconds` from config; set by caller after `App::new`.
+    pub autosave_secs: u64,
     /// Open settings modal (F2).  `None` when the modal is closed.
     pub settings: Option<SettingsModal>,
 }
@@ -275,6 +278,7 @@ impl App {
             show_shortcuts: false,
             read_only: false, // set by caller via app.read_only = read_only after new()
             auto_close_pairs: false, // set by caller via app.auto_close_pairs after new()
+            autosave_secs: 0, // set by caller via app.autosave_secs after new()
             settings: None,
         })
     }
@@ -495,6 +499,7 @@ mod tests {
             show_shortcuts: false,
             read_only: false,
             auto_close_pairs: false,
+            autosave_secs: 0,
             settings: None,
         }
     }
