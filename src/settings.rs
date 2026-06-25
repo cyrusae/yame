@@ -2035,7 +2035,10 @@ mod tests {
         m.field = 9;
         m.input_buf = "0".to_string();
         assert!(m.commit_input());
-        assert!(m.config.layout.autosave_seconds.is_none(), "\"0\" must disable autosave");
+        assert!(
+            m.config.layout.autosave_seconds.is_none(),
+            "\"0\" must disable autosave"
+        );
     }
 
     #[test]
