@@ -49,6 +49,7 @@ fn make_app() -> App {
         show_shortcuts: false,
         read_only: false,
         auto_close_pairs: false,
+        autosave_secs: 0,
         settings: None,
     }
 }

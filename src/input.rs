@@ -1122,11 +1122,35 @@ fn handle_enter(app: &mut App) -> KeyOutcome {
         return KeyOutcome::Continue;
     }
 
-    // Plain Enter — same as the `_` arm for a non-nav key that doesn't pair-wrap.
+    // Plain Enter — inherit leading whitespace from the current line, then newline.
+    let indent: String = line
+        .chars()
+        .take_while(|c| *c == ' ' || *c == '\t')
+        .collect();
+
+    // "Exit indent" — Enter on a pure-whitespace line strips one indent level
+    // instead of producing another indented blank line (mirrors list exit).
+    if !indent.is_empty() && indent.len() == line.len() {
+        let strip = if indent.starts_with('\t') {
+            1
+        } else {
+            app.tab_width.min(indent.len())
+        };
+        app.textarea
+            .move_cursor(CursorMove::Jump(row as u16, strip as u16));
+        app.textarea.delete_line_by_head();
+        app.force_redecorate = true;
+        app.mark_keystroke();
+        return KeyOutcome::Continue;
+    }
+
     let prev_line_count = app.textarea.lines().len();
     app.textarea.insert_newline();
     if app.textarea.lines().len() != prev_line_count {
         app.force_redecorate = true;
+    }
+    if !indent.is_empty() {
+        app.textarea.insert_str(&indent);
     }
     app.mark_keystroke();
     KeyOutcome::Continue
@@ -1296,6 +1320,7 @@ fn do_commit_settings(app: &mut App, deco_tx: &std::sync::mpsc::Sender<DecorateR
             app.powerline_glyphs = cfg.layout.powerline_glyphs.unwrap_or(true);
             app.tab_width = cfg.layout.tab_width.unwrap_or(4) as usize;
             app.auto_close_pairs = cfg.layout.auto_close_pairs.unwrap_or(false);
+            app.autosave_secs = cfg.layout.autosave_seconds.map(|n| n as u64).unwrap_or(0);
             app.typewriter_mode = new_tw;
             app.focus_mode = new_fm;
             app.read_only = new_ro;
@@ -1373,6 +1398,7 @@ where
 
     let mut last_editor_area = Rect::default();
     let mut drag_selecting = false;
+    let mut last_autosave = std::time::Instant::now();
 
     loop {
         // Apply the latest completed decoration result from the background worker.
@@ -1404,6 +1430,16 @@ where
                 s.update_matches(&lines);
             }
             app.search_last_typed = None;
+        }
+
+        // Autosave: fire when enabled, dirty, file known, and interval elapsed.
+        if app.autosave_secs > 0
+            && app.is_dirty
+            && app.file_path.is_some()
+            && last_autosave.elapsed() >= Duration::from_secs(app.autosave_secs)
+        {
+            handle_save(app)?;
+            last_autosave = std::time::Instant::now();
         }
 
         app.status.tick();
@@ -1563,6 +1599,7 @@ where
                             // Save doesn't move the cursor, so keep the viewport where it was.
                             app.free_scroll = prev_free_scroll;
                             handle_save(app)?;
+                            last_autosave = std::time::Instant::now();
                         }
                         KeyOutcome::SaveAndExit => {
                             handle_save(app)?;
@@ -1599,6 +1636,11 @@ where
                             app.show_line_numbers = new_config.layout.line_numbers.unwrap_or(false);
                             app.auto_close_pairs =
                                 new_config.layout.auto_close_pairs.unwrap_or(false);
+                            app.autosave_secs = new_config
+                                .layout
+                                .autosave_seconds
+                                .map(|n| n as u64)
+                                .unwrap_or(0);
                             app.config_warnings = warnings;
                             app.status
                                 .set_timed("Config reloaded.", Duration::from_millis(1500));
@@ -1839,6 +1881,7 @@ mod tests {
             show_shortcuts: false,
             read_only: false,
             auto_close_pairs: false,
+            autosave_secs: 0,
             settings: None,
         }
     }
@@ -4239,6 +4282,122 @@ mod tests {
             "Enter on plain text must add a new line"
         );
         assert_eq!(app.textarea.lines()[1], "", "new line must be empty");
+    }
+
+    // Kills: delete indent-inheritance arm → new line has no leading spaces.
+    #[test]
+    fn enter_on_indented_line_inherits_indent() {
+        let mut app = make_app();
+        app.textarea = TextArea::new(vec!["    hello".to_string()]);
+        app.textarea.move_cursor(tui_textarea::CursorMove::End);
+        handle_key_event(&mut app, key(KeyCode::Enter));
+        assert_eq!(app.textarea.lines().len(), 2, "must add a line");
+        assert_eq!(
+            app.textarea.lines()[1],
+            "    ",
+            "new line must carry the 4-space indent"
+        );
+    }
+
+    // Kills: negate the is_empty guard → insert_str called on non-indented line (no-op,
+    // but proves the condition is checked). Separate from the above to give a non-empty
+    // indent case and an empty-indent case.
+    #[test]
+    fn enter_on_unindented_line_no_indent_inserted() {
+        let mut app = make_app();
+        app.textarea = TextArea::new(vec!["hello".to_string()]);
+        app.textarea.move_cursor(tui_textarea::CursorMove::End);
+        handle_key_event(&mut app, key(KeyCode::Enter));
+        assert_eq!(
+            app.textarea.lines()[1],
+            "",
+            "unindented line must yield empty new line"
+        );
+    }
+
+    // Kills: delete tab from take_while → tabs are not recognised as indent chars.
+    #[test]
+    fn enter_on_tab_indented_line_inherits_tab() {
+        let mut app = make_app();
+        app.textarea = TextArea::new(vec!["\t\tcode".to_string()]);
+        app.textarea.move_cursor(tui_textarea::CursorMove::End);
+        handle_key_event(&mut app, key(KeyCode::Enter));
+        assert_eq!(
+            app.textarea.lines()[1],
+            "\t\t",
+            "tab-indented line must carry the tabs"
+        );
+    }
+
+    // Kills: delete exit-indent branch → Enter on empty indented line adds another
+    // indented blank line instead of stripping one indent level.
+    #[test]
+    fn enter_on_empty_indented_line_strips_one_level() {
+        let mut app = make_app();
+        // Line 0 has content; line 1 is pure-whitespace indent (4 spaces, tab_width=4).
+        app.textarea = TextArea::new(vec!["content".to_string(), "    ".to_string()]);
+        app.textarea.move_cursor(tui_textarea::CursorMove::Down);
+        handle_key_event(&mut app, key(KeyCode::Enter));
+        // Line count must stay the same (no new line inserted).
+        assert_eq!(
+            app.textarea.lines().len(),
+            2,
+            "exit-indent must not add a line"
+        );
+        assert_eq!(
+            app.textarea.lines()[1],
+            "",
+            "indent must be stripped to empty"
+        );
+    }
+
+    // Kills: replace tab_width with 1 (or a constant) in the strip calculation,
+    // or replace .min with .max — 8 spaces → 4 stripped, not all 8.
+    #[test]
+    fn enter_on_double_indented_empty_line_strips_one_level_only() {
+        let mut app = make_app();
+        app.textarea = TextArea::new(vec!["        ".to_string()]); // 8 spaces, tab_width=4
+        handle_key_event(&mut app, key(KeyCode::Enter));
+        assert_eq!(
+            app.textarea.lines().len(),
+            1,
+            "exit-indent must not add a line"
+        );
+        assert_eq!(
+            app.textarea.lines()[0],
+            "    ",
+            "only one tab_width stripped"
+        );
+    }
+
+    // Kills: delete the `indent.len() == line.len()` guard → exit-indent fires on
+    // indented lines with content, stripping their prefix instead of inheriting it.
+    #[test]
+    fn enter_on_indented_line_with_content_inherits_not_exits() {
+        let mut app = make_app();
+        app.textarea = TextArea::new(vec!["    hello".to_string()]);
+        app.textarea.move_cursor(tui_textarea::CursorMove::End);
+        handle_key_event(&mut app, key(KeyCode::Enter));
+        assert_eq!(app.textarea.lines().len(), 2, "must add a new line");
+        assert_eq!(
+            app.textarea.lines()[1],
+            "    ",
+            "must inherit indent, not exit"
+        );
+    }
+
+    // Kills: strip = 1 for tabs → two tabs → one stripped, not two.
+    #[test]
+    fn enter_on_empty_tab_indented_line_strips_one_tab() {
+        let mut app = make_app();
+        app.textarea = TextArea::new(vec!["\t\t".to_string()]);
+        handle_key_event(&mut app, key(KeyCode::Enter));
+        assert_eq!(
+            app.textarea.lines().len(),
+            1,
+            "exit-indent must not add a line"
+        );
+        assert_eq!(app.textarea.lines()[0], "\t", "one tab stripped, not both");
     }
 
     // ── Ctrl+X / F2 arms ────────────────────────────────────────────────────

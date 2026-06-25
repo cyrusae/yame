@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.1.0] — 2026-06-25
+
+### Added
+- **Autosave** (opt-in) — set `autosave_seconds = 300` under `[layout]` in config to save automatically when dirty; also configurable via F2 → Editor → Autosave (secs); default off (#268)
+- **Indentation inheritance on Enter** — pressing Enter on an indented line carries the leading whitespace onto the new line, matching the existing list-continuation mechanic; pressing Enter on a blank indented line strips one indent level instead of adding another (#269)
+
+### Changed
+- Status bar: removed `^O Open` shortcut hint; functionality (`Ctrl+O` file picker) is unchanged but the hint depended on `fzf`/`lf` being installed (#267)
+
+### Fixed
+- Settings modal: border segments (`│`) were missing on the right and left edges of unused field slots when the "Show more" section was collapsed (#270)
+- Saving (`Ctrl+S`) no longer snaps the viewport to the cursor position when the user has free-scrolled away from it
+- `Ctrl+X` cut is now a no-op (instead of deleting without copying) when the system clipboard is unavailable (headless / no X11/Wayland)
+
 ## [1.0.0] — 2026-06-21
 
 ### Added

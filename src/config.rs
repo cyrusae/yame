@@ -110,6 +110,9 @@ pub struct LayoutConfig {
     /// before a `)` skips over it instead of inserting a duplicate.
     /// Applies to `( [ { " ' \` * _`. Default false.
     pub auto_close_pairs: Option<bool>,
+    /// Seconds between automatic saves.  `None` or `0` disables autosave (default).
+    /// Only fires when a file path is known and the buffer is dirty.
+    pub autosave_seconds: Option<u32>,
 }
 
 /// Configuration for syntax highlighting of fenced code blocks.
@@ -1012,6 +1015,7 @@ pub const DEFAULT_CONFIG_TEMPLATE: &str = r##"# yame configuration
 # powerline_glyphs  = true   # set false to use the universal │ separator (no Nerd Font required)
 # line_numbers      = false  # set true to show line numbers in the left gutter
 # auto_close_pairs  = false  # set true to auto-insert closing delimiters: ( → (), [ → [], " → "", etc.
+# autosave_seconds  = 0      # seconds between autosaves; 0 or absent = disabled
 
 # ── Syntax highlighting ────────────────────────────────────────────────────────
 [highlighting]

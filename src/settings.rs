@@ -270,6 +270,10 @@ pub const EDITOR_FIELDS: &[FieldDef] = &[
         label: "Tab width",
         kind: FieldKind::Number { allow_none: false },
     },
+    FieldDef {
+        label: "Autosave (secs)",
+        kind: FieldKind::Number { allow_none: true },
+    },
 ];
 
 // ---------------------------------------------------------------------------
@@ -980,6 +984,11 @@ fn editor_value(modal: &SettingsModal, field: usize) -> String {
             .tab_width
             .map(|n| n.to_string())
             .unwrap_or_else(|| "4".to_string()),
+        9 => cfg
+            .layout
+            .autosave_seconds
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| "off".to_string()),
         _ => String::new(),
     }
 }
@@ -1121,6 +1130,17 @@ fn commit_editor(modal: &mut SettingsModal, v: &str) -> bool {
         8 => {
             if let Ok(n) = v.parse::<u16>() {
                 modal.config.layout.tab_width = Some(n.max(1));
+                true
+            } else {
+                false
+            }
+        }
+        9 => {
+            if v.is_empty() || v == "off" || v == "0" {
+                modal.config.layout.autosave_seconds = None;
+                true
+            } else if let Ok(n) = v.parse::<u32>() {
+                modal.config.layout.autosave_seconds = Some(n.max(1));
                 true
             } else {
                 false
@@ -1967,6 +1987,58 @@ mod tests {
             "max_cols default"
         );
         assert_eq!(m.field_value(8), "4", "tab_width default");
+        assert_eq!(m.field_value(9), "off", "autosave default");
+    }
+
+    // Kills: delete autosave arm in editor_value → returns "" instead of seconds.
+    #[test]
+    fn editor_value_autosave_when_set() {
+        let mut m = make_modal();
+        m.tab = 1;
+        m.config.layout.autosave_seconds = Some(300);
+        assert_eq!(m.field_value(9), "300");
+    }
+
+    // Kills: delete arm 9 in commit_editor → returns false, value not stored.
+    #[test]
+    fn commit_autosave_seconds_stores_value() {
+        let mut m = make_modal();
+        m.tab = 1;
+        m.field = 9;
+        m.input_buf = "300".to_string();
+        assert!(m.commit_input());
+        assert_eq!(m.config.layout.autosave_seconds, Some(300));
+    }
+
+    // Kills: replace None with Some(0) (or similar) in the off/empty branch.
+    #[test]
+    fn commit_autosave_off_clears_value() {
+        let mut m = make_modal();
+        m.tab = 1;
+        m.field = 9;
+        m.config.layout.autosave_seconds = Some(300);
+        m.input_buf = "off".to_string();
+        assert!(m.commit_input());
+        assert!(m.config.layout.autosave_seconds.is_none());
+        // Empty string also disables.
+        m.config.layout.autosave_seconds = Some(300);
+        m.input_buf = String::new();
+        assert!(m.commit_input());
+        assert!(m.config.layout.autosave_seconds.is_none());
+    }
+
+    // Kills: remove the .max(1) clamp → "0" stores Some(0) instead of Some(1).
+    #[test]
+    fn commit_autosave_zero_string_disables() {
+        let mut m = make_modal();
+        m.tab = 1;
+        m.field = 9;
+        m.input_buf = "0".to_string();
+        assert!(m.commit_input());
+        assert!(
+            m.config.layout.autosave_seconds.is_none(),
+            "\"0\" must disable autosave"
+        );
     }
 
     #[test]
