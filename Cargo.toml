@@ -14,7 +14,7 @@ exclude = [".chainlink", ".claude", ".github", "_docs", "_info", ".antigravitycl
 
 [dependencies]
 ratatui = "0.30"
-tui-textarea-2 = { version = "0.11", features = ["crossterm"] }
+tui-textarea-2 = { version = "0.13", features = ["crossterm"] }
 crossterm = "0.29"
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
 serde = { version = "1", features = ["derive"] }
