@@ -160,7 +160,7 @@ preset = "dracula"
 
 Available presets: `catppuccin-mocha` (default), `catppuccin-latte`, `catppuccin-frappe`, `catppuccin-macchiato`, `dracula`, `nord`, `gruvbox-dark`, `solarized-dark`, `solarized-light`, `tokyo-night`, `rose-pine`, `rose-pine-moon`, `rose-pine-dawn`, `github-light`.
 
-Append `-expanded` to any name (e.g. `"dracula-expanded"`) for rainbow per-level heading colors and per-theme italic and bold tints.
+Append `-expanded` to any name (e.g. `"dracula-expanded"`) for rainbow per-level heading colors and per-theme italic, bold, and math tints.
 
 See [`_info/THEMES.md`](_info/THEMES.md) for the full preset list, override order, and per-element reference.
 
@@ -208,7 +208,7 @@ Optional per-element overrides. These take precedence over the derived defaults.
 # highlight_fg        = "#cdd6f4"   # ==text== foreground
 # frontmatter_key     = "#a6e3a1"   # YAML/TOML frontmatter key color (default: code green)
 # frontmatter_bg      = "#1e2620"   # YAML/TOML frontmatter block background (default: code at 15%)
-# math_color          = "#a6e3a1"   # LaTeX $…$ / $$…$$ math (default: code color, no background)
+# math_color          = "#a6e3a1"   # LaTeX $…$ / $$…$$ math (default: code color, no background; -expanded presets pick their own)
 ```
 
 ### Per-level heading colors

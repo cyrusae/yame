@@ -38,14 +38,14 @@ If no preset is set, yame defaults to **Catppuccin Mocha**.
 
 ## Expanded Variants
 
-Append `-expanded` to any preset name to enable **rainbow heading colors** and **per-theme italic and bold tints**:
+Append `-expanded` to any preset name to enable **rainbow heading colors** and **per-theme italic, bold, and math tints**:
 
 ```toml
 [palette]
 preset = "dracula-expanded"
 ```
 
-Expanded variants assign distinct colors to H1–H6 sourced from each theme's own palette (Dracula's cyan, green, yellow, etc. rather than all headings inheriting the accent color). Italic and bold text also get complementary tints chosen for that theme (e.g. Catppuccin Rosewater italic / Peach bold, Rosé Pine Rose italic / Gold bold).
+Expanded variants assign distinct colors to H1–H6 sourced from each theme's own palette (Dracula's cyan, green, yellow, etc. rather than all headings inheriting the accent color). Italic, bold, and LaTeX math also get complementary tints chosen for that theme (e.g. Catppuccin Rosewater italic / Peach bold / Teal math, Rosé Pine Rose italic / Gold bold / Pine math).
 
 Every preset has an `-expanded` variant: `catppuccin-mocha-expanded`, `nord-expanded`, `rose-pine-expanded`, `github-light-expanded`, and so on.
 
@@ -101,7 +101,7 @@ Fine-grained control over specific UI elements. These take precedence over both 
 # highlight_fg        = "#cdd6f4"   # ==text== foreground
 # frontmatter_key     = "#a6e3a1"   # YAML/TOML frontmatter key color
 # frontmatter_bg      = "#1e2620"   # YAML/TOML frontmatter block background
-# math_color          = "#a6e3a1"   # LaTeX $…$ / $$…$$ math (default: code color, no background)
+# math_color          = "#a6e3a1"   # LaTeX $…$ / $$…$$ math (default: code color, no background; -expanded presets pick their own)
 ```
 
 ### Per-heading colors
@@ -126,7 +126,7 @@ When computing the final color for any element, yame applies values in this orde
 
 1. Built-in Mocha defaults
 2. Named preset base colors (`[palette] preset`)
-3. Expanded preset overrides (rainbow headings, italic and bold tints) if `-expanded` suffix is used
+3. Expanded preset overrides (rainbow headings, italic, bold, and math tints) if `-expanded` suffix is used
 4. Individual `[palette]` fields (`text`, `accent`, `muted`, `code`, `bg`, `warning`)
 5. `[headings]` per-level colors
 6. `[theme]` per-element overrides

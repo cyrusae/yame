@@ -858,6 +858,10 @@ mod tests {
     #[test]
     fn word_count_counts_code_content() {
         assert_eq!(count_words("`word`"), 1);
+        // Math is excluded, consistent with build_decoration_map's count.
+        let text = "Euler: $e^{i \\pi} + 1 = 0$ and\n\n$$\na + b\n$$\n";
+        assert_eq!(count_words(text), 2);
+        assert_eq!(build_decoration_map(text, &make_theme(), true, None).1, 2);
     }
 
     // ---- Multi-byte safety ----

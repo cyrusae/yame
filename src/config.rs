@@ -481,6 +481,9 @@ pub struct PaletteExpansion {
     /// from both `italic_color` and the base accent so bold, italic, and links
     /// stay mutually distinguishable.
     pub bold_color: &'static str,
+    /// LaTeX math color — a theme-native hue distinct from code, bold, italic,
+    /// and accent, so math reads as its own thing alongside inline code.
+    pub math_color: &'static str,
 }
 
 // Catppuccin expansions — rainbow order: Rosewater → Flamingo → Pink → Mauve → Red → Maroon
@@ -493,6 +496,7 @@ const CATPPUCCIN_MOCHA_EXP: PaletteExpansion = PaletteExpansion {
     h6: "#eba0ac",
     italic_color: "#f5e0dc", // Rosewater — warm warmth for emphasis
     bold_color: "#fab387",   // Peach
+    math_color: "#94e2d5",   // Teal
 };
 const CATPPUCCIN_MACCHIATO_EXP: PaletteExpansion = PaletteExpansion {
     h1: "#f4dbd6",
@@ -503,6 +507,7 @@ const CATPPUCCIN_MACCHIATO_EXP: PaletteExpansion = PaletteExpansion {
     h6: "#ee99a0",
     italic_color: "#f4dbd6",
     bold_color: "#f5a97f", // Peach
+    math_color: "#8bd5ca", // Teal
 };
 const CATPPUCCIN_FRAPPE_EXP: PaletteExpansion = PaletteExpansion {
     h1: "#f2d5cf",
@@ -513,6 +518,7 @@ const CATPPUCCIN_FRAPPE_EXP: PaletteExpansion = PaletteExpansion {
     h6: "#ea999c",
     italic_color: "#f2d5cf",
     bold_color: "#ef9f76", // Peach
+    math_color: "#81c8be", // Teal
 };
 const CATPPUCCIN_LATTE_EXP: PaletteExpansion = PaletteExpansion {
     h1: "#dc8a78",
@@ -523,6 +529,7 @@ const CATPPUCCIN_LATTE_EXP: PaletteExpansion = PaletteExpansion {
     h6: "#e64553",
     italic_color: "#dc8a78",
     bold_color: "#fe640b", // Peach
+    math_color: "#179299", // Teal
 };
 
 // Dracula expansion — rainbow from Dracula's full palette
@@ -535,6 +542,7 @@ const DRACULA_EXP: PaletteExpansion = PaletteExpansion {
     h6: "#bd93f9",
     italic_color: "#ff79c6", // Pink — traditional Dracula italic
     bold_color: "#ffb86c",   // Orange
+    math_color: "#8be9fd",   // Cyan
 };
 
 // Nord expansion — Aurora palette (Red → Orange → Yellow → Green → Frost → Purple)
@@ -547,6 +555,7 @@ const NORD_EXP: PaletteExpansion = PaletteExpansion {
     h6: "#b48ead",
     italic_color: "#81a1c1", // Frost1 — slightly softer than accent Frost2
     bold_color: "#ebcb8b",   // Aurora Yellow
+    math_color: "#8fbcbb",   // Frost0
 };
 
 // Gruvbox Dark expansion — bright palette (Red → Orange → Yellow → Green → Aqua → Blue)
@@ -559,6 +568,7 @@ const GRUVBOX_DARK_EXP: PaletteExpansion = PaletteExpansion {
     h6: "#83a598",
     italic_color: "#fe8019", // bright orange
     bold_color: "#fabd2f",   // bright yellow
+    math_color: "#8ec07c",   // bright aqua
 };
 
 // Solarized expansions — full Solarized accent palette
@@ -571,6 +581,7 @@ const SOLARIZED_DARK_EXP: PaletteExpansion = PaletteExpansion {
     h6: "#268bd2",
     italic_color: "#2aa198", // cyan — Solarized's traditional italic/string color
     bold_color: "#b58900",   // yellow
+    math_color: "#6c71c4",   // violet
 };
 const SOLARIZED_LIGHT_EXP: PaletteExpansion = PaletteExpansion {
     h1: "#dc322f",
@@ -581,6 +592,7 @@ const SOLARIZED_LIGHT_EXP: PaletteExpansion = PaletteExpansion {
     h6: "#268bd2",
     italic_color: "#2aa198",
     bold_color: "#b58900", // yellow
+    math_color: "#6c71c4", // violet
 };
 
 // Tokyo Night expansion — full accent palette
@@ -593,6 +605,7 @@ const TOKYO_NIGHT_EXP: PaletteExpansion = PaletteExpansion {
     h6: "#7dcfff",
     italic_color: "#7dcfff", // sky blue
     bold_color: "#ff9e64",   // orange
+    math_color: "#73daca",   // teal
 };
 
 // Rosé Pine expansions — Love · Gold · Rose · Iris · Pine · Foam
@@ -605,6 +618,7 @@ const ROSE_PINE_EXP: PaletteExpansion = PaletteExpansion {
     h6: "#9ccfd8",
     italic_color: "#ebbcba", // Rose — warm rosy emphasis
     bold_color: "#f6c177",   // Gold
+    math_color: "#31748f",   // Pine
 };
 const ROSE_PINE_MOON_EXP: PaletteExpansion = PaletteExpansion {
     h1: "#eb6f92",
@@ -615,6 +629,7 @@ const ROSE_PINE_MOON_EXP: PaletteExpansion = PaletteExpansion {
     h6: "#9ccfd8",
     italic_color: "#ebbcba",
     bold_color: "#f6c177", // Gold
+    math_color: "#3e8fb0", // Pine
 };
 const ROSE_PINE_DAWN_EXP: PaletteExpansion = PaletteExpansion {
     h1: "#b4637a",
@@ -625,6 +640,7 @@ const ROSE_PINE_DAWN_EXP: PaletteExpansion = PaletteExpansion {
     h6: "#56949f",
     italic_color: "#d7827a", // Rose (Dawn variant)
     bold_color: "#ea9d34",   // Gold (Dawn variant)
+    math_color: "#286983",   // Pine
 };
 
 // GitHub Light expansion — GitHub's semantic color palette
@@ -637,6 +653,7 @@ const GITHUB_LIGHT_EXP: PaletteExpansion = PaletteExpansion {
     h6: "#8250df",
     italic_color: "#953800", // orange — GitHub attribute/annotation color
     bold_color: "#9a6700",   // attention yellow-brown
+    math_color: "#8250df",   // purple
 };
 
 // ---------------------------------------------------------------------------
@@ -685,7 +702,8 @@ pub fn palette_preset(name: &str) -> Option<&'static PaletteBase> {
 
 /// Look up the *expansion* for an expanded preset variant (case-insensitive).
 ///
-/// An expansion provides rainbow heading colors and theme-native italic and bold tints.
+/// An expansion provides rainbow heading colors and theme-native italic, bold,
+/// and math tints.
 /// Returns `None` when the name has no `-expanded` suffix **or** when the base
 /// preset is not recognised.
 pub fn palette_expansion(name: &str) -> Option<&'static PaletteExpansion> {
@@ -856,7 +874,11 @@ impl Theme {
         let frontmatter_key_rgb = resolve(&overrides.frontmatter_key, code_rgb, warnings);
         // Math color: code hue by default (math is literal source); rendered
         // without code_bg so inline math and inline code remain distinct.
-        let math_color_rgb = resolve(&overrides.math_color, code_rgb, warnings);
+        // Expanded presets supply their own hue; [theme] math_color still wins.
+        let math_default = expansion
+            .and_then(|e| parse_hex_color(e.math_color).ok())
+            .unwrap_or(code_rgb);
+        let math_color_rgb = resolve(&overrides.math_color, math_default, warnings);
         // Frontmatter background: code blended 15% toward bg, same recipe as
         // heading_bg but using the code hue so the block reads as a distinct
         // "data" surface rather than a heading.
@@ -997,7 +1019,7 @@ pub const DEFAULT_CONFIG_TEMPLATE: &str = r##"# yame configuration
 #   dracula · nord · gruvbox-dark · solarized-dark · solarized-light · tokyo-night
 #   rose-pine · rose-pine-moon · rose-pine-dawn · github-light
 #
-# Append -expanded for rainbow headings + per-theme italic and bold tints:
+# Append -expanded for rainbow headings + per-theme italic, bold, and math tints:
 #   e.g. "catppuccin-mocha-expanded", "dracula-expanded", "rose-pine-expanded"
 [palette]
 # preset  = "catppuccin-mocha"   # switch to any preset above; add -expanded for rainbow headings
@@ -1032,7 +1054,7 @@ pub const DEFAULT_CONFIG_TEMPLATE: &str = r##"# yame configuration
 # highlight_fg        = "#cdd6f4"  # ==text== foreground
 # frontmatter_key     = "#a6e3a1"  # YAML/TOML frontmatter key color (default: code green)
 # frontmatter_bg      = "#1e2620"  # YAML/TOML frontmatter block background (default: code at 15%)
-# math_color          = "#a6e3a1"  # LaTeX $…$ / $$…$$ math (default: code green, no background)
+# math_color          = "#a6e3a1"  # LaTeX $…$ / $$…$$ math (default: code green, no background; -expanded presets pick their own)
 
 # ── Per-level heading colors ──────────────────────────────────────────────────
 [headings]
@@ -1834,6 +1856,21 @@ mod tests {
                 parse_hex_color(base.accent).unwrap(),
                 "{name}: bold == accent"
             );
+            let math = parse_hex_color(exp.math_color).expect("math_color must be valid hex");
+            for (other, what) in [
+                (base.code, "code"),
+                (base.accent, "accent"),
+                (base.text, "text"),
+                (base.warning, "warning"),
+                (exp.italic_color, "italic"),
+                (exp.bold_color, "bold"),
+            ] {
+                assert_ne!(
+                    math,
+                    parse_hex_color(other).unwrap(),
+                    "{name}: math == {what}"
+                );
+            }
         }
     }
 
@@ -1855,6 +1892,52 @@ mod tests {
             Color::Rgb(0xfa, 0xb3, 0x87),
             "Mocha expanded bold must be Peach"
         );
+    }
+
+    #[test]
+    fn expanded_preset_uses_expansion_math_color_and_override_wins() {
+        let palette = Palette {
+            preset: Some("dracula-expanded".into()),
+            ..Default::default()
+        };
+        let mut w = Vec::new();
+        let theme = Theme::from_config(
+            &palette,
+            &ThemeOverrides::default(),
+            &HeadingColors::default(),
+            &mut w,
+        );
+        assert_eq!(
+            theme.math_color,
+            Color::Rgb(0x8b, 0xe9, 0xfd),
+            "Dracula math = Cyan"
+        );
+        let overrides = ThemeOverrides {
+            math_color: Some("#010203".into()),
+            ..Default::default()
+        };
+        let theme = Theme::from_config(&palette, &overrides, &HeadingColors::default(), &mut w);
+        assert_eq!(
+            theme.math_color,
+            Color::Rgb(1, 2, 3),
+            "[theme] math_color must win"
+        );
+    }
+
+    #[test]
+    fn base_preset_math_color_is_code() {
+        let palette = Palette {
+            preset: Some("dracula".into()),
+            ..Default::default()
+        };
+        let mut w = Vec::new();
+        let theme = Theme::from_config(
+            &palette,
+            &ThemeOverrides::default(),
+            &HeadingColors::default(),
+            &mut w,
+        );
+        assert_eq!(theme.math_color, theme.code_color);
     }
 
     #[test]

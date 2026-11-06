@@ -11,7 +11,7 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 use yame::app::{App, is_likely_binary, resolve_file_mode};
 use yame::config::{Theme, load_config, supports_italic};
 use yame::decoration::{
-    DecorationMap, block_highlights_to_decoration_map, build_decoration_map, count_words,
+    DecorationMap, block_highlights_to_decoration_map, build_decoration_map, count_words_plain,
 };
 
 mod cli;
@@ -133,10 +133,10 @@ fn run(file_path: Option<PathBuf>, read_only: bool) -> io::Result<()> {
                 .and_then(|cache| cache.highlight_block(&lang, &text))
                 .map(|hl| block_highlights_to_decoration_map(&hl, 0))
                 .unwrap_or_default();
-            let wc = count_words(&text);
+            let wc = count_words_plain(&text);
             (map, wc)
         }
-        yame::app::FileMode::PlainText => (DecorationMap::default(), count_words(&text)),
+        yame::app::FileMode::PlainText => (DecorationMap::default(), count_words_plain(&text)),
     };
     app.decoration_map = deco_map;
     app.word_count = wc;
