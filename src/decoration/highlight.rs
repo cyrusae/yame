@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
 use ratatui::style::Style;
@@ -82,11 +82,25 @@ fn fill_highlight_gaps(
     }
 }
 
+/// Returns `true` when `[start, end)` on `line_idx` overlaps any recorded
+/// inline-math char range.
+fn overlaps_math(
+    math_ranges: &HashMap<usize, Vec<(usize, usize)>>,
+    line_idx: usize,
+    start: usize,
+    end: usize,
+) -> bool {
+    math_ranges
+        .get(&line_idx)
+        .is_some_and(|rs| rs.iter().any(|&(ms, me)| start < me && ms < end))
+}
+
 pub(crate) fn apply_highlight_spans(
     map: &mut DecorationMap,
     text: &str,
     line_starts: &[usize],
     code_block_lines: &HashSet<usize>,
+    math_ranges: &HashMap<usize, Vec<(usize, usize)>>,
     frontmatter_end: Option<usize>,
     theme: &Theme,
 ) {
@@ -145,6 +159,12 @@ pub(crate) fn apply_highlight_spans(
 
             // Guard: require at least one character of content.
             if open_end >= close_start {
+                continue;
+            }
+
+            // Skip matches that overlap LaTeX math — `$a==b$` is an equation,
+            // not a highlight.
+            if overlaps_math(math_ranges, line_idx, open_start, close_end) {
                 continue;
             }
 

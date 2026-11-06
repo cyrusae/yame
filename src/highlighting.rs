@@ -227,6 +227,17 @@ pub struct HighlightCache {
     pub enabled: bool,
 }
 
+/// Map fence-language aliases syntect does not know onto a known grammar.
+///
+/// `math` fences (GitHub / Obsidian style) contain LaTeX, so they reuse the
+/// LaTeX grammar.  Any other name is passed through unchanged.
+fn lang_alias(lang_lower: &str) -> String {
+    match lang_lower {
+        "math" => "latex".to_string(),
+        other => other.to_string(),
+    }
+}
+
 impl HighlightCache {
     const FALLBACK_THEME: &'static str = "base16-ocean.dark";
 
@@ -258,7 +269,7 @@ impl HighlightCache {
             return None;
         }
 
-        let lang_lower = lang.to_lowercase();
+        let lang_lower = lang_alias(&lang.to_lowercase());
         let hash = hash_str(content);
         let key = (lang_lower.clone(), hash);
 
@@ -393,6 +404,25 @@ mod tests {
     /// Cache using the default built-in theme (no palette).
     fn make_cache() -> HighlightCache {
         HighlightCache::new(true, "base16-ocean.dark".into(), None)
+    }
+
+    #[test]
+    fn math_fence_aliases_to_latex() {
+        let cache = make_cache();
+        let src = "\\frac{a}{b}\n";
+        let math = cache
+            .highlight_block("math", src)
+            .expect("math fence must highlight");
+        let latex = cache
+            .highlight_block("latex", src)
+            .expect("latex fence must highlight");
+        assert_eq!(math, latex, "```math must use the LaTeX grammar");
+    }
+
+    #[test]
+    fn lang_alias_passes_unknown_names_through() {
+        assert_eq!(lang_alias("rust"), "rust");
+        assert_eq!(lang_alias("math"), "latex");
     }
 
     /// Cache using the palette-derived theme built from the default yame theme.

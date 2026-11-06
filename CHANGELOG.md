@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### Added
+- design: LaTeX math highlighting + bold text color (#272)
+- feat: LaTeX math highlighting ($…$, $$…$$, math fence alias) (#274)
+- feat: bold_color in PaletteExpansion (expanded presets) (#273)
+- **Bold tint for expanded presets** — `-expanded` presets now color bold text with a theme-native hue distinct from italic and accent (e.g. Catppuccin Peach, Dracula Orange, Rosé Pine Gold); base presets keep bold in the text color, and `[theme] bold_color` still overrides (#273)
+- **LaTeX math highlighting** — `$…$` inline and `$$…$$` display math are decorated in a new `math_color` token (default: code color, *without* the inline-code background so `$x$` and `` `x` `` stay distinct); `$`/`$$` delimiters recede like other delimiters; `$$` blocks standing alone on their lines get the fenced-block panel; `==` inside math is no longer treated as a highlight; currency like `$5 and $10` is left alone. ` ```math ` fences now highlight with the LaTeX grammar. `math_color` is configurable under `[theme]` and in F2 → Appearance (#274)
+
 ## [1.1.0] — 2026-06-25
 
 ### Added

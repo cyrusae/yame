@@ -65,6 +65,10 @@ pub struct ThemeOverrides {
     /// Default: `code` blended 15 % toward `bg` — a subtle green panel distinct
     /// from the accent-tinted heading background.
     pub frontmatter_bg: Option<String>,
+    /// Foreground colour for LaTeX math (`$…$` inline, `$$…$$` display).
+    /// Default: `code` colour — math is literal source like code, but is drawn
+    /// without `code_bg` so `$x$` stays distinguishable from `` `x` ``.
+    pub math_color: Option<String>,
 }
 
 /// Per-level heading color overrides (all optional).
@@ -231,6 +235,8 @@ pub struct Theme {
     // frontmatter
     pub frontmatter_key: Color,
     pub frontmatter_bg: Color,
+    // LaTeX math ($…$ / $$…$$)
+    pub math_color: Color,
     // per-level headings
     pub headings: HeadingTheme,
     pub delimiter_blend: f32,
@@ -459,7 +465,7 @@ const GITHUB_LIGHT: PaletteBase = PaletteBase {
 /// Optional per-preset extra derived colors.
 ///
 /// An *expanded* preset (e.g. `preset = "catppuccin-mocha-expanded"`) uses
-/// these values as the default for heading colors and italic color.
+/// these values as the default for heading colors, italic color, and bold color.
 /// User `[headings]` and `[theme]` overrides always win over the expansion.
 pub struct PaletteExpansion {
     // Per-level heading colors (h1 → h6, warm-to-cool or theme-native order).
@@ -471,6 +477,10 @@ pub struct PaletteExpansion {
     pub h6: &'static str,
     /// Italic text color (e.g. theme's Pink or Sky token).
     pub italic_color: &'static str,
+    /// Bold text color (e.g. theme's Peach or Gold token) — chosen to differ
+    /// from both `italic_color` and the base accent so bold, italic, and links
+    /// stay mutually distinguishable.
+    pub bold_color: &'static str,
 }
 
 // Catppuccin expansions — rainbow order: Rosewater → Flamingo → Pink → Mauve → Red → Maroon
@@ -482,6 +492,7 @@ const CATPPUCCIN_MOCHA_EXP: PaletteExpansion = PaletteExpansion {
     h5: "#f38ba8",
     h6: "#eba0ac",
     italic_color: "#f5e0dc", // Rosewater — warm warmth for emphasis
+    bold_color: "#fab387",   // Peach
 };
 const CATPPUCCIN_MACCHIATO_EXP: PaletteExpansion = PaletteExpansion {
     h1: "#f4dbd6",
@@ -491,6 +502,7 @@ const CATPPUCCIN_MACCHIATO_EXP: PaletteExpansion = PaletteExpansion {
     h5: "#ed8796",
     h6: "#ee99a0",
     italic_color: "#f4dbd6",
+    bold_color: "#f5a97f", // Peach
 };
 const CATPPUCCIN_FRAPPE_EXP: PaletteExpansion = PaletteExpansion {
     h1: "#f2d5cf",
@@ -500,6 +512,7 @@ const CATPPUCCIN_FRAPPE_EXP: PaletteExpansion = PaletteExpansion {
     h5: "#e78284",
     h6: "#ea999c",
     italic_color: "#f2d5cf",
+    bold_color: "#ef9f76", // Peach
 };
 const CATPPUCCIN_LATTE_EXP: PaletteExpansion = PaletteExpansion {
     h1: "#dc8a78",
@@ -509,6 +522,7 @@ const CATPPUCCIN_LATTE_EXP: PaletteExpansion = PaletteExpansion {
     h5: "#d20f39",
     h6: "#e64553",
     italic_color: "#dc8a78",
+    bold_color: "#fe640b", // Peach
 };
 
 // Dracula expansion — rainbow from Dracula's full palette
@@ -520,6 +534,7 @@ const DRACULA_EXP: PaletteExpansion = PaletteExpansion {
     h5: "#8be9fd",
     h6: "#bd93f9",
     italic_color: "#ff79c6", // Pink — traditional Dracula italic
+    bold_color: "#ffb86c",   // Orange
 };
 
 // Nord expansion — Aurora palette (Red → Orange → Yellow → Green → Frost → Purple)
@@ -531,6 +546,7 @@ const NORD_EXP: PaletteExpansion = PaletteExpansion {
     h5: "#88c0d0",
     h6: "#b48ead",
     italic_color: "#81a1c1", // Frost1 — slightly softer than accent Frost2
+    bold_color: "#ebcb8b",   // Aurora Yellow
 };
 
 // Gruvbox Dark expansion — bright palette (Red → Orange → Yellow → Green → Aqua → Blue)
@@ -542,6 +558,7 @@ const GRUVBOX_DARK_EXP: PaletteExpansion = PaletteExpansion {
     h5: "#8ec07c",
     h6: "#83a598",
     italic_color: "#fe8019", // bright orange
+    bold_color: "#fabd2f",   // bright yellow
 };
 
 // Solarized expansions — full Solarized accent palette
@@ -553,6 +570,7 @@ const SOLARIZED_DARK_EXP: PaletteExpansion = PaletteExpansion {
     h5: "#2aa198",
     h6: "#268bd2",
     italic_color: "#2aa198", // cyan — Solarized's traditional italic/string color
+    bold_color: "#b58900",   // yellow
 };
 const SOLARIZED_LIGHT_EXP: PaletteExpansion = PaletteExpansion {
     h1: "#dc322f",
@@ -562,6 +580,7 @@ const SOLARIZED_LIGHT_EXP: PaletteExpansion = PaletteExpansion {
     h5: "#2aa198",
     h6: "#268bd2",
     italic_color: "#2aa198",
+    bold_color: "#b58900", // yellow
 };
 
 // Tokyo Night expansion — full accent palette
@@ -573,6 +592,7 @@ const TOKYO_NIGHT_EXP: PaletteExpansion = PaletteExpansion {
     h5: "#73daca",
     h6: "#7dcfff",
     italic_color: "#7dcfff", // sky blue
+    bold_color: "#ff9e64",   // orange
 };
 
 // Rosé Pine expansions — Love · Gold · Rose · Iris · Pine · Foam
@@ -584,6 +604,7 @@ const ROSE_PINE_EXP: PaletteExpansion = PaletteExpansion {
     h5: "#31748f",
     h6: "#9ccfd8",
     italic_color: "#ebbcba", // Rose — warm rosy emphasis
+    bold_color: "#f6c177",   // Gold
 };
 const ROSE_PINE_MOON_EXP: PaletteExpansion = PaletteExpansion {
     h1: "#eb6f92",
@@ -593,6 +614,7 @@ const ROSE_PINE_MOON_EXP: PaletteExpansion = PaletteExpansion {
     h5: "#3e8fb0",
     h6: "#9ccfd8",
     italic_color: "#ebbcba",
+    bold_color: "#f6c177", // Gold
 };
 const ROSE_PINE_DAWN_EXP: PaletteExpansion = PaletteExpansion {
     h1: "#b4637a",
@@ -602,6 +624,7 @@ const ROSE_PINE_DAWN_EXP: PaletteExpansion = PaletteExpansion {
     h5: "#286983",
     h6: "#56949f",
     italic_color: "#d7827a", // Rose (Dawn variant)
+    bold_color: "#ea9d34",   // Gold (Dawn variant)
 };
 
 // GitHub Light expansion — GitHub's semantic color palette
@@ -613,6 +636,7 @@ const GITHUB_LIGHT_EXP: PaletteExpansion = PaletteExpansion {
     h5: "#0550ae",
     h6: "#8250df",
     italic_color: "#953800", // orange — GitHub attribute/annotation color
+    bold_color: "#9a6700",   // attention yellow-brown
 };
 
 // ---------------------------------------------------------------------------
@@ -661,7 +685,7 @@ pub fn palette_preset(name: &str) -> Option<&'static PaletteBase> {
 
 /// Look up the *expansion* for an expanded preset variant (case-insensitive).
 ///
-/// An expansion provides rainbow heading colors and a theme-native italic tint.
+/// An expansion provides rainbow heading colors and theme-native italic and bold tints.
 /// Returns `None` when the name has no `-expanded` suffix **or** when the base
 /// preset is not recognised.
 pub fn palette_expansion(name: &str) -> Option<&'static PaletteExpansion> {
@@ -766,7 +790,14 @@ impl Theme {
             }
         };
 
-        let bold_color = resolve(&overrides.bold_color, text, warnings);
+        // Bold: expansion provides a per-theme hue (e.g. Peach for Catppuccin,
+        // Gold for Rosé Pine); plain text color when no expansion is active —
+        // the BOLD modifier alone distinguishes it in base presets.
+        // [theme] bold_color always wins over the expansion default.
+        let bold_default = expansion
+            .and_then(|e| parse_hex_color(e.bold_color).ok())
+            .unwrap_or(text);
+        let bold_color = resolve(&overrides.bold_color, bold_default, warnings);
         // Italic: expansion provides a per-theme tint (e.g. Rosewater for Catppuccin,
         // Pink for Dracula); plain text color when no expansion is active.
         // [theme] italic_color always wins over the expansion default.
@@ -823,6 +854,9 @@ impl Theme {
         // Frontmatter key color: code green by default — visually distinct from
         // accent headings and makes keys easy to scan against plain-text values.
         let frontmatter_key_rgb = resolve(&overrides.frontmatter_key, code_rgb, warnings);
+        // Math color: code hue by default (math is literal source); rendered
+        // without code_bg so inline math and inline code remain distinct.
+        let math_color_rgb = resolve(&overrides.math_color, code_rgb, warnings);
         // Frontmatter background: code blended 15% toward bg, same recipe as
         // heading_bg but using the code hue so the block reads as a distinct
         // "data" surface rather than a heading.
@@ -913,6 +947,7 @@ impl Theme {
             highlight_fg: to_color(highlight_fg_rgb),
             frontmatter_key: to_color(frontmatter_key_rgb),
             frontmatter_bg: to_color(frontmatter_bg_rgb),
+            math_color: to_color(math_color_rgb),
             headings: HeadingTheme {
                 h1: to_color(h1_rgb),
                 h2: to_color(h2_rgb),
@@ -962,7 +997,7 @@ pub const DEFAULT_CONFIG_TEMPLATE: &str = r##"# yame configuration
 #   dracula · nord · gruvbox-dark · solarized-dark · solarized-light · tokyo-night
 #   rose-pine · rose-pine-moon · rose-pine-dawn · github-light
 #
-# Append -expanded for rainbow headings + per-theme italic tint:
+# Append -expanded for rainbow headings + per-theme italic and bold tints:
 #   e.g. "catppuccin-mocha-expanded", "dracula-expanded", "rose-pine-expanded"
 [palette]
 # preset  = "catppuccin-mocha"   # switch to any preset above; add -expanded for rainbow headings
@@ -997,6 +1032,7 @@ pub const DEFAULT_CONFIG_TEMPLATE: &str = r##"# yame configuration
 # highlight_fg        = "#cdd6f4"  # ==text== foreground
 # frontmatter_key     = "#a6e3a1"  # YAML/TOML frontmatter key color (default: code green)
 # frontmatter_bg      = "#1e2620"  # YAML/TOML frontmatter block background (default: code at 15%)
+# math_color          = "#a6e3a1"  # LaTeX $…$ / $$…$$ math (default: code green, no background)
 
 # ── Per-level heading colors ──────────────────────────────────────────────────
 [headings]
@@ -1754,6 +1790,108 @@ mod tests {
             theme.italic_color,
             Color::Rgb(0x12, 0x34, 0x56),
             "[theme] italic_color must override expansion italic"
+        );
+    }
+
+    #[test]
+    fn palette_expansion_bold_is_distinct_from_italic_text_and_accent() {
+        // Every expansion's bold hue must be valid hex and differ from the
+        // italic tint, the base text, and the base accent — otherwise bold
+        // would be indistinguishable from italic, plain text, or links/headings.
+        let names = [
+            "catppuccin-mocha",
+            "catppuccin-macchiato",
+            "catppuccin-frappe",
+            "catppuccin-latte",
+            "dracula",
+            "nord",
+            "gruvbox-dark",
+            "solarized-dark",
+            "solarized-light",
+            "tokyo-night",
+            "rose-pine",
+            "rose-pine-moon",
+            "rose-pine-dawn",
+            "github-light",
+        ];
+        for name in names {
+            let base = palette_preset(name).expect("base must resolve");
+            let exp =
+                palette_expansion(&format!("{name}-expanded")).expect("expansion must resolve");
+            let bold = parse_hex_color(exp.bold_color).expect("bold_color must be valid hex");
+            assert_ne!(
+                bold,
+                parse_hex_color(exp.italic_color).unwrap(),
+                "{name}: bold == italic"
+            );
+            assert_ne!(
+                bold,
+                parse_hex_color(base.text).unwrap(),
+                "{name}: bold == text"
+            );
+            assert_ne!(
+                bold,
+                parse_hex_color(base.accent).unwrap(),
+                "{name}: bold == accent"
+            );
+        }
+    }
+
+    #[test]
+    fn expanded_preset_uses_expansion_bold_color() {
+        let palette = Palette {
+            preset: Some("catppuccin-mocha-expanded".into()),
+            ..Default::default()
+        };
+        let mut w = Vec::new();
+        let theme = Theme::from_config(
+            &palette,
+            &ThemeOverrides::default(),
+            &HeadingColors::default(),
+            &mut w,
+        );
+        assert_eq!(
+            theme.bold_color,
+            Color::Rgb(0xfa, 0xb3, 0x87),
+            "Mocha expanded bold must be Peach"
+        );
+    }
+
+    #[test]
+    fn base_preset_bold_color_is_text() {
+        let palette = Palette {
+            preset: Some("catppuccin-mocha".into()),
+            ..Default::default()
+        };
+        let mut w = Vec::new();
+        let theme = Theme::from_config(
+            &palette,
+            &ThemeOverrides::default(),
+            &HeadingColors::default(),
+            &mut w,
+        );
+        assert_eq!(
+            theme.bold_color, theme.text,
+            "non-expanded preset bold must fall back to text"
+        );
+    }
+
+    #[test]
+    fn expanded_preset_bold_user_override_still_wins() {
+        let palette = Palette {
+            preset: Some("catppuccin-mocha-expanded".into()),
+            ..Default::default()
+        };
+        let overrides = ThemeOverrides {
+            bold_color: Some("#654321".into()),
+            ..Default::default()
+        };
+        let mut w = Vec::new();
+        let theme = Theme::from_config(&palette, &overrides, &HeadingColors::default(), &mut w);
+        assert_eq!(
+            theme.bold_color,
+            Color::Rgb(0x65, 0x43, 0x21),
+            "[theme] bold_color must override expansion bold"
         );
     }
 }
