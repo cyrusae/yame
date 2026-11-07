@@ -50,24 +50,29 @@ enum MathTok {
 /// Adjacent runs of the same kind are merged.
 fn tokenize_math(chars: &[char]) -> Vec<(usize, usize, MathTok)> {
     let mut out: Vec<(usize, usize, MathTok)> = Vec::new();
-    let mut i = 0;
-    while i < chars.len() {
-        let (end, kind) = match chars[i] {
+    let mut rest = chars;
+    let mut pos = 0;
+    while let Some((&c, tail)) = rest.split_first() {
+        let (len, kind) = match c {
+            // `\alpha` → whole word; `\\`, `\,`, `\{` → one symbol;
+            // a trailing lone `\` → just itself.
             '\\' => {
-                let rest = &chars[i + 1..];
-                let letters = rest.iter().take_while(|c| c.is_ascii_alphabetic()).count();
-                // `\alpha` → whole word; `\\`, `\,`, `\{` → one symbol;
-                // a trailing lone `\` → just itself.
-                (i + 1 + letters.max(1).min(rest.len()), MathTok::Command)
+                let letters = tail.iter().take_while(|c| c.is_ascii_alphabetic()).count();
+                (1 + letters.max(1).min(tail.len()), MathTok::Command)
             }
-            '{' | '}' | '^' | '_' | '&' => (i + 1, MathTok::Structure),
-            _ => (i + 1, MathTok::Body),
+            '{' | '}' | '^' | '_' | '&' => (1, MathTok::Structure),
+            _ => (1, MathTok::Body),
         };
+        // Always advance at least one char so the loop terminates even if the
+        // length arithmetic above is ever wrong.
+        let len = len.clamp(1, rest.len());
+        let end = pos + len;
         match out.last_mut() {
             Some(last) if last.2 == kind => last.1 = end,
-            _ => out.push((i, end, kind)),
+            _ => out.push((pos, end, kind)),
         }
-        i = end;
+        rest = &rest[len..];
+        pos = end;
     }
     out
 }
