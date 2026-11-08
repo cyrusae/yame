@@ -39,10 +39,11 @@ fn only_ws_after(text: &str, byte: usize) -> bool {
 enum MathTok {
     /// Variables, digits, operators — drawn in `math_color`.
     Body,
-    /// `\command` (or `\` + one symbol, e.g. `\\`, `\,`) — drawn in `accent`,
-    /// matching what ```` ```latex ```` / ```` ```math ```` fences produce.
+    /// Command name after `\` (`frac` in `\frac`) — drawn halfway between
+    /// `math_color` and `accent`: distinct from the body without shouting.
     Command,
-    /// Grouping / script syntax `{ } ^ _ &` — recedes like a delimiter.
+    /// Meta characters — `\` itself, `{ } ^ _ &`, and one-symbol commands
+    /// like `\\`, `\,`, `\{` — recede like a delimiter.
     Structure,
 }
 
@@ -50,29 +51,45 @@ enum MathTok {
 /// Adjacent runs of the same kind are merged.
 fn tokenize_math(chars: &[char]) -> Vec<(usize, usize, MathTok)> {
     let mut out: Vec<(usize, usize, MathTok)> = Vec::new();
-    let mut rest = chars;
-    let mut pos = 0;
-    while let Some((&c, tail)) = rest.split_first() {
-        let (len, kind) = match c {
-            // `\alpha` → whole word; `\\`, `\,`, `\{` → one symbol;
-            // a trailing lone `\` → just itself.
+    let mut push = |start: usize, end: usize, kind: MathTok| match out.last_mut() {
+        Some(last) if last.2 == kind && last.1 == start => last.1 = end,
+        _ => out.push((start, end, kind)),
+    };
+    // A `for` loop (rather than `while pos < len`) guarantees termination even
+    // if the per-token length below is wrong; `skip` swallows the extra chars
+    // a multi-char token consumed.
+    let mut skip = 0;
+    for (pos, &c) in chars.iter().enumerate() {
+        if skip > 0 {
+            skip -= 1;
+            continue;
+        }
+        let tail = &chars[pos + 1..];
+        let len = match c {
             '\\' => {
                 let letters = tail.iter().take_while(|c| c.is_ascii_alphabetic()).count();
-                (1 + letters.max(1).min(tail.len()), MathTok::Command)
+                if letters > 0 {
+                    // `\alpha` → `\` recedes, `alpha` is the command name.
+                    push(pos, pos + 1, MathTok::Structure);
+                    push(pos + 1, pos + 1 + letters, MathTok::Command);
+                    1 + letters
+                } else {
+                    // `\\`, `\,`, `\{` → both chars; a trailing lone `\` → itself.
+                    let len = 1 + tail.len().min(1);
+                    push(pos, pos + len, MathTok::Structure);
+                    len
+                }
             }
-            '{' | '}' | '^' | '_' | '&' => (1, MathTok::Structure),
-            _ => (1, MathTok::Body),
+            '{' | '}' | '^' | '_' | '&' => {
+                push(pos, pos + 1, MathTok::Structure);
+                1
+            }
+            _ => {
+                push(pos, pos + 1, MathTok::Body);
+                1
+            }
         };
-        // Always advance at least one char so the loop terminates even if the
-        // length arithmetic above is ever wrong.
-        let len = len.clamp(1, rest.len());
-        let end = pos + len;
-        match out.last_mut() {
-            Some(last) if last.2 == kind => last.1 = end,
-            _ => out.push((pos, end, kind)),
-        }
-        rest = &rest[len..];
-        pos = end;
+        skip = len - 1;
     }
     out
 }
@@ -87,12 +104,18 @@ fn container_prefix_len(chars: &[char], in_blockquote: bool) -> usize {
         .count()
 }
 
+/// Command-name color: halfway from `math_color` to `accent`, so `\frac`
+/// reads as a command without overpowering the body.
+fn command_fg(theme: &crate::config::Theme) -> ratatui::style::Color {
+    blend_colors(theme.accent, theme.math_color, 0.5)
+}
+
 /// Emit delimiter + content spans for one math region.
 ///
-/// * Delimiters (`$` / `$$`) and structure (`{ } ^ _ &`) blend `math_color`
+/// * Delimiters (`$` / `$$`) and structure (`\ { } ^ _ &`) blend `math_color`
 ///   toward `muted`, like every other Markdown delimiter.
 /// * Body is drawn in `math_color` with **no** `code_bg`, so `$x$` and
-///   `` `x` `` stay visually distinct; `\commands` use `accent`.
+///   `` `x` `` stay visually distinct; command names lean toward `accent`.
 /// * Display math that stands alone on its lines (`$$` opens the first line
 ///   and closes the last, nothing else on them) becomes a block panel on
 ///   `fenced_bg`, matching fenced code blocks.  Its lines are added to
@@ -118,7 +141,7 @@ fn emit_math(s: &mut BuildState, range: std::ops::Range<usize>, delim_len: usize
         None => style,
     };
     let body_style = with_bg(Style::default().fg(s.theme.math_color));
-    let command_style = with_bg(Style::default().fg(s.theme.accent));
+    let command_style = with_bg(Style::default().fg(command_fg(s.theme)));
     let delim_style = with_bg(Style::default().fg(blend_colors(
         s.theme.math_color,
         s.theme.muted,
@@ -267,11 +290,14 @@ mod tests {
         let open = span_at(&map, 0, 0, 2).expect("opening $$ line");
         assert_eq!(open.full_line_bg, Some(theme.fenced_bg));
         assert_eq!(open.style.bg, Some(theme.fenced_bg));
-        // `\frac` 0..5 is the first span on the body line → carries the panel.
-        let cmd = span_at(&map, 1, 0, 5).expect("\\frac command");
-        assert_eq!(cmd.style.fg, Some(theme.accent));
+        // `\` 0..1 is the first span on the body line → carries the panel.
+        let bs = span_at(&map, 1, 0, 1).expect("backslash");
+        assert_eq!(bs.style.fg, Some(delim_fg(&theme)));
+        assert_eq!(bs.full_line_bg, Some(theme.fenced_bg));
+        let cmd = span_at(&map, 1, 1, 5).expect("frac command name");
+        assert_eq!(cmd.style.fg, Some(command_fg(&theme)));
         assert_eq!(cmd.style.bg, Some(theme.fenced_bg));
-        assert_eq!(cmd.full_line_bg, Some(theme.fenced_bg));
+        assert_eq!(cmd.full_line_bg, None);
         let a = span_at(&map, 1, 6, 7).expect("body `a`");
         assert_eq!(a.style.fg, Some(theme.math_color));
         assert_eq!(
@@ -379,7 +405,7 @@ mod tests {
 
     // ---- tokenizer ----
 
-    use super::{MathTok, container_prefix_len, tokenize_math};
+    use super::{MathTok, command_fg, container_prefix_len, tokenize_math};
 
     fn tok(src: &str) -> Vec<(usize, usize, MathTok)> {
         tokenize_math(&src.chars().collect::<Vec<_>>())
@@ -391,7 +417,8 @@ mod tests {
         assert_eq!(
             tok("\\frac{a}{b}+x^2"),
             vec![
-                (0, 5, Command),
+                (0, 1, Structure),
+                (1, 5, Command),
                 (5, 6, Structure),
                 (6, 7, Body),
                 (7, 9, Structure),
@@ -407,15 +434,30 @@ mod tests {
     #[test]
     fn tokenize_symbol_commands_and_trailing_backslash() {
         use MathTok::*;
-        // `\\` and `\,` are one-symbol commands; adjacent commands merge.
+        // `\\` and `\,` are wholly structure; adjacent structure merges.
         assert_eq!(
             tok("a\\\\b"),
-            vec![(0, 1, Body), (1, 3, Command), (3, 4, Body)]
+            vec![(0, 1, Body), (1, 3, Structure), (3, 4, Body)]
         );
-        assert_eq!(tok("\\,\\alpha"), vec![(0, 8, Command)]);
-        assert_eq!(tok("x\\"), vec![(0, 1, Body), (1, 2, Command)]);
+        assert_eq!(tok("\\,\\alpha"), vec![(0, 3, Structure), (3, 8, Command)]);
+        // After `\\` (line break), following letters are body, not a command.
+        assert_eq!(tok("\\\\ab"), vec![(0, 2, Structure), (2, 4, Body)]);
+        assert_eq!(tok("x\\"), vec![(0, 1, Body), (1, 2, Structure)]);
         // Non-ASCII letters are not part of a command name.
-        assert_eq!(tok("\\aé"), vec![(0, 2, Command), (2, 3, Body)]);
+        assert_eq!(
+            tok("\\aé"),
+            vec![(0, 1, Structure), (1, 2, Command), (2, 3, Body)]
+        );
+        // Two commands back to back stay separate runs.
+        assert_eq!(
+            tok("\\a\\b"),
+            vec![
+                (0, 1, Structure),
+                (1, 2, Command),
+                (2, 3, Structure),
+                (3, 4, Command)
+            ]
+        );
         assert_eq!(tok(""), vec![]);
     }
 
@@ -436,10 +478,19 @@ mod tests {
     // ---- integration ----
 
     #[test]
-    fn command_inside_inline_math_uses_accent() {
+    fn command_inside_inline_math_leans_toward_accent() {
         let (map, theme) = build("$\\alpha$");
-        let cmd = span_at(&map, 0, 1, 7).expect("\\\\alpha command");
-        assert_eq!(cmd.style.fg, Some(theme.accent));
+        let bs = span_at(&map, 0, 1, 2).expect("backslash");
+        assert_eq!(bs.style.fg, Some(delim_fg(&theme)));
+        let cmd = span_at(&map, 0, 2, 7).expect("alpha command name");
+        assert_eq!(cmd.style.fg, Some(command_fg(&theme)));
+        assert_ne!(command_fg(&theme), theme.accent);
+        assert_ne!(command_fg(&theme), theme.math_color);
+        assert_eq!(
+            command_fg(&theme),
+            blend_colors(theme.accent, theme.math_color, 0.5),
+            "command name is the accent/math midpoint"
+        );
         let close = span_at(&map, 0, 7, 8).expect("closing $");
         assert_eq!(close.style.fg, Some(delim_fg(&theme)));
     }
