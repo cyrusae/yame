@@ -1320,6 +1320,49 @@ mod tests {
         );
     }
 
+    #[test]
+    fn single_tilde_strikethrough_uses_one_char_delimiters() {
+        let text = "~hi~";
+        let map = build_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        assert!(
+            spans.iter().any(|s| {
+                s.char_start == 1
+                    && s.char_end == 3
+                    && s.style.add_modifier.contains(Modifier::CROSSED_OUT)
+            }),
+            "single-tilde content must be at char 1..3 with CROSSED_OUT"
+        );
+        assert!(
+            !spans.iter().any(|s| s.char_start == 0 && s.char_end == 2),
+            "single-tilde opening delimiter must not swallow content"
+        );
+    }
+
+    #[test]
+    fn tilde_star_tilde_does_not_treat_asterisk_as_delimiter() {
+        // `~*~text~*~` = strike( em( strike(text) ) ); the `*` at char 1
+        // and char 8 are emphasis markers, not part of a `~~` delimiter.
+        let text = "~*~text~*~";
+        let map = build_map(text, &make_theme(), true);
+        let spans = map.get(&0).expect("line 0 should have spans");
+        let muted = make_theme().muted;
+        for (a, b) in [(0, 2), (8, 10), (2, 4), (6, 8)] {
+            assert!(
+                !spans
+                    .iter()
+                    .any(|s| s.char_start == a && s.char_end == b && s.style.fg == Some(muted)),
+                "no two-char muted delimiter at {a}..{b}"
+            );
+        }
+        for (a, b) in [(0, 1), (9, 10), (2, 3), (7, 8)] {
+            assert!(
+                spans.iter().any(|s| s.char_start == a && s.char_end == b),
+                "expected one-char tilde delimiter at {a}..{b}"
+            );
+        }
+    }
+
     // ---- Horizontal rule span fields ----
 
     #[test]
