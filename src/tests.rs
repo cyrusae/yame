@@ -879,7 +879,7 @@ fn clamp_scroll_cursor_subrow_on_wrapped_line() {
     // TEST_COL=82 → cw=80. A 100-char line wraps into 2 visual rows.
     let long = "x".repeat(100);
     let mut lines: Vec<&str> = vec![long.as_str()];
-    lines.extend(std::iter::repeat("a").take(10));
+    lines.extend(std::iter::repeat_n("a", 10));
     let mut app = make_app_with_lines(&lines);
     // Position cursor at char 99 (second wrapped sub-row of line 0).
     app.textarea

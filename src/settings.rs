@@ -227,6 +227,10 @@ pub const APPEARANCE_EXTENDED: &[FieldDef] = &[
         label: "H6 color",
         kind: FieldKind::HexColor,
     },
+    FieldDef {
+        label: "Math color",
+        kind: FieldKind::HexColor,
+    },
 ];
 
 // ---------------------------------------------------------------------------
@@ -956,6 +960,7 @@ fn appearance_extended_value(cfg: &Config, resolved: &Theme, idx: usize) -> Stri
         24 => opt_or_resolved(&cfg.headings.h4, resolved.headings.h4),
         25 => opt_or_resolved(&cfg.headings.h5, resolved.headings.h5),
         26 => opt_or_resolved(&cfg.headings.h6, resolved.headings.h6),
+        27 => opt_or_resolved(&cfg.theme.math_color, resolved.math_color),
         _ => String::new(),
     }
 }
@@ -1100,6 +1105,7 @@ fn commit_appearance_extended(cfg: &mut Config, idx: usize, v: &str) -> bool {
         24 => set_opt_hex(&mut cfg.headings.h4, v),
         25 => set_opt_hex(&mut cfg.headings.h5, v),
         26 => set_opt_hex(&mut cfg.headings.h6, v),
+        27 => set_opt_hex(&mut cfg.theme.math_color, v),
         _ => false,
     }
 }
@@ -1957,7 +1963,7 @@ mod tests {
 
     #[test]
     fn appearance_extended_value_all_fields_nonempty() {
-        // Kills delete-match-arm mutations for all 27 extended fields.
+        // Kills delete-match-arm mutations for all 28 extended fields.
         let m = make_modal(); // tab=0; field_value works without expanded=true
         for idx in 0..APPEARANCE_EXTENDED.len() {
             let f = APPEARANCE_EXPAND_IDX + 1 + idx;
@@ -2088,11 +2094,11 @@ mod tests {
 
     #[test]
     fn commit_appearance_extended_all_hex_fields() {
-        // Kills delete-match-arm for extended indices 0-15 and 17-26.
+        // Kills delete-match-arm for extended indices 0-15 and 17-27.
         let mut m = make_modal();
         m.tab = 0;
         m.expanded = true;
-        for idx in (0..=15usize).chain(17..=26) {
+        for idx in (0..=15usize).chain(17..=27) {
             m.field = APPEARANCE_EXPAND_IDX + 1 + idx;
             m.input_buf = "#fedcba".to_string();
             assert!(m.commit_input(), "commit extended idx {idx} should succeed");

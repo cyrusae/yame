@@ -168,8 +168,12 @@ pub(super) fn on_strikethrough(s: &mut BuildState, range: std::ops::Range<usize>
     let (end_line, end_char_excl) = byte_to_line_char(&s.line_starts, s.text, range.end);
 
     if start_line == end_line {
+        // GFM accepts both `~text~` and `~~text~~`; measure the actual
+        // delimiter run rather than assuming two tildes, otherwise
+        // `~*~text~*~` paints the `*` as a delimiter.
+        let delim = strikethrough_delim_len(&s.text[range.start..range.end]);
         let span_len = end_char_excl.saturating_sub(start_char);
-        if span_len >= 4 {
+        if delim > 0 && span_len >= 2 * delim {
             // ~~ delimiters use plain muted — blending toward text made them
             // brighter than the struck-through content they surround.
             let delim_style = Style::default().fg(s.theme.muted);
@@ -177,28 +181,33 @@ pub(super) fn on_strikethrough(s: &mut BuildState, range: std::ops::Range<usize>
                 .fg(s.theme.strikethrough_color)
                 .add_modifier(Modifier::CROSSED_OUT);
 
-            // opening ~~
+            // opening delimiter
             push_span(
                 &mut s.map,
                 start_line,
-                make_span(start_char, start_char + 2, delim_style),
+                make_span(start_char, start_char + delim, delim_style),
             );
             // content
-            if start_char + 2 < end_char_excl.saturating_sub(2) {
+            if start_char + delim < end_char_excl - delim {
                 push_span(
                     &mut s.map,
                     start_line,
-                    make_span(start_char + 2, end_char_excl - 2, content_style),
+                    make_span(start_char + delim, end_char_excl - delim, content_style),
                 );
             }
-            // closing ~~
+            // closing delimiter
             push_span(
                 &mut s.map,
                 end_line,
-                make_span(end_char_excl - 2, end_char_excl, delim_style),
+                make_span(end_char_excl - delim, end_char_excl, delim_style),
             );
         }
     }
+}
+
+/// Width of the tilde delimiter (1 or 2) opening a strikethrough span's source.
+pub(super) fn strikethrough_delim_len(src: &str) -> usize {
+    src.bytes().take_while(|&b| b == b'~').count().min(2)
 }
 
 // ---------------------------------------------------------------------------
@@ -228,4 +237,17 @@ pub(super) fn on_rule(s: &mut BuildState, range: std::ops::Range<usize>) {
 
 pub(super) fn on_text(s: &mut BuildState, val: &CowStr, _range: std::ops::Range<usize>) {
     s.word_count += val.split_whitespace().count();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strikethrough_delim_len;
+
+    #[test]
+    fn strikethrough_delim_len_counts_up_to_two_tildes() {
+        assert_eq!(strikethrough_delim_len("~a~"), 1);
+        assert_eq!(strikethrough_delim_len("~~a~~"), 2);
+        assert_eq!(strikethrough_delim_len("~*~a~*~"), 1);
+        assert_eq!(strikethrough_delim_len("a"), 0);
+    }
 }

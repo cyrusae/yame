@@ -1,4 +1,4 @@
-use pulldown_cmark::{Event, Parser};
+use pulldown_cmark::{Event, Options, Parser};
 
 /// Count words in plain text (no Markdown parsing).
 pub fn count_words_plain(text: &str) -> usize {
@@ -6,8 +6,11 @@ pub fn count_words_plain(text: &str) -> usize {
 }
 
 /// Count words in Markdown text, excluding syntax characters.
+///
+/// LaTeX math (`$…$`, `$$…$$`) is not counted, matching the live count from
+/// `build_decoration_map` — equations are not prose.
 pub fn count_words(text: &str) -> usize {
-    Parser::new(text)
+    Parser::new_ext(text, Options::ENABLE_MATH)
         .filter_map(|e| match e {
             Event::Text(s) | Event::Code(s) => Some(s.split_whitespace().count()),
             _ => None,

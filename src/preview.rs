@@ -23,7 +23,7 @@ use yame::app::{FileMode, is_likely_binary, load_file, resolve_file_mode};
 use yame::config::{Theme, load_config, supports_italic};
 use yame::decoration::{
     DecorationMap, StyledSpan, block_highlights_to_decoration_map, build_decoration_map,
-    count_words,
+    count_words_plain,
 };
 use yame::renderer::{split_into_spans, wrap_char_ranges, wrap_line_indented};
 
@@ -85,10 +85,10 @@ pub(super) fn render_preview(path: &Path) -> io::Result<()> {
                 .and_then(|cache| cache.highlight_block(lang, &text))
                 .map(|hl| block_highlights_to_decoration_map(&hl, 0))
                 .unwrap_or_default();
-            let wc = count_words(&text);
+            let wc = count_words_plain(&text);
             (map, wc)
         }
-        FileMode::PlainText => (DecorationMap::default(), count_words(&text)),
+        FileMode::PlainText => (DecorationMap::default(), count_words_plain(&text)),
     };
 
     // ── Render ───────────────────────────────────────────────────────────────

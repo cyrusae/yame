@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag, TagEnd};
 use ratatui::style::Color;
@@ -14,6 +14,7 @@ mod blocks;
 mod fenced;
 mod headings;
 mod inline;
+mod math;
 mod misc;
 mod tables;
 
@@ -43,6 +44,9 @@ pub(crate) struct BuildState<'a> {
     pub in_table_head: Option<std::ops::Range<usize>>,
     pub code_block_lines: HashSet<usize>,
     pub in_heading_bg: Option<Color>,
+    /// Char ranges `(start, end)` per line covered by inline (non-block)
+    /// math, so the ==highlight== post-pass can skip `$a==b$`.
+    pub math_ranges: HashMap<usize, Vec<(usize, usize)>>,
 
     // --- cached single-pass results ---
     /// Line index of the last line of the frontmatter block, or `None` if
@@ -72,6 +76,7 @@ impl<'a> BuildState<'a> {
             in_table_head: None,
             code_block_lines: HashSet::new(),
             in_heading_bg: None,
+            math_ranges: HashMap::new(),
             frontmatter_end: None,
         }
     }
@@ -153,6 +158,10 @@ pub fn build_decoration_map(
             // ---- l. Horizontal rule ----
             Event::Rule => misc::on_rule(&mut s, range),
 
+            // ---- n. LaTeX math ----
+            Event::InlineMath(_) => math::on_inline_math(&mut s, range),
+            Event::DisplayMath(_) => math::on_display_math(&mut s, range),
+
             // ---- m. Word count ----
             Event::Text(ref val) => misc::on_text(&mut s, val, range),
 
@@ -176,6 +185,7 @@ pub fn build_decoration_map(
         text,
         &s.line_starts,
         &s.code_block_lines,
+        &s.math_ranges,
         s.frontmatter_end,
         s.theme,
     );

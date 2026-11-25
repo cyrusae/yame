@@ -19,7 +19,10 @@ use super::BuildState;
 /// bit — which is guaranteed by pulldown-cmark's `Options` bitmask design.
 #[mutants::skip]
 pub(super) fn parser_options() -> Options {
-    Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS | Options::ENABLE_STRIKETHROUGH
+    Options::ENABLE_TABLES
+        | Options::ENABLE_TASKLISTS
+        | Options::ENABLE_STRIKETHROUGH
+        | Options::ENABLE_MATH
 }
 
 // ---------------------------------------------------------------------------

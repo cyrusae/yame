@@ -14,8 +14,8 @@ It can also be used as a distraction-free text editor!
 
 ## What it does
 
-- Opens and saves Markdown files with live inline decoration: headings, bold, italic, inline code, fenced blocks, blockquotes, links, lists, todo checkboxes, tables, strikethrough, horizontal rules, `==highlights==`, YAML/TOML frontmatter
-- Syntax highlighting in fenced code blocks for over 150 languages
+- Opens and saves Markdown files with live inline decoration: headings, bold, italic, inline code, fenced blocks, blockquotes, links, lists, todo checkboxes, tables, strikethrough, horizontal rules, `==highlights==`, LaTeX math (`$…$` inline, `$$…$$` display), YAML/TOML frontmatter
+- Syntax highlighting in fenced code blocks for over 150 languages (` ```math ` fences use the LaTeX grammar)
 - Centered editing column with soft word wrap (wide/CJK character aware)
 - 14 built-in palette presets (Catppuccin ×4, Dracula, Nord, Gruvbox, Solarized ×2, Tokyo Night, Rose Piné ×3, GitHub Light); fully configurable via `~/.config/yame/config.toml` or in-app settings menu
 - System clipboard (`Ctrl+C` / `Ctrl+V` / `Ctrl+X` cut)
@@ -160,7 +160,7 @@ preset = "dracula"
 
 Available presets: `catppuccin-mocha` (default), `catppuccin-latte`, `catppuccin-frappe`, `catppuccin-macchiato`, `dracula`, `nord`, `gruvbox-dark`, `solarized-dark`, `solarized-light`, `tokyo-night`, `rose-pine`, `rose-pine-moon`, `rose-pine-dawn`, `github-light`.
 
-Append `-expanded` to any name (e.g. `"dracula-expanded"`) for rainbow per-level heading colors and a per-theme italic tint.
+Append `-expanded` to any name (e.g. `"dracula-expanded"`) for rainbow per-level heading colors and per-theme italic, bold, and math tints.
 
 See [`_info/THEMES.md`](_info/THEMES.md) for the full preset list, override order, and per-element reference.
 
@@ -208,6 +208,7 @@ Optional per-element overrides. These take precedence over the derived defaults.
 # highlight_fg        = "#cdd6f4"   # ==text== foreground
 # frontmatter_key     = "#a6e3a1"   # YAML/TOML frontmatter key color (default: code green)
 # frontmatter_bg      = "#1e2620"   # YAML/TOML frontmatter block background (default: code at 15%)
+# math_color          = "#a6e3a1"   # LaTeX $…$ / $$…$$ math (default: code color, no background; -expanded presets pick their own)
 ```
 
 ### Per-level heading colors
